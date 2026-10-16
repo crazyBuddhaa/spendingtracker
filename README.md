@@ -18,9 +18,11 @@ npm run build
 
 ## Importing statements
 
-Use **Import statement** and select one or more `.csv` files. Spendwise recognizes common English headers for date, description/narration, amount, debit, credit, and transaction type. Dates can be ISO (`2026-10-16`) or day-first (`16/10/2026`). When importing multiple files, each filename is used as the account label.
+Use **Import statement** and select one or more `.csv` files. Spendwise recognizes common English headers for date, description/narration, amount, debit, credit, and transaction type, including header rows that follow statement metadata. It accepts OPay-style `Date / Transaction Details / Amount / Type`, Access Bank-style `Value Date / Narration / Debit / Credit`, and Moniepoint-style `Date / Narration / Dr / Cr` tables. Dates can be ISO (`2026-10-16`) or day-first (`16/10/2026`). Filenames containing `OPay`, `Access`, or `Moniepoint` are used as the account label.
 
 For the clearest results, export statements with separate **Debit** and **Credit** columns. A signed Amount column and a Debit/Credit or Type column are also supported. If a file has only positive amounts without a type column, positive rows are treated as spending unless their descriptions clearly indicate income; the app displays a warning so you can review the assumption.
+
+These are flexible CSV column mappings, not certified parsers for every bank export. The importer currently accepts CSV only; Moniepoint’s official guide describes native statement downloads as Excel or PDF, so those files need a CSV export before import.
 
 `sample-data/demo-transactions.csv` is fictional and can be used to try the import flow.
 The initial version displays amounts in NGN and assumes imported statements use the same currency; it does not perform foreign-exchange conversion.

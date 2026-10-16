@@ -10,22 +10,60 @@ type HeaderMap = {
 };
 
 const headerAliases = {
-  date: ["date", "transaction date", "trans date", "value date", "posting date", "timestamp"],
+  date: [
+    "date",
+    "transaction date",
+    "transaction date/time",
+    "date/time",
+    "trans date",
+    "value date",
+    "posting date",
+    "timestamp",
+  ],
   description: [
     "description",
     "details",
     "transaction details",
     "narration",
+    "transaction narration",
     "particulars",
     "remarks",
     "memo",
     "payee",
     "transaction description",
+    "transaction remarks",
+    "payment details",
+    "counterparty",
+    "counter party",
+    "beneficiary",
+    "merchant",
   ],
-  debit: ["debit", "dr", "dr amount", "withdrawal", "withdrawals", "withdrawal amount", "paid out", "money out", "debit amount", "outflow"],
-  credit: ["credit", "cr", "cr amount", "deposit", "deposits", "deposit amount", "paid in", "money in", "credit amount", "inflow"],
-  amount: ["amount", "transaction amount", "amt", "value"],
-  type: ["type", "transaction type", "direction", "dr/cr", "debit/credit"],
+  debit: [
+    "debit",
+    "dr",
+    "dr amount",
+    "withdrawal",
+    "withdrawals",
+    "withdrawal amount",
+    "paid out",
+    "money out",
+    "debit amount",
+    "outflow",
+  ],
+  credit: [
+    "credit",
+    "cr",
+    "cr amount",
+    "deposit",
+    "deposits",
+    "deposit amount",
+    "paid in",
+    "money in",
+    "credit amount",
+    "inflow",
+  ],
+  amount: ["amount", "transaction amount", "amt", "value", "transaction value"],
+  type: ["type", "transaction type", "direction", "dr/cr", "debit/credit", "credit/debit"],
 } as const;
 
 function readCsvRecords(input: string): string[][] {
@@ -65,6 +103,7 @@ function readCsvRecords(input: string): string[][] {
 function normaliseHeader(value: string): string {
   return value
     .replace(/^\uFEFF/, "")
+    .replace(/\s*[\[(][^)\]]*[\])]/g, "")
     .trim()
     .toLowerCase()
     .replace(/[_-]+/g, " ")
@@ -133,7 +172,7 @@ function parseAmount(value: string): number | null {
   return parenthesized ? -Math.abs(parsed) : parsed;
 }
 
-function inferDirection(type: string, description: string, signedAmount: number): Direction {
+function inferDirection(type: string, description: string): Direction {
   const marker = `${type} ${description}`.toLowerCase();
   if (/\b(debit|withdraw|paid out|money out|purchase|payment|pos|transfer to|sent)\b/.test(marker)) {
     return "expense";
@@ -141,7 +180,7 @@ function inferDirection(type: string, description: string, signedAmount: number)
   if (/\b(credit|deposit|salary|income|refund|cashback|received|transfer from|interest)\b/.test(marker)) {
     return "income";
   }
-  return signedAmount < 0 ? "expense" : "expense";
+  return "expense";
 }
 
 export function categorise(description: string, direction: Direction): Category {
@@ -159,7 +198,12 @@ export function categorise(description: string, direction: Direction): Category 
 }
 
 function sourceName(fileName: string): string {
-  return fileName.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim() || "Imported statement";
+  const baseName = fileName.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim();
+  const normalized = baseName.toLowerCase();
+  if (/\bopay\b/.test(normalized)) return "OPay";
+  if (/\baccess\s*bank\b/.test(normalized) || /\baccess\b/.test(normalized)) return "Access Bank";
+  if (/\bmoniepoint\b/.test(normalized)) return "Moniepoint";
+  return baseName || "Imported statement";
 }
 
 function stableId(date: string, description: string, amount: number, source: string): string {
@@ -178,8 +222,17 @@ export function parseTransactionsCsv(text: string, fileName: string): ImportResu
     return { transactions: [], skipped: 0, warnings: ["The CSV needs a header row and at least one transaction."] };
   }
 
-  const map = mapHeaders(rows[0]);
-  if (map.date < 0 || map.description < 0 || (map.amount < 0 && map.debit < 0 && map.credit < 0)) {
+  const headerIndex = rows
+    .slice(0, Math.min(rows.length, 20))
+    .findIndex((row) => {
+      const candidate = mapHeaders(row);
+      return (
+        candidate.date >= 0 &&
+        candidate.description >= 0 &&
+        (candidate.amount >= 0 || candidate.debit >= 0 || candidate.credit >= 0)
+      );
+    });
+  if (headerIndex < 0) {
     return {
       transactions: [],
       skipped: rows.length - 1,
@@ -189,6 +242,7 @@ export function parseTransactionsCsv(text: string, fileName: string): ImportResu
     };
   }
 
+  const map = mapHeaders(rows[headerIndex]);
   const source = sourceName(fileName);
   const warnings: string[] = [];
   const transactions: Transaction[] = [];
@@ -196,7 +250,7 @@ export function parseTransactionsCsv(text: string, fileName: string): ImportResu
   const hasSignedAmount = map.amount >= 0;
   let ambiguousPositiveRows = 0;
 
-  for (const row of rows.slice(1)) {
+  for (const row of rows.slice(headerIndex + 1)) {
     const date = parseDate(row[map.date] ?? "");
     const description = (row[map.description] ?? "").trim();
     const debitText = map.debit >= 0 ? row[map.debit] ?? "" : "";
@@ -232,7 +286,7 @@ export function parseTransactionsCsv(text: string, fileName: string): ImportResu
         skipped += 1;
         continue;
       }
-      direction = inferDirection(type, description, rawAmount);
+      direction = inferDirection(type, description);
       amount = Math.abs(rawAmount);
       if (!type && rawAmount > 0 && direction === "expense") ambiguousPositiveRows += 1;
     } else {

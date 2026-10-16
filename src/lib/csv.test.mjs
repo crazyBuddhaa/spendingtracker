@@ -53,6 +53,48 @@ describe("parseTransactionsCsv", () => {
     assert.equal(result.transactions.length, 0);
     assert.match(result.warnings[0], /Couldn't identify/);
   });
+
+  it("maps an Access Bank-style statement with a preamble and NGN amount headers", () => {
+    const result = parseTransactionsCsv(
+      "Access Bank statement\nAccount,Example account\nValue Date,Narration,Reference,Debit Amount (NGN),Credit Amount (NGN),Balance\n15/10/2026,POS purchase at Shoprite,REF-01,6500,,93500",
+      "access_bank_statement.csv",
+    );
+
+    assert.equal(result.transactions.length, 1);
+    assert.equal(result.transactions[0].date, "2026-10-15");
+    assert.equal(result.transactions[0].source, "Access Bank");
+    assert.equal(result.transactions[0].direction, "expense");
+    assert.equal(result.transactions[0].amount, 6500);
+    assert.equal(result.skipped, 0);
+  });
+
+  it("maps an OPay-style single Amount and transaction type export", () => {
+    const result = parseTransactionsCsv(
+      "Date,Transaction Details,Amount (NGN),Transaction Type,Reference,Balance\n2026-10-10,Transfer to friend,\"-2,500.00\",Debit,REF-01,47500\n2026-10-11,Cash deposit,\"50,000.00\",Credit,REF-02,97500",
+      "opay_wallet_history.csv",
+    );
+
+    assert.equal(result.transactions.length, 2);
+    assert.equal(result.transactions[0].source, "OPay");
+    assert.equal(result.transactions[0].direction, "expense");
+    assert.equal(result.transactions[0].amount, 2500);
+    assert.equal(result.transactions[1].direction, "income");
+    assert.equal(result.transactions[1].amount, 50000);
+  });
+
+  it("maps a Moniepoint-style transaction table after statement metadata", () => {
+    const result = parseTransactionsCsv(
+      "Moniepoint business statement\nPeriod,October 2026\nTransaction Date,Transaction Narration,Dr Amount,Cr Amount,Account Balance,Reference\n16/10/2026,Transfer from customer,,120000,500000,MP-01",
+      "moniepoint_extended_statement.csv",
+    );
+
+    assert.equal(result.transactions.length, 1);
+    assert.equal(result.transactions[0].source, "Moniepoint");
+    assert.equal(result.transactions[0].date, "2026-10-16");
+    assert.equal(result.transactions[0].direction, "income");
+    assert.equal(result.transactions[0].amount, 120000);
+    assert.equal(result.skipped, 0);
+  });
 });
 
 describe("insights and export", () => {
