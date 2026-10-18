@@ -7,6 +7,7 @@ import { calculateTotals, getCategoryTotals } from "./insights.ts";
 import { parsePdfPages } from "./pdfText.ts";
 import { savedForGoal, savingsSummary } from "./savings.ts";
 import { normaliseBets, parseSportyBetPage } from "./sportyBetImport.ts";
+import { getBettingInsights } from "./bettingInsights.ts";
 
 describe("parseTransactionsCsv", () => {
   it("reads debit and credit columns and Nigerian day-first dates", () => {
@@ -253,5 +254,68 @@ describe("SportyBet page imports", () => {
     ]);
     assert.equal(bets.length, 1);
     assert.equal(bets[0].category, "Football");
+  });
+});
+
+describe("betting insights", () => {
+  const bets = [
+    { id: "1", date: "2026-10-01", category: "Football", betType: "Multiple", status: "won", stake: 100, returnAmount: 250, events: ["A v B"], hiddenEvents: 2, source: "SportyBet" },
+    { id: "2", date: "2026-10-01", category: "Football", betType: "Single", status: "lost", stake: 50, returnAmount: 0, events: ["C v D"], hiddenEvents: 0, source: "Manual entry" },
+    { id: "3", date: "2026-10-02", category: "Tennis", betType: "Single", status: "open", stake: 25, returnAmount: 0, events: ["E v F"], hiddenEvents: 0, source: "SportyBet" },
+    { id: "4", date: "2026-11-01", category: "Unclassified", betType: "Other", status: "void", stake: 20, returnAmount: 20, events: [], hiddenEvents: 0, source: "SportyBet" },
+    { id: "5", date: "2026-11-02", category: "Unclassified", betType: "Other", status: "other", stake: 10, returnAmount: 0, events: [], hiddenEvents: 0, source: "Manual entry" },
+  ];
+
+  it("separates resolved performance, decisive win rate, and open exposure", () => {
+    const result = getBettingInsights(bets);
+    assert.equal(result.betCount, 5);
+    assert.equal(result.totalStaked, 205);
+    assert.equal(result.totalReturned, 270);
+    assert.equal(result.settledCount, 3);
+    assert.equal(result.settledStake, 170);
+    assert.equal(result.settledReturn, 270);
+    assert.equal(result.settledNet, 100);
+    assert.equal(result.roi, (100 / 170) * 100);
+    assert.equal(result.winRate, 50);
+    assert.equal(result.openCount, 1);
+    assert.equal(result.openStake, 25);
+    assert.equal(result.otherCount, 1);
+    assert.deepEqual(result.outcomeCounts, { won: 1, lost: 1, open: 1, void: 1, "cashed-out": 0, other: 1 });
+  });
+
+  it("calculates stake, net distribution, active days, and event coverage", () => {
+    const result = getBettingInsights(bets);
+    assert.equal(result.averageStake, 41);
+    assert.equal(result.medianStake, 25);
+    assert.equal(result.averageSettledNet, 100 / 3);
+    assert.equal(result.settledReturnRate, (270 / 170) * 100);
+    assert.equal(result.positiveSettledCount, 1);
+    assert.equal(result.negativeSettledCount, 1);
+    assert.equal(result.evenSettledCount, 1);
+    assert.equal(result.activeDays, 4);
+    assert.equal(result.capturedEvents, 3);
+    assert.equal(result.hiddenEvents, 2);
+    assert.equal(result.averageEventsPerBet, 1);
+  });
+
+  it("groups performance by category, source, date, and month", () => {
+    const result = getBettingInsights(bets);
+    assert.equal(result.byCategory.find((group) => group.label === "Football")?.betCount, 2);
+    assert.equal(result.byCategory.find((group) => group.label === "Football")?.net, 100);
+    assert.equal(result.bySource.find((group) => group.label === "Manual entry")?.betCount, 2);
+    assert.deepEqual(result.byDay.map((group) => group.label), ["2026-10-01", "2026-10-02", "2026-11-01", "2026-11-02"]);
+    assert.deepEqual(result.byMonth.map((group) => group.label), ["2026-10", "2026-11"]);
+    assert.equal(result.byMonth[0].net, 100);
+    assert.equal(result.byMonth[1].net, 0);
+  });
+
+  it("returns null for rate metrics when there is no denominator", () => {
+    const result = getBettingInsights([]);
+    assert.equal(result.roi, null);
+    assert.equal(result.winRate, null);
+    assert.equal(result.averageStake, null);
+    assert.equal(result.medianStake, null);
+    assert.equal(result.bestBet, null);
+    assert.equal(result.lowestNetBet, null);
   });
 });

@@ -33,6 +33,8 @@ Savings goals store a target and a local contribution history. Contributions are
 
 Betting records have their own ledger and outcome chart, separate from transaction spending. Import a saved SportyBet page (`.mhtml`, `.mht`, or `.html`) or add a record manually. Sport categories include Unclassified, Football, Basketball, Tennis, Volleyball, Rugby, Cricket, Esports, and Other; imported bets start Unclassified when the page does not identify a sport. Categories can be changed per record.
 
+Betting analytics include all-record stake and return totals, resolved net and ROI, win rate for won/lost bets, open stake exposure, average and median stake, return rate, daily/monthly net trends, and breakdowns by category, bet type, and source. ROI uses resolved net divided by resolved stake; open and unknown outcomes are excluded, while void and cashed-out outcomes are treated as resolved. The app also shows record-level highest/lowest resolved net and event details captured by the import. It cannot calculate odds, expected value, or bankroll changes because those fields are not recorded; event-level profit is not attributed across legs in multiple bets.
+
 ## Privacy and scope
 
 CSV, Excel, text-based PDF, and saved betting-page parsing run in the browser. Transactions, savings goals, and bets are saved in that browser's `localStorage`; source files and records are not sent to a server. Clearing browser data removes the saved history. The app does not request bank logins or connect to bank APIs. Direct bank feeds require a supported open-banking provider and a separate server-side integration.
