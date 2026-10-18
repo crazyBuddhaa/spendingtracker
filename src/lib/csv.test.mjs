@@ -7,6 +7,7 @@ import { calculateTotals, getCategoryTotals } from "./insights.ts";
 import { parsePdfPages } from "./pdfText.ts";
 import { savedForGoal, savingsSummary } from "./savings.ts";
 import { normaliseBets, parseSportyBetPage } from "./sportyBetImport.ts";
+import { normaliseSavingsCircles, savingsCircleSummary } from "./savingsCircles.ts";
 
 describe("parseTransactionsCsv", () => {
   it("reads debit and credit columns and Nigerian day-first dates", () => {
@@ -253,5 +254,55 @@ describe("SportyBet page imports", () => {
     ]);
     assert.equal(bets.length, 1);
     assert.equal(bets[0].category, "Football");
+  });
+});
+
+describe("offline savings circles", () => {
+  const circle = {
+    id: "circle-1",
+    name: "Ajo group",
+    contributionAmount: 5000,
+    intervalDays: 10,
+    memberCount: 14,
+    myPosition: 9,
+    currentTurn: 14,
+    myPayoutReceived: true,
+    currentTurnDate: null,
+    entries: [
+      { id: "entry-1", date: "2026-10-01", kind: "contribution", amount: 5000, turn: 14 },
+      { id: "entry-2", date: "2026-09-11", kind: "payout", amount: 70000, turn: 9 },
+    ],
+  };
+
+  it("calculates pool payout, rotation length, and turns until the next personal payout", () => {
+    const summary = savingsCircleSummary(circle);
+    assert.equal(summary.payoutAmount, 70000);
+    assert.equal(summary.cycleDays, 140);
+    assert.equal(summary.turnsUntilNextPayout, 9);
+    assert.equal(summary.daysUntilNextPayout, 90);
+    assert.equal(summary.expectedPayoutDate, null);
+  });
+
+  it("uses the optional current-turn date to estimate the next collection date", () => {
+    const summary = savingsCircleSummary({ ...circle, currentTurnDate: "2026-10-18" });
+    assert.equal(summary.expectedPayoutDate, "2027-01-16");
+  });
+
+  it("starts a new rotation after turn 14 and accounts for an already received payout", () => {
+    const nextCycle = savingsCircleSummary({ ...circle, currentTurn: 9 });
+    assert.equal(nextCycle.turnsUntilNextPayout, 14);
+    const notYetReceived = savingsCircleSummary({ ...circle, currentTurn: 9, myPayoutReceived: false });
+    assert.equal(notYetReceived.turnsUntilNextPayout, 0);
+  });
+
+  it("normalises circle history and drops invalid entries or circle definitions", () => {
+    const result = normaliseSavingsCircles([
+      circle,
+      { ...circle, id: "bad", currentTurn: 15 },
+      { ...circle, id: "bad-entry", entries: [{ ...circle.entries[0], amount: -5 }] },
+    ]);
+    assert.equal(result.length, 2);
+    assert.equal(result[0].entries.length, 2);
+    assert.equal(result[1].entries.length, 0);
   });
 });

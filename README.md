@@ -31,6 +31,8 @@ The initial version displays amounts in NGN and assumes imported statements use 
 
 Savings goals store a target and a local contribution history. Contributions are manual tracker entries; the app does not move money between accounts.
 
+The Savings page also supports offline rotating contribution circles: set the contribution amount and interval, member count, your position, current turn, and whether you have already collected in the current rotation. It calculates the pool payout, full cycle length, turns until your next payout, and an approximate date when the current turn date is known. Contributions and payouts can be logged locally; these circle records are separate from personal savings goals and remain in browser `localStorage`.
+
 Betting records have their own ledger and outcome chart, separate from transaction spending. Import a saved SportyBet page (`.mhtml`, `.mht`, or `.html`) or add a record manually. Sport categories include Unclassified, Football, Basketball, Tennis, Volleyball, Rugby, Cricket, Esports, and Other; imported bets start Unclassified when the page does not identify a sport. Categories can be changed per record.
 
 ## Privacy and scope
