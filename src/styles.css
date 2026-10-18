@@ -471,6 +471,39 @@ h1 { margin: 9px 0 5px; color: #25352c; font: 700 24px "Manrope", sans-serif; le
 .outcome-dot { width: 7px; height: 7px; display: inline-block; border-radius: 50%; }
 .bet-empty-chart { min-height: 66px; display: flex; align-items: center; justify-content: center; gap: 8px; color: #97a099; font-size: 10px; }
 .bet-empty-chart svg { color: #659175; }
+.bet-detail-panel { min-width: 0; padding: 17px 18px 14px; }
+.bet-detail-panel > .panel-heading { margin-bottom: 13px; }
+.bet-quick-stats { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 9px; }
+.bet-quick-stat { min-width: 0; display: flex; flex-direction: column; gap: 5px; padding: 10px; border: 1px solid #eef0ed; border-radius: 7px; background: #fbfcfb; }
+.bet-quick-stat span,.bet-extreme > span { color: #9aa39d; font-size: 8px; font-weight: 700; letter-spacing: .55px; }
+.bet-quick-stat strong { overflow: hidden; color: #34443a; font: 700 14px "Manrope",sans-serif; text-overflow: ellipsis; white-space: nowrap; }
+.bet-quick-stat small { color: #929c95; font-size: 8px; line-height: 1.45; }
+.bet-analysis-note { margin: 11px 0 0; color: #909a93; font-size: 8px; line-height: 1.55; }
+.bet-analytics-grid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 15px; }
+.bet-analysis-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.bet-analysis-heading select { max-width: 125px; height: 30px; padding: 0 8px; border: 1px solid #e4e8e3; border-radius: 6px; color: #69756d; background: #fff; font-size: 9px; }
+.bet-period-list { display: grid; gap: 7px; max-height: 330px; overflow-y: auto; padding-right: 3px; }
+.bet-period-row { display: grid; grid-template-columns: 72px minmax(55px,1fr) 91px 62px; align-items: center; gap: 8px; min-height: 27px; }
+.bet-period-label { color: #69756d; font-size: 9px; white-space: nowrap; }
+.bet-period-track { position: relative; height: 13px; overflow: hidden; border-radius: 4px; background: #f5f6f4; }
+.bet-period-track::before { position: absolute; z-index: 1; top: 0; bottom: 0; left: 50%; width: 1px; background: #d7ddd7; content: ""; }
+.bet-period-bar { position: absolute; top: 2px; height: 9px; border-radius: 3px; }
+.bet-period-bar.gain { background: #63a37c; }
+.bet-period-bar.loss { background: #d7816d; }
+.bet-period-row > strong { overflow: hidden; font-size: 9px; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+.bet-period-row > small { color: #99a29c; font-size: 8px; text-align: right; white-space: nowrap; }
+.bet-breakdown-wrap { overflow-x: auto; }
+.bet-breakdown-table { width: 100%; border-collapse: collapse; text-align: left; }
+.bet-breakdown-table th { padding: 8px 5px; border-bottom: 1px solid #eef0ed; color: #a1aaa4; font-size: 7px; font-weight: 700; letter-spacing: .45px; white-space: nowrap; }
+.bet-breakdown-table td { padding: 9px 5px; border-bottom: 1px solid #f0f2ef; color: #58645c; font-size: 9px; white-space: nowrap; }
+.bet-breakdown-table tbody tr:last-child td { border-bottom: 0; }
+.bet-breakdown-label { max-width: 125px; overflow: hidden; text-overflow: ellipsis; }
+.bet-breakdown-label small { display: block; margin-top: 3px; color: #9ba49e; font-size: 7px; }
+.bet-analysis-empty { min-height: 80px; display: grid; place-items: center; color: #97a099; font-size: 9px; }
+.bet-extremes-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+.bet-extreme { min-width: 0; display: grid; gap: 5px; padding: 11px 12px; border: 1px solid #eef0ed; border-radius: 7px; background: #fbfcfb; }
+.bet-extreme > strong { font: 700 16px "Manrope",sans-serif; }
+.bet-extreme > small { overflow: hidden; color: #89948c; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .bet-history-panel { min-width: 0; overflow: hidden; }
 .bet-history-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 17px 18px 13px; }
 .bet-history-heading h2 { margin: 0; color: #304037; font: 700 14px "Manrope",sans-serif; }
@@ -520,6 +553,8 @@ h1 { margin: 9px 0 5px; color: #25352c; font: 700 24px "Manrope", sans-serif; le
 
 @media (max-width: 900px) {
   .bet-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .bet-quick-stats { grid-template-columns: repeat(3,minmax(0,1fr)); }
+  .bet-analytics-grid { grid-template-columns: minmax(0,1fr); }
   .bet-history-heading { align-items: flex-start; flex-direction: column; }
   .bet-filter-tools { width: 100%; flex-wrap: wrap; }
   .bet-search { flex: 1; }
@@ -532,6 +567,12 @@ h1 { margin: 9px 0 5px; color: #25352c; font: 700 24px "Manrope", sans-serif; le
   .bet-metric { min-height: 91px; padding: 12px 10px; }
   .bet-metric strong { font-size: 16px; }
   .bet-metric small { font-size: 7px; }
+  .bet-detail-panel { padding: 14px 11px 12px; }
+  .bet-quick-stats { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .bet-period-row { grid-template-columns: 60px minmax(35px,1fr) 78px; gap: 6px; }
+  .bet-period-row > small { grid-column: 2 / -1; margin-top: -4px; }
+  .bet-breakdown-table { min-width: 390px; }
+  .bet-extremes-grid { grid-template-columns: minmax(0,1fr); }
   .bet-history-heading { padding: 14px 11px 11px; }
   .bet-filter-tools > select { max-width: none; flex: 1; }
   .bet-modal { padding-right: 16px; padding-left: 16px; }

@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Check, CircleHelp, Plus, Search, Ticket, Trash2, Upload, X } from "lucide-react";
 import type { BetCategory, BetRecord, BetStatus } from "./types";
 import { betCategories } from "./types";
+import { getBettingInsights, type BetAggregate } from "./lib/bettingInsights";
 
 interface BettingPageProps {
   bets: BetRecord[];
@@ -29,6 +30,16 @@ function formatCurrency(amount: number, currency: string): string {
   }).format(amount);
 }
 
+function formatPercent(value: number | null): string {
+  return value === null
+    ? "—"
+    : `${new Intl.NumberFormat("en-NG", { maximumFractionDigits: 1 }).format(value)}%`;
+}
+
+function formatSignedCurrency(amount: number, currency: string): string {
+  return `${amount > 0 ? "+" : ""}${formatCurrency(amount, currency)}`;
+}
+
 function localDate(): string {
   const today = new Date();
   return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
@@ -53,25 +64,28 @@ export default function BettingPage({
   const [stake, setStake] = useState("");
   const [returnAmount, setReturnAmount] = useState("");
   const [events, setEvents] = useState("");
+  const [breakdownMode, setBreakdownMode] = useState<"category" | "betType" | "source">("category");
+  const [timeMode, setTimeMode] = useState<"month" | "day">("month");
   const normalizedQuery = query.trim().toLowerCase();
   const filteredBets = useMemo(() => bets
     .filter((bet) => categoryFilter === "All categories" || bet.category === categoryFilter)
     .filter((bet) => statusFilter === "All outcomes" || bet.status === statusFilter)
     .filter((bet) => !normalizedQuery || `${bet.events.join(" ")} ${bet.source} ${bet.betType}`.toLowerCase().includes(normalizedQuery))
     .sort((a, b) => b.date.localeCompare(a.date)), [bets, categoryFilter, statusFilter, normalizedQuery]);
-  const settledBets = bets.filter((bet) => bet.status !== "open" && bet.status !== "other");
-  const totalStaked = bets.reduce((sum, bet) => sum + bet.stake, 0);
-  const totalReturned = bets.reduce((sum, bet) => sum + bet.returnAmount, 0);
-  const settledNet = settledBets.reduce((sum, bet) => sum + bet.returnAmount - bet.stake, 0);
-  const decisiveBets = bets.filter((bet) => bet.status === "won" || bet.status === "lost");
-  const wins = bets.filter((bet) => bet.status === "won").length;
-  const winRate = decisiveBets.length ? Math.round((wins / decisiveBets.length) * 100) : 0;
+  const insights = useMemo(() => getBettingInsights(bets), [bets]);
   const outcomes: BetStatus[] = ["won", "lost", "open", "void", "cashed-out", "other"];
   const outcomeCounts = outcomes.map((outcome) => ({
     status: outcome,
-    count: bets.filter((bet) => bet.status === outcome).length,
+    count: insights.outcomeCounts[outcome],
   }));
   const outcomeTotal = Math.max(bets.length, 1);
+  const breakdownRows = breakdownMode === "category"
+    ? insights.byCategory
+    : breakdownMode === "betType"
+      ? insights.byBetType
+      : insights.bySource;
+  const timeRows = timeMode === "month" ? insights.byMonth : insights.byDay;
+  const maxPeriodNet = Math.max(1, ...timeRows.map((row) => Math.abs(row.net)));
 
   const submitBet = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -114,11 +128,27 @@ export default function BettingPage({
       </div>
 
       <div className="bet-metrics">
-        <BetMetric label="TOTAL STAKED" value={formatCurrency(totalStaked, currency)} detail={`${bets.length} bet${bets.length === 1 ? "" : "s"} recorded`} />
-        <BetMetric label="TOTAL RETURNED" value={formatCurrency(totalReturned, currency)} detail="Amounts shown by the source page" />
-        <BetMetric label="SETTLED NET" value={`${settledNet > 0 ? "+" : ""}${formatCurrency(settledNet, currency)}`} detail="Returns minus stakes on settled bets" tone={settledNet >= 0 ? "positive" : "negative"} />
-        <BetMetric label="WIN RATE" value={decisiveBets.length ? `${winRate}%` : "—"} detail={`${wins} won · ${decisiveBets.length - wins} lost`} />
+        <BetMetric label="BET RECORDS" value={String(insights.betCount)} detail={`${insights.activeDays} active date${insights.activeDays === 1 ? "" : "s"}`} />
+        <BetMetric label="TOTAL STAKED" value={formatCurrency(insights.totalStaked, currency)} detail="All records, including open and unknown" />
+        <BetMetric label="TOTAL RETURNED" value={formatCurrency(insights.totalReturned, currency)} detail="Recorded returns across all bets" />
+        <BetMetric label="SETTLED NET" value={formatSignedCurrency(insights.settledNet, currency)} detail={`${insights.settledCount} resolved bets · open/unknown excluded`} tone={insights.settledNet >= 0 ? "positive" : "negative"} />
+        <BetMetric label="SETTLED ROI" value={formatPercent(insights.roi)} detail="Resolved net ÷ resolved stake" tone={insights.roi === null || insights.roi >= 0 ? "positive" : "negative"} />
+        <BetMetric label="WIN RATE" value={formatPercent(insights.winRate)} detail={`${insights.wins} wins ÷ ${insights.decisiveCount} won/lost bets`} />
+        <BetMetric label="OPEN STAKE" value={formatCurrency(insights.openStake, currency)} detail={`${insights.openCount} open bet${insights.openCount === 1 ? "" : "s"} · not counted as profit`} />
+        <BetMetric label="AVERAGE STAKE" value={insights.averageStake === null ? "—" : formatCurrency(insights.averageStake, currency)} detail="Mean stake across all records" />
       </div>
+
+      <section className="panel bet-detail-panel">
+        <div className="panel-heading"><div><div className="panel-kicker">MORE PERFORMANCE STATS</div><h2>Stake distribution and outcomes</h2></div></div>
+        <div className="bet-quick-stats">
+          <QuickStat label="MEDIAN STAKE" value={insights.medianStake === null ? "—" : formatCurrency(insights.medianStake, currency)} />
+          <QuickStat label="AVG. SETTLED NET" value={insights.averageSettledNet === null ? "—" : formatSignedCurrency(insights.averageSettledNet, currency)} />
+          <QuickStat label="RETURN / SETTLED STAKE" value={formatPercent(insights.settledReturnRate)} detail="Gross return; returned stake is included" />
+          <QuickStat label="WIN / LOSS / EVEN" value={`${insights.positiveSettledCount} / ${insights.negativeSettledCount} / ${insights.evenSettledCount}`} />
+          <QuickStat label="EVENTS CAPTURED" value={String(insights.capturedEvents)} detail={`${insights.hiddenEvents} hidden by source · ${insights.averageEventsPerBet?.toFixed(1) ?? "—"} average per bet`} />
+        </div>
+        <p className="bet-analysis-note">ROI is settled net divided by settled stake. Return rate is gross settled return divided by settled stake, including returned stake. Win rate counts only won and lost bets. Void and cashed-out returns are included in settled net; open and “other” records are excluded.</p>
+      </section>
 
       <section className="panel bet-outcomes-panel">
         <div className="panel-heading"><div><div className="panel-kicker">OUTCOME MIX</div><h2>How the recorded bets settled</h2></div><span className="bet-outcome-total">{bets.length} total</span></div>
@@ -138,6 +168,65 @@ export default function BettingPage({
         ) : (
           <div className="bet-empty-chart"><Ticket size={18} />Import a saved SportyBet page or add your first bet to see outcomes here.</div>
         )}
+      </section>
+
+      <div className="bet-analytics-grid">
+        <section className="panel bet-detail-panel">
+          <div className="panel-heading bet-analysis-heading">
+            <div><div className="panel-kicker">TIME TREND</div><h2>Settled net by {timeMode}</h2></div>
+            <select value={timeMode} onChange={(event) => setTimeMode(event.target.value as "month" | "day")} aria-label="Group time trend by">
+              <option value="month">Month</option><option value="day">Day</option>
+            </select>
+          </div>
+          {timeRows.length ? (
+            <div className="bet-period-list">
+              {timeRows.map((row) => (
+                <div className="bet-period-row" key={row.label}>
+                  <span className="bet-period-label">{timeMode === "month" ? formatBetMonth(row.label) : formatBetDate(row.label)}</span>
+                  <div className="bet-period-track" aria-label={`${row.label}: ${formatSignedCurrency(row.net, currency)}`}>
+                    <i className={`bet-period-bar ${row.net < 0 ? "loss" : "gain"}`} style={{
+                      width: `${(Math.abs(row.net) / maxPeriodNet) * 50}%`,
+                      left: row.net >= 0 ? "50%" : undefined,
+                      right: row.net < 0 ? "50%" : undefined,
+                    }} />
+                  </div>
+                  <strong className={row.net < 0 ? "bet-net-negative" : row.net > 0 ? "bet-net-positive" : ""}>{formatSignedCurrency(row.net, currency)}</strong>
+                  <small>{row.betCount} bet{row.betCount === 1 ? "" : "s"} · {row.wins}W/{row.losses}L</small>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="bet-analysis-empty">Add dated bet records to see a time trend.</div>
+          )}
+        </section>
+
+        <section className="panel bet-detail-panel">
+          <div className="panel-heading bet-analysis-heading">
+            <div><div className="panel-kicker">PERFORMANCE BREAKDOWN</div><h2>By category, type, or source</h2></div>
+            <select value={breakdownMode} onChange={(event) => setBreakdownMode(event.target.value as "category" | "betType" | "source")} aria-label="Break down performance by">
+              <option value="category">Category</option><option value="betType">Bet type</option><option value="source">Source</option>
+            </select>
+          </div>
+          {breakdownRows.length ? (
+            <div className="bet-breakdown-wrap">
+              <table className="bet-breakdown-table">
+                <thead><tr><th>{breakdownMode === "betType" ? "BET TYPE" : breakdownMode.toUpperCase()}</th><th>BETS</th><th>SETTLED NET</th><th>ROI</th><th>WIN RATE</th></tr></thead>
+                <tbody>{breakdownRows.map((row) => <BreakdownRow key={row.label} row={row} currency={currency} />)}</tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="bet-analysis-empty">No bet records to compare yet.</div>
+          )}
+          <p className="bet-analysis-note">Groups include every record in the count; net, ROI, and win rate follow the definitions above.</p>
+        </section>
+      </div>
+
+      <section className="panel bet-detail-panel">
+        <div className="panel-heading"><div><div className="panel-kicker">RECORD EXTREMES</div><h2>Highest and lowest settled net</h2></div></div>
+        <div className="bet-extremes-grid">
+          <BetExtreme label="HIGHEST NET" bet={insights.bestBet} currency={currency} empty="No settled bets yet." />
+          <BetExtreme label="LOWEST NET" bet={insights.lowestNetBet} currency={currency} empty="No settled bets yet." />
+        </div>
       </section>
 
       <section className="panel bet-history-panel">
@@ -220,8 +309,46 @@ function BetMetric({ label, value, detail, tone = "" }: { label: string; value: 
   return <section className={`panel bet-metric ${tone}`}><span>{label}</span><strong>{value}</strong><small>{detail}</small></section>;
 }
 
+function QuickStat({ label, value, detail }: { label: string; value: string; detail?: string }) {
+  return <div className="bet-quick-stat"><span>{label}</span><strong>{value}</strong>{detail && <small>{detail}</small>}</div>;
+}
+
+function BreakdownRow({ row, currency }: { row: BetAggregate; currency: string }) {
+  return (
+    <tr>
+      <td className="bet-breakdown-label" title={row.label}>{row.label}<small>{row.wins}W · {row.losses}L · {row.settledCount} resolved</small></td>
+      <td>{row.betCount}</td>
+      <td className={row.net > 0 ? "bet-net-positive" : row.net < 0 ? "bet-net-negative" : ""}>{formatSignedCurrency(row.net, currency)}</td>
+      <td>{formatPercent(row.roi)}</td>
+      <td>{formatPercent(row.winRate)}</td>
+    </tr>
+  );
+}
+
+function BetExtreme({ label, bet, currency, empty }: { label: string; bet: BetRecord | null; currency: string; empty: string }) {
+  const net = bet ? bet.returnAmount - bet.stake : 0;
+  return (
+    <div className="bet-extreme">
+      <span>{label}</span>
+      {bet ? (
+        <>
+          <strong className={net >= 0 ? "bet-net-positive" : "bet-net-negative"}>{formatSignedCurrency(net, currency)}</strong>
+          <small>{formatBetDate(bet.date)} · {bet.category} · {bet.betType}</small>
+          <small>{bet.events.length ? bet.events.slice(0, 2).join(" · ") : "No event details in source"}</small>
+        </>
+      ) : <small>{empty}</small>}
+    </div>
+  );
+}
+
 function formatBetDate(value: string): string {
   const date = new Date(`${value}T00:00:00`);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat("en-NG", { day: "numeric", month: "short", year: "numeric" }).format(date);
+}
+
+function formatBetMonth(value: string): string {
+  const date = new Date(`${value}-01T00:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("en-NG", { month: "short", year: "numeric" }).format(date);
 }
