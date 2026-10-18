@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import * as XLSX from "xlsx";
 import { parseTransactionsCsv, transactionsToCsv } from "./csv.ts";
+import { parseExcelStatement } from "./excelImport.ts";
 import { calculateTotals, getCategoryTotals } from "./insights.ts";
+import { parsePdfPages } from "./pdfText.ts";
+import { savedForGoal, savingsSummary } from "./savings.ts";
+import { normaliseBets, parseSportyBetPage } from "./sportyBetImport.ts";
 
 describe("parseTransactionsCsv", () => {
   it("reads debit and credit columns and Nigerian day-first dates", () => {
@@ -95,6 +100,14 @@ describe("parseTransactionsCsv", () => {
     assert.equal(result.transactions[0].amount, 120000);
     assert.equal(result.skipped, 0);
   });
+
+  it("accepts named-month dates used in some statement exports", () => {
+    const result = parseTransactionsCsv(
+      "Date,Description,Debit,Credit\n16-Oct-2026,Market purchase,3500,",
+      "statement.csv",
+    );
+    assert.equal(result.transactions[0].date, "2026-10-16");
+  });
 });
 
 describe("insights and export", () => {
@@ -120,5 +133,125 @@ describe("insights and export", () => {
       "bank.csv",
     ).transactions;
     assert.match(transactionsToCsv(transactions), /"Market, Lagos"/);
+  });
+});
+
+describe("statement file imports", () => {
+  it("parses a legacy XLS workbook using the existing transaction mapper", () => {
+    const workbook = XLSX.utils.book_new();
+    const sheet = XLSX.utils.aoa_to_sheet([
+      ["Date", "Narration", "Debit", "Credit"],
+      [new Date("2026-10-16T00:00:00Z"), "Market purchase", 3500, ""],
+    ]);
+    XLSX.utils.book_append_sheet(workbook, sheet, "Transactions");
+    const data = XLSX.write(workbook, { bookType: "xls", type: "array" });
+    const result = parseExcelStatement(data, "access_bank.xls");
+
+    assert.equal(result.transactions.length, 1);
+    assert.equal(result.transactions[0].date, "2026-10-16");
+    assert.equal(result.transactions[0].source, "Access Bank");
+    assert.equal(result.transactions[0].amount, 3500);
+    assert.equal(result.transactions[0].direction, "expense");
+  });
+
+  it("maps positioned PDF table columns into transactions", () => {
+    const item = (str, x, y) => ({ str, transform: [1, 0, 0, 1, x, y] });
+    const result = parsePdfPages([[
+      item("Date", 20, 700),
+      item("Narration", 100, 700),
+      item("Debit", 350, 700),
+      item("Credit", 445, 700),
+      item("16/10/2026", 20, 680),
+      item("POS purchase at Shoprite", 100, 680),
+      item("1,250.00", 350, 680),
+    ]], "access_bank.pdf");
+
+    assert.equal(result.transactions.length, 1);
+    assert.equal(result.transactions[0].date, "2026-10-16");
+    assert.equal(result.transactions[0].direction, "expense");
+    assert.equal(result.transactions[0].amount, 1250);
+    assert.equal(result.transactions[0].category, "Food & groceries");
+  });
+
+  it("explains when a PDF has no selectable text", () => {
+    const result = parsePdfPages([[]], "scanned.pdf");
+    assert.equal(result.transactions.length, 0);
+    assert.match(result.warnings[0], /no selectable text/);
+  });
+});
+
+describe("savings goals", () => {
+  const goals = [
+    {
+      id: "goal-1",
+      name: "Emergency fund",
+      targetAmount: 100000,
+      createdAt: "2026-10-01",
+      contributions: [
+        { id: "c1", date: "2026-10-01", amount: 20000 },
+        { id: "c2", date: "2026-10-16", amount: 5000 },
+      ],
+    },
+  ];
+
+  it("totals contributions and calculates overall goal progress", () => {
+    assert.equal(savedForGoal(goals[0]), 25000);
+    assert.deepEqual(savingsSummary(goals), {
+      saved: 25000,
+      target: 100000,
+      remaining: 75000,
+      progress: 0.25,
+    });
+  });
+});
+
+describe("SportyBet page imports", () => {
+  it("extracts bet history from a saved MHTML page", () => {
+    const mhtml = [
+      'MIME-Version: 1.0',
+      'Content-Type: multipart/related; boundary="snap"',
+      '',
+      '--snap',
+      'Content-Type: text/html; charset=UTF-8',
+      'Content-Transfer-Encoding: quoted-printable',
+      '',
+      '<html><div data-op="bet-history-card-261017123456ord123">',
+      '<span>17</span><span>Oct</span><span>Multiple</span><span>Won</span>',
+      '<div>Total Stake(NGN)</div><div>100.00</div>',
+      '<div>Total Return</div><div>250.00</div>',
+      '<li>Team A v Team B</li><div>...(and 2 other matches)</div><div>Remix Bet</div></div></html>',
+      '--snap--',
+    ].join("\r\n");
+    const result = parseSportyBetPage(mhtml);
+
+    assert.equal(result.bets.length, 1);
+    assert.equal(result.bets[0].date, "2026-10-17");
+    assert.equal(result.bets[0].status, "won");
+    assert.equal(result.bets[0].stake, 100);
+    assert.equal(result.bets[0].returnAmount, 250);
+    assert.deepEqual(result.bets[0].events, ["Team A v Team B"]);
+    assert.equal(result.bets[0].hiddenEvents, 2);
+    assert.equal(result.bets[0].category, "Unclassified");
+    assert.deepEqual(result.warnings, []);
+  });
+
+  it("sanitises saved betting records and excludes invalid rows", () => {
+    const bets = normaliseBets([
+      {
+        id: "valid",
+        date: "2026-10-17",
+        category: "Football",
+        betType: "Multiple",
+        status: "won",
+        stake: 100,
+        returnAmount: 250,
+        events: ["Team A v Team B"],
+        hiddenEvents: 0,
+        source: "SportyBet",
+      },
+      { id: "invalid", stake: -100 },
+    ]);
+    assert.equal(bets.length, 1);
+    assert.equal(bets[0].category, "Football");
   });
 });

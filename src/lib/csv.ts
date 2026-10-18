@@ -139,10 +139,36 @@ function parseDate(value: string): string | null {
 
   const dayFirst = input.match(/^(\d{1,2})[/. -](\d{1,2})[/. -](\d{2,4})/);
   if (dayFirst) {
-    let [, day, month, year] = dayFirst;
+    let [, first, second, year] = dayFirst;
     if (year.length === 2) year = `${Number(year) > 49 ? "19" : "20"}${year}`;
+    let day = first;
+    let month = second;
+    if (Number(first) <= 12 && Number(second) > 12) {
+      day = second;
+      month = first;
+    }
     return validDate(Number(year), Number(month), Number(day));
   }
+
+  const monthNames: Record<string, number> = {
+    jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3,
+    apr: 4, april: 4, may: 5, jun: 6, june: 6, jul: 7, july: 7,
+    aug: 8, august: 8, sep: 9, sept: 9, september: 9, oct: 10,
+    october: 10, nov: 11, november: 11, dec: 12, december: 12,
+  };
+  const dayMonth = input.match(/^(\d{1,2})[-/ ,]+([A-Za-z]{3,9})[-/ ,]+(\d{2,4})/);
+  const monthFirst = input.match(/^([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(\d{2,4})/);
+  const namedDate = dayMonth
+    ? { day: dayMonth[1], month: monthNames[dayMonth[2].toLowerCase()], year: dayMonth[3] }
+    : monthFirst
+      ? { day: monthFirst[2], month: monthNames[monthFirst[1].toLowerCase()], year: monthFirst[3] }
+      : null;
+  if (namedDate?.month) {
+    let year = namedDate.year;
+    if (year.length === 2) year = `${Number(year) > 49 ? "19" : "20"}${year}`;
+    return validDate(Number(year), namedDate.month, Number(namedDate.day));
+  }
+
   return null;
 }
 

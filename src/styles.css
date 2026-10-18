@@ -328,3 +328,160 @@ h1 { margin: 9px 0 5px; color: #25352c; font: 700 24px "Manrope", sans-serif; le
   .category-chart-layout--large .donut-wrap { width: 125px; height: 125px; flex-basis: 125px; }
   .category-chart-layout--large .donut-chart { width: 125px; height: 125px; }
 }
+
+.savings-page { display: grid; gap: 15px; }
+.savings-overview { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 13px; }
+.savings-total-card { min-height: 91px; display: flex; align-items: center; gap: 12px; padding: 15px 17px; }
+.savings-total-icon { width: 34px; height: 34px; flex: 0 0 34px; display: grid; place-items: center; border-radius: 9px; color: #347957; background: #eaf4ed; }
+.savings-target-icon { color: #7767ad; background: #f0eef9; }
+.savings-total-card > div { min-width: 0; display: grid; gap: 5px; }
+.savings-label { color: #98a29b; font-size: 8px; font-weight: 700; letter-spacing: .8px; }
+.savings-total-card strong { overflow: hidden; color: #2d3c33; font: 700 19px "Manrope",sans-serif; letter-spacing: -.4px; text-overflow: ellipsis; white-space: nowrap; }
+.savings-total-note { margin-left: auto; color: #9aa39d; font-size: 9px; white-space: nowrap; }
+.savings-chart-panel { padding: 17px 18px 14px; }
+.savings-chart-panel .panel-heading { align-items: center; margin-bottom: 8px; }
+.savings-chart-caption { color: #9aa39d; font-size: 9px; }
+.savings-chart-wrap { width: 100%; overflow-x: auto; }
+.savings-goal-chart { display: block; width: 100%; min-width: 430px; height: auto; overflow: visible; }
+.savings-chart-label { fill: #526158; font: 600 10px "DM Sans",sans-serif; }
+.savings-chart-percent { fill: #367957; font: 700 10px "DM Sans",sans-serif; }
+.savings-chart-track { fill: #edf1ed; }
+.savings-chart-fill { fill: #4e9a72; transition: width .25s ease; }
+.savings-chart-amount { fill: #9aa39d; font: 9px "DM Sans",sans-serif; }
+.savings-chart-empty { min-height: 94px; display: flex; align-items: center; justify-content: center; gap: 9px; color: #98a29b; font-size: 10px; }
+.savings-chart-empty svg { color: #75a185; }
+.savings-goal-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(290px,1fr)); gap: 13px; }
+.savings-goal-card { position: relative; min-width: 0; padding: 16px 17px 0; }
+.savings-delete { position: absolute; top: 10px; right: 10px; color: #9aa39d; }
+.savings-delete:hover { color: #b05d51; background: #fbefec; }
+.goal-card-main { min-height: 123px; display: flex; align-items: center; gap: 14px; padding-right: 20px; }
+.goal-ring { position: relative; width: 94px; height: 94px; flex: 0 0 94px; }
+.goal-ring svg { display: block; width: 100%; height: 100%; transform: rotate(-90deg); }
+.goal-ring-track,.goal-ring-value { fill: none; stroke-width: 8; }
+.goal-ring-track { stroke: #edf1ed; }
+.goal-ring-value { stroke: #4b946c; stroke-linecap: round; transition: stroke-dashoffset .3s ease; }
+.goal-ring-copy { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; }
+.goal-ring-copy strong { color: #34453a; font: 700 17px "Manrope",sans-serif; }
+.goal-ring-copy span { color: #9aa39d; font-size: 8px; }
+.goal-card-copy { min-width: 0; display: grid; gap: 5px; }
+.goal-card-copy h2 { margin: 0; overflow: hidden; color: #34443a; font: 700 14px "Manrope",sans-serif; text-overflow: ellipsis; white-space: nowrap; }
+.goal-card-copy p { margin: 0; color: #8b958e; font-size: 9px; line-height: 1.5; }
+.goal-card-copy p strong { color: #3d5144; font-weight: 700; }
+.goal-remaining { color: #5b8b6e; font-size: 9px; font-weight: 600; }
+.goal-card-footer { min-height: 50px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border-top: 1px solid #eff1ee; color: #9aa39d; font-size: 9px; }
+.savings-empty-state { min-height: 210px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; }
+.savings-empty-icon { width: 42px; height: 42px; display: grid; place-items: center; margin-bottom: 10px; border-radius: 12px; color: #397c59; background: #eaf4ed; }
+.savings-empty-state h2 { margin: 0 0 6px; color: #34443a; font: 700 15px "Manrope",sans-serif; }
+.savings-empty-state p { max-width: 420px; margin: 0 0 14px; color: #89938c; font-size: 10px; line-height: 1.6; }
+.savings-modal { width: min(100%,430px); }
+.savings-modal h2 { margin: 0 0 13px; color: #2f3f35; font: 700 18px "Manrope",sans-serif; letter-spacing: -.4px; }
+.savings-form { display: grid; gap: 12px; margin-top: 15px; }
+.savings-form label { display: grid; gap: 5px; color: #67736b; font-size: 10px; font-weight: 600; }
+.savings-form input { width: 100%; height: 39px; padding: 0 10px; border: 1px solid #e2e8e2; border-radius: 7px; color: #354239; background: #fff; font-size: 11px; }
+.savings-form input::placeholder { color: #b5bdb7; }
+.savings-form .modal-done { width: 100%; margin-top: 3px; }
+.savings-form-help { margin: -3px 0 10px; color: #849087; font-size: 10px; line-height: 1.55; }
+
+@media (max-width: 700px) {
+  .savings-overview { grid-template-columns: minmax(0,1fr); }
+  .savings-total-card { min-height: 82px; }
+  .savings-goal-grid { grid-template-columns: minmax(0,1fr); }
+}
+@media (max-width: 480px) {
+  .savings-total-card { gap: 9px; padding: 13px 11px; }
+  .savings-total-card strong { font-size: 16px; }
+  .savings-total-note { font-size: 8px; }
+  .savings-chart-panel { padding: 14px 12px; }
+  .goal-card-main { gap: 10px; }
+}
+
+.betting-page { display: grid; gap: 15px; }
+.bet-metrics { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; }
+.bet-metric { min-width: 0; min-height: 102px; display: flex; flex-direction: column; justify-content: center; gap: 7px; padding: 14px 15px; }
+.bet-metric > span { color: #9aa39d; font-size: 8px; font-weight: 700; letter-spacing: .8px; }
+.bet-metric strong { overflow: hidden; color: #314137; font: 700 19px "Manrope",sans-serif; letter-spacing: -.45px; text-overflow: ellipsis; white-space: nowrap; }
+.bet-metric small { color: #97a099; font-size: 8px; }
+.bet-metric.positive strong { color: #3b815c; }
+.bet-metric.negative strong { color: #bd6f58; }
+.bet-outcomes-panel { padding: 17px 18px 14px; }
+.bet-outcomes-panel .panel-heading { align-items: center; margin-bottom: 13px; }
+.bet-outcome-total { color: #99a29c; font-size: 9px; }
+.bet-outcome-chart { width: 100%; height: 15px; display: flex; overflow: hidden; border-radius: 8px; background: #f1f3f1; }
+.outcome-segment { min-width: 2px; height: 100%; }
+.outcome-won { background-color: #55a276; }
+.outcome-lost { background-color: #d7816d; }
+.outcome-open { background-color: #e7b65d; }
+.outcome-void { background-color: #91a0a6; }
+.outcome-cashed-out { background-color: #8578bd; }
+.outcome-other { background-color: #b2b8b2; }
+.bet-outcome-legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 11px; }
+.bet-outcome-legend span { display: inline-flex; align-items: center; gap: 5px; color: #87918a; font-size: 9px; }
+.bet-outcome-legend strong { color: #4d5a51; font-weight: 700; }
+.outcome-dot { width: 7px; height: 7px; display: inline-block; border-radius: 50%; }
+.bet-empty-chart { min-height: 66px; display: flex; align-items: center; justify-content: center; gap: 8px; color: #97a099; font-size: 10px; }
+.bet-empty-chart svg { color: #659175; }
+.bet-history-panel { min-width: 0; overflow: hidden; }
+.bet-history-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 17px 18px 13px; }
+.bet-history-heading h2 { margin: 0; color: #304037; font: 700 14px "Manrope",sans-serif; }
+.bet-filter-tools { display: flex; align-items: center; gap: 7px; }
+.bet-filter-tools > select { height: 32px; max-width: 150px; padding: 0 8px; border: 1px solid #e4e8e3; border-radius: 6px; color: #69756d; background: #fff; font-size: 9px; }
+.bet-search { height: 32px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid #e4e8e3; border-radius: 6px; color: #96a098; }
+.bet-search input { width: 118px; border: 0; outline: 0; color: #4e5a52; font-size: 9px; }
+.bet-search input::placeholder { color: #a6afa8; }
+.bet-table-wrap { max-height: 650px; overflow: auto; border-top: 1px solid #eef0ed; }
+.bet-table { width: 100%; min-width: 990px; border-collapse: collapse; text-align: left; }
+.bet-table th { position: sticky; top: 0; z-index: 1; padding: 9px 9px; border-bottom: 1px solid #eef0ed; color: #a1aaa4; background: #fff; font-size: 8px; font-weight: 700; letter-spacing: .65px; white-space: nowrap; }
+.bet-table td { padding: 10px 9px; border-bottom: 1px solid #f0f2ef; color: #58645c; font-size: 9px; vertical-align: middle; }
+.bet-table tbody tr:last-child td { border-bottom: 0; }
+.bet-date { color: #7e8981 !important; white-space: nowrap; }
+.bet-category-select { max-width: 120px; height: 25px; padding: 0 5px; border: 1px solid #e9ece7; border-radius: 5px; color: #647168; background: #f8faf8; font-size: 8px; }
+.bet-description { min-width: 250px; max-width: 370px; }
+.bet-description strong,.bet-description span,.bet-description small { display: block; }
+.bet-description strong { margin-bottom: 3px; color: #425047; font-size: 9px; font-weight: 700; }
+.bet-description span { overflow: hidden; color: #68756c; line-height: 1.5; text-overflow: ellipsis; }
+.bet-description small { margin-top: 3px; color: #a3aca5; font-size: 8px; }
+.bet-status { display: inline-flex; align-items: center; padding: 4px 6px; border-radius: 5px; font-size: 8px; font-weight: 600; white-space: nowrap; }
+.status-won { color: #367653; background: #eaf4ed; }
+.status-lost { color: #a96052; background: #fbefec; }
+.status-open { color: #9b742e; background: #faf4e7; }
+.status-void { color: #66777e; background: #eff2f3; }
+.status-cashed-out { color: #7264a7; background: #f0eef9; }
+.status-other { color: #748078; background: #f1f3f1; }
+.bet-amount-cell { text-align: right !important; white-space: nowrap; }
+.bet-net { font-weight: 600; }
+.bet-net-positive { color: #367653 !important; }
+.bet-net-negative { color: #b36554 !important; }
+.bet-delete { width: 27px; height: 27px; }
+.bet-empty-state { min-height: 210px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 23px; text-align: center; }
+.bet-empty-icon { width: 40px; height: 40px; display: grid; place-items: center; margin-bottom: 10px; border-radius: 12px; color: #4d855e; background: #ebf4ed; }
+.bet-empty-state > strong { color: #3c4a41; font: 700 13px "Manrope",sans-serif; }
+.bet-empty-state p { max-width: 430px; margin: 6px 0 13px; color: #909a93; font-size: 9px; line-height: 1.6; }
+.bet-modal { width: min(100%,500px); }
+.bet-modal h2 { margin: 0 0 5px; color: #2f3f35; font: 700 18px "Manrope",sans-serif; }
+.bet-form-help { margin: 0 0 12px; color: #87918a; font-size: 9px; line-height: 1.55; }
+.bet-form { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+.bet-form label { min-width: 0; display: grid; gap: 5px; color: #69756d; font-size: 9px; font-weight: 600; }
+.bet-form input,.bet-form select,.bet-form textarea { width: 100%; min-width: 0; padding: 8px; border: 1px solid #e2e8e2; border-radius: 6px; color: #354239; background: #fff; font-size: 10px; }
+.bet-form input,.bet-form select { height: 35px; }
+.bet-form textarea { resize: vertical; }
+.bet-form .bet-event-field,.bet-form .bet-submit { grid-column: 1 / -1; }
+.bet-form .bet-submit { width: 100%; margin-top: 2px; }
+
+@media (max-width: 900px) {
+  .bet-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .bet-history-heading { align-items: flex-start; flex-direction: column; }
+  .bet-filter-tools { width: 100%; flex-wrap: wrap; }
+  .bet-search { flex: 1; }
+  .bet-search input { width: 100%; }
+}
+@media (max-width: 600px) {
+  .betting-page .page-heading { align-items: flex-start; flex-direction: column; gap: 14px; }
+  .betting-page .heading-actions { width: 100%; }
+  .betting-page .heading-actions .button { flex: 1; padding: 0 8px; font-size: 9px; }
+  .bet-metric { min-height: 91px; padding: 12px 10px; }
+  .bet-metric strong { font-size: 16px; }
+  .bet-metric small { font-size: 7px; }
+  .bet-history-heading { padding: 14px 11px 11px; }
+  .bet-filter-tools > select { max-width: none; flex: 1; }
+  .bet-modal { padding-right: 16px; padding-left: 16px; }
+}

@@ -16,17 +16,24 @@ import {
   LoaderCircle,
   LockKeyhole,
   Menu,
+  PiggyBank,
   Plus,
   Search,
   ShieldCheck,
   Sparkles,
+  Ticket,
   Trash2,
   TrendingDown,
   TrendingUp,
   Wallet,
   X,
 } from "lucide-react";
-import { parseTransactionsCsv, transactionsToCsv } from "./lib/csv";
+import { transactionsToCsv } from "./lib/csv";
+import { parseStatementFile } from "./lib/statementImport";
+import SavingsPage from "./SavingsPage";
+import BettingPage from "./BettingPage";
+import { normaliseSavingsGoals } from "./lib/savings";
+import { normaliseBets, parseSportyBetPage } from "./lib/sportyBetImport";
 import {
   calculateTotals,
   filterByPeriod,
@@ -35,9 +42,11 @@ import {
   largestExpense,
   type Period,
 } from "./lib/insights";
-import type { Category, Transaction } from "./types";
+import type { BetCategory, BetRecord, Category, SavingsContribution, SavingsGoal, Transaction } from "./types";
 
 const STORAGE_KEY = "spendwise.transactions.v1";
+const SAVINGS_STORAGE_KEY = "spendwise.savings-goals.v1";
+const BETS_STORAGE_KEY = "spendwise.bets.v1";
 const currency = "NGN";
 const periodOptions: { value: Period; label: string }[] = [
   { value: "30d", label: "Last 30 days" },
@@ -72,6 +81,22 @@ function readStoredTransactions(): Transaction[] {
         (item.direction === "income" || item.direction === "expense") &&
         typeof item.source === "string",
     );
+  } catch {
+    return [];
+  }
+}
+
+function readStoredSavingsGoals(): SavingsGoal[] {
+  try {
+    return normaliseSavingsGoals(JSON.parse(localStorage.getItem(SAVINGS_STORAGE_KEY) ?? "[]"));
+  } catch {
+    return [];
+  }
+}
+
+function readStoredBets(): BetRecord[] {
+  try {
+    return normaliseBets(JSON.parse(localStorage.getItem(BETS_STORAGE_KEY) ?? "[]"));
   } catch {
     return [];
   }
@@ -144,8 +169,10 @@ function createDemoTransactions(): Transaction[] {
 
 function App() {
   const [transactions, setTransactions] = useState<Transaction[]>(readStoredTransactions);
+  const [savingsGoals, setSavingsGoals] = useState<SavingsGoal[]>(readStoredSavingsGoals);
+  const [bets, setBets] = useState<BetRecord[]>(readStoredBets);
   const [period, setPeriod] = useState<Period>("30d");
-  const [activePage, setActivePage] = useState<"overview" | "transactions" | "insights">("overview");
+  const [activePage, setActivePage] = useState<"overview" | "transactions" | "insights" | "savings" | "betting">("overview");
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("All categories");
   const [directionFilter, setDirectionFilter] = useState("All types");
@@ -155,6 +182,7 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showPrivacy, setShowPrivacy] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const betFileInput = useRef<HTMLInputElement>(null);
 
   const withinPeriod = useMemo(() => filterByPeriod(transactions, period), [transactions, period]);
   const totals = useMemo(() => calculateTotals(withinPeriod), [withinPeriod]);
@@ -219,10 +247,29 @@ function App() {
     }
   };
 
+  const updateSavingsGoals = (next: SavingsGoal[]) => {
+    setSavingsGoals(next);
+    try {
+      localStorage.setItem(SAVINGS_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      notify("Could not save your goals in this browser. Export or note them before closing this tab.");
+    }
+  };
+
+  const updateBets = (next: BetRecord[]) => {
+    setBets(next);
+    try {
+      localStorage.setItem(BETS_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      notify("Could not save betting records in this browser. Export or note them before closing this tab.");
+    }
+  };
+
   const importFiles = async (files: FileList | File[]) => {
-    const csvFiles = Array.from(files).filter((file) => file.name.toLowerCase().endsWith(".csv"));
-    if (csvFiles.length === 0) {
-      notify("Choose a CSV statement to import.");
+    const selectedFiles = Array.from(files);
+    const statementFiles = selectedFiles.filter((file) => /\.(csv|xls|xlsx|pdf)$/i.test(file.name));
+    if (statementFiles.length === 0) {
+      notify("Choose a CSV, Excel (.xls/.xlsx), or text-based PDF statement.");
       return;
     }
     setImporting(true);
@@ -230,37 +277,116 @@ function App() {
     let skipped = 0;
     const messages: string[] = [];
 
-    for (const file of csvFiles) {
-      try {
-        const result = parseTransactionsCsv(await file.text(), file.name);
-        imported.push(...result.transactions);
-        skipped += result.skipped;
-        messages.push(...result.warnings);
-      } catch {
-        messages.push(`${file.name} could not be read.`);
+    try {
+      for (const file of statementFiles) {
+        try {
+          const result = await parseStatementFile(file);
+          imported.push(...result.transactions);
+          skipped += result.skipped;
+          messages.push(...result.warnings.map((warning) => `${file.name}: ${warning}`));
+        } catch {
+          messages.push(`${file.name} could not be read. Scanned or password-protected PDFs may need to be exported as CSV or Excel.`);
+        }
       }
-    }
 
-    const existingKeys = new Set(
-      transactions.map((transaction) => `${transaction.date}|${transaction.description.toLowerCase()}|${transaction.amount}|${transaction.source}`),
-    );
-    const newTransactions = imported.filter((transaction) => {
-      const key = `${transaction.date}|${transaction.description.toLowerCase()}|${transaction.amount}|${transaction.source}`;
-      if (existingKeys.has(key)) return false;
-      existingKeys.add(key);
-      return true;
-    });
-    if (newTransactions.length) {
-      updateTransactions([...transactions, ...newTransactions]);
-      notify(`${newTransactions.length} transaction${newTransactions.length === 1 ? "" : "s"} imported${skipped ? ` · ${skipped} skipped` : ""}.`);
-      setActivePage("overview");
-    } else if (imported.length) {
-      notify("Those transactions are already in your history.");
-    } else {
-      notify(messages[0] ?? "No transactions could be imported. Check the CSV columns and try again.");
+      const existingKeys = new Set(
+        transactions.map((transaction) => `${transaction.date}|${transaction.description.toLowerCase()}|${transaction.amount}|${transaction.source}`),
+      );
+      const newTransactions = imported.filter((transaction) => {
+        const key = `${transaction.date}|${transaction.description.toLowerCase()}|${transaction.amount}|${transaction.source}`;
+        if (existingKeys.has(key)) return false;
+        existingKeys.add(key);
+        return true;
+      });
+      if (newTransactions.length) {
+        updateTransactions([...transactions, ...newTransactions]);
+        notify(`${newTransactions.length} transaction${newTransactions.length === 1 ? "" : "s"} imported${skipped ? ` · ${skipped} skipped` : ""}.`);
+        setActivePage("overview");
+      } else if (imported.length) {
+        notify("Those transactions are already in your history.");
+      } else {
+        notify(messages[0] ?? "No transactions could be imported. Check the statement columns and try again.");
+      }
+    } finally {
+      setImporting(false);
+      if (fileInput.current) fileInput.current.value = "";
     }
-    setImporting(false);
-    if (fileInput.current) fileInput.current.value = "";
+  };
+
+  const importBetPage = async (files: FileList | File[]) => {
+    const file = Array.from(files).find((item) => /\.(mhtml|mht|html|htm)$/i.test(item.name));
+    if (!file) {
+      notify("Choose a saved SportyBet page (.mhtml, .mht, or .html).");
+      return;
+    }
+    setActivePage("betting");
+    setImporting(true);
+    try {
+      const result = parseSportyBetPage(await file.text());
+      const existingIds = new Set(bets.map((bet) => bet.id));
+      const newBets = result.bets.filter((bet) => {
+        if (existingIds.has(bet.id)) return false;
+        existingIds.add(bet.id);
+        return true;
+      });
+      if (newBets.length) {
+        updateBets([...bets, ...newBets]);
+        setActivePage("betting");
+        notify(`${newBets.length} bet${newBets.length === 1 ? "" : "s"} imported${result.warnings.length ? ` · ${result.warnings[0]}` : ""}.`);
+      } else if (result.bets.length) {
+        setActivePage("betting");
+        notify("Those betting records are already in your ledger.");
+      } else {
+        notify(result.warnings[0] ?? "No bet records could be extracted from this page.");
+      }
+    } catch {
+      notify("This saved page could not be read. Try saving SportyBet as a complete web page (.mhtml).");
+    } finally {
+      setImporting(false);
+      if (betFileInput.current) betFileInput.current.value = "";
+    }
+  };
+
+  const createBetRecord = (bet: Omit<BetRecord, "id">) => {
+    const id = globalThis.crypto?.randomUUID?.() ?? `bet-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
+    updateBets([...bets, { ...bet, id }]);
+    notify("Bet record added.");
+  };
+
+  const updateBetCategory = (betId: string, category: BetCategory) => {
+    updateBets(bets.map((bet) => bet.id === betId ? { ...bet, category } : bet));
+  };
+
+  const deleteBetRecord = (betId: string) => {
+    updateBets(bets.filter((bet) => bet.id !== betId));
+    notify("Bet record deleted.");
+  };
+
+  const createSavingsGoal = (name: string, targetAmount: number, startingAmount: number) => {
+    const id = globalThis.crypto?.randomUUID?.() ?? `goal-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
+    const date = localIsoDate(new Date());
+    const contributions: SavingsContribution[] = startingAmount > 0
+      ? [{ id: `${id}-starting`, date, amount: startingAmount }]
+      : [];
+    updateSavingsGoals([...savingsGoals, { id, name, targetAmount, createdAt: date, contributions }]);
+    notify(`“${name}” savings goal created.`);
+  };
+
+  const addSavingsContribution = (goalId: string, amount: number) => {
+    const id = globalThis.crypto?.randomUUID?.() ?? `contribution-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
+    const date = localIsoDate(new Date());
+    const next = savingsGoals.map((goal) =>
+      goal.id === goalId
+        ? { ...goal, contributions: [...goal.contributions, { id, date, amount }] }
+        : goal,
+    );
+    updateSavingsGoals(next);
+    notify("Savings contribution recorded.");
+  };
+
+  const deleteSavingsGoal = (goalId: string) => {
+    updateSavingsGoals(savingsGoals.filter((goal) => goal.id !== goalId));
+    notify("Savings goal deleted.");
   };
 
   const exportCsv = () => {
@@ -320,12 +446,20 @@ function App() {
           <button className={activePage === "insights" ? "nav-item active" : "nav-item"} onClick={() => { setActivePage("insights"); setSidebarOpen(false); }}>
             <BarChart3 size={18} /><span>Insights</span>
           </button>
+          <button className={activePage === "savings" ? "nav-item active" : "nav-item"} onClick={() => { setActivePage("savings"); setSidebarOpen(false); }}>
+            <PiggyBank size={18} /><span>Savings</span>
+            {savingsGoals.length > 0 && <span className="nav-count">{savingsGoals.length}</span>}
+          </button>
+          <button className={activePage === "betting" ? "nav-item active" : "nav-item"} onClick={() => { setActivePage("betting"); setSidebarOpen(false); }}>
+            <Ticket size={18} /><span>Betting</span>
+            {bets.length > 0 && <span className="nav-count">{bets.length}</span>}
+          </button>
         </nav>
         <div className="sidebar-bottom">
           <div className="privacy-card">
             <div className="privacy-icon"><LockKeyhole size={16} /></div>
             <strong>Your data stays yours</strong>
-            <p>Statements are processed and stored in this browser only.</p>
+            <p>Imports and records are processed and stored in this browser only.</p>
             <button onClick={() => setShowPrivacy(true)}>How it works <ArrowUpRight size={13} /></button>
           </div>
           <div className="profile-row">
@@ -339,13 +473,16 @@ function App() {
       <main className="main-area">
         <header className="topbar">
           <button className="icon-button menu-toggle" aria-label="Open menu" onClick={() => setSidebarOpen(true)}><Menu size={19} /></button>
-          <div className="breadcrumbs"><span>My finances</span><span className="crumb-slash">/</span><strong>{activePage === "overview" ? "Overview" : activePage === "transactions" ? "Transactions" : "Insights"}</strong></div>
+          <div className="breadcrumbs"><span>My finances</span><span className="crumb-slash">/</span><strong>{activePage === "overview" ? "Overview" : activePage === "transactions" ? "Transactions" : activePage === "savings" ? "Savings" : activePage === "betting" ? "Betting" : "Insights"}</strong></div>
           <div className="topbar-actions">
             <span className="currency-badge">{currency}</span>
-            <button className="button button-primary top-import" onClick={() => fileInput.current?.click()}>
-              <Plus size={16} /> Import statement
-            </button>
-            <input ref={fileInput} className="visually-hidden" type="file" accept=".csv,text/csv" multiple onChange={(event) => event.target.files && void importFiles(event.target.files)} />
+            {activePage === "betting" ? (
+              <button className="button button-primary top-import" onClick={() => betFileInput.current?.click()}><Plus size={16} /> Import bets</button>
+            ) : (
+              <button className="button button-primary top-import" onClick={() => fileInput.current?.click()}><Plus size={16} /> Import statement</button>
+            )}
+            <input ref={fileInput} className="visually-hidden" type="file" accept=".csv,.xls,.xlsx,.pdf,text/csv,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple onChange={(event) => event.target.files && void importFiles(event.target.files)} />
+            <input ref={betFileInput} className="visually-hidden" type="file" accept=".mhtml,.mht,.html,.htm,application/x-mimearchive,text/html" onChange={(event) => event.target.files && void importBetPage(event.target.files)} />
           </div>
         </header>
 
@@ -482,6 +619,27 @@ function App() {
             </>
           )}
 
+          {activePage === "savings" && (
+            <SavingsPage
+              goals={savingsGoals}
+              currency={currency}
+              onCreateGoal={createSavingsGoal}
+              onAddContribution={addSavingsContribution}
+              onDeleteGoal={deleteSavingsGoal}
+            />
+          )}
+
+          {activePage === "betting" && (
+            <BettingPage
+              bets={bets}
+              currency={currency}
+              onImport={() => betFileInput.current?.click()}
+              onAddBet={createBetRecord}
+              onChangeCategory={updateBetCategory}
+              onDeleteBet={deleteBetRecord}
+            />
+          )}
+
           {activePage === "insights" && (
             <>
               <div className="page-heading">
@@ -541,7 +699,7 @@ function App() {
         </div>
       </main>
 
-      {importing && <div className="import-overlay"><div className="import-message"><LoaderCircle className="spin" size={22} /><strong>Reading your statement…</strong><span>Everything stays in this browser.</span></div></div>}
+      {importing && <div className="import-overlay"><div className="import-message"><LoaderCircle className="spin" size={22} /><strong>Reading your {activePage === "betting" ? "betting page" : "statement"}…</strong><span>Everything stays in this browser.</span></div></div>}
       {toast && <div className="toast" role="status"><Check size={16} />{toast}</div>}
       {showPrivacy && <PrivacyModal onClose={() => setShowPrivacy(false)} />}
     </div>
@@ -600,9 +758,9 @@ function EmptyState({ onImport, onDemo }: { onImport: () => void; onDemo: () => 
       </div>
       <div className="eyebrow"><span className="eyebrow-dot" /> YOUR PRIVATE MONEY DASHBOARD</div>
       <h2>Start with your transaction history.</h2>
-      <p>Import CSV statements from one or more banks. Spendwise will bring them together and show your income, spending, and patterns in one place.</p>
+       <p>Import CSV, Excel, or text-based PDF statements. Spendwise will bring them together and show your income, spending, and patterns in one place.</p>
       <div className="empty-actions"><button className="button button-primary" onClick={onImport}><CloudUpload size={17} /> Import a bank statement</button><button className="button button-text" onClick={onDemo}>Explore with sample data</button></div>
-      <div className="empty-foot"><LockKeyhole size={13} /> CSV files are read locally and never uploaded.</div>
+       <div className="empty-foot"><LockKeyhole size={13} /> Statements are read locally and never uploaded.</div>
     </section>
   );
 }
@@ -785,9 +943,9 @@ function PrivacyModal({ onClose }: { onClose: () => void }) {
         <button className="icon-button modal-close" onClick={onClose} aria-label="Close"><X size={18} /></button>
         <div className="privacy-modal-icon"><LockKeyhole size={21} /></div>
         <div className="panel-kicker">PRIVATE BY DESIGN</div>
-        <h2 id="privacy-heading">Your statement never leaves this browser.</h2>
-        <p>CSV files are read on your device. Imported rows are saved in this browser’s local storage so your dashboard is still here next time you open it.</p>
-        <ul><li><Check size={15} /> No bank login or credentials are collected</li><li><Check size={15} /> No transaction data is sent to a server</li><li><Check size={15} /> Use “Clear transactions” to remove local data</li></ul>
+         <h2 id="privacy-heading">Your records stay in this browser.</h2>
+          <p>Transaction statements and saved SportyBet pages are read on your device. Transactions, savings goals, and betting records are saved in this browser’s local storage.</p>
+         <ul><li><Check size={15} /> No bank login or credentials are collected</li><li><Check size={15} /> No financial records are sent to a server</li><li><Check size={15} /> Delete transaction, bet, and goal records from their own pages</li></ul>
         <p className="privacy-modal-note">If you clear browser data or switch devices, import your statements again. This starter does not yet connect directly to bank APIs.</p>
         <button className="button button-primary modal-done" onClick={onClose}>Got it</button>
       </section>

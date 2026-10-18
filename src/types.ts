@@ -27,3 +27,50 @@ export interface ImportResult {
   skipped: number;
   warnings: string[];
 }
+
+export interface SavingsContribution {
+  id: string;
+  date: string;
+  amount: number;
+}
+
+export interface SavingsGoal {
+  id: string;
+  name: string;
+  targetAmount: number;
+  createdAt: string;
+  contributions: SavingsContribution[];
+}
+
+export const betCategories = [
+  "Unclassified",
+  "Football",
+  "Basketball",
+  "Tennis",
+  "Volleyball",
+  "Rugby",
+  "Cricket",
+  "Esports",
+  "Other",
+] as const;
+
+export type BetCategory = typeof betCategories[number];
+export type BetStatus = "won" | "lost" | "open" | "void" | "cashed-out" | "other";
+
+export interface BetRecord {
+  id: string;
+  date: string;
+  category: BetCategory;
+  betType: string;
+  status: BetStatus;
+  stake: number;
+  returnAmount: number;
+  events: string[];
+  hiddenEvents: number;
+  source: string;
+}
+
+export interface BetImportResult {
+  bets: BetRecord[];
+  warnings: string[];
+}
