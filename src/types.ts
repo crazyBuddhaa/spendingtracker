@@ -42,6 +42,27 @@ export interface SavingsGoal {
   contributions: SavingsContribution[];
 }
 
+export interface CircleEntry {
+  id: string;
+  date: string;
+  kind: "contribution" | "payout";
+  amount: number;
+  turn: number;
+}
+
+export interface SavingsCircle {
+  id: string;
+  name: string;
+  contributionAmount: number;
+  intervalDays: number;
+  memberCount: number;
+  myPosition: number;
+  currentTurn: number;
+  myPayoutReceived: boolean;
+  currentTurnDate: string | null;
+  entries: CircleEntry[];
+}
+
 export const betCategories = [
   "Unclassified",
   "Football",

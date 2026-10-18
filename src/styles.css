@@ -382,10 +382,56 @@ h1 { margin: 9px 0 5px; color: #25352c; font: 700 24px "Manrope", sans-serif; le
 .savings-form .modal-done { width: 100%; margin-top: 3px; }
 .savings-form-help { margin: -3px 0 10px; color: #849087; font-size: 10px; line-height: 1.55; }
 
+.circle-section { display: grid; gap: 13px; }
+.circle-heading { align-items: center; margin: 3px 0 0; }
+.circle-heading h2 { margin: 0 0 4px; color: #304037; font: 700 16px "Manrope",sans-serif; }
+.circle-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(330px,1fr)); gap: 13px; }
+.circle-card { position: relative; min-width: 0; padding: 16px; }
+.circle-delete { position: absolute; top: 11px; right: 11px; color: #9aa39d; }
+.circle-delete:hover { color: #b05d51; background: #fbefec; }
+.circle-card-heading { display: flex; align-items: center; gap: 10px; padding-right: 32px; }
+.circle-icon { width: 34px; height: 34px; display: grid; place-items: center; flex: 0 0 34px; border-radius: 9px; color: #347957; background: #eaf4ed; }
+.circle-card-heading h3 { margin: 0; overflow: hidden; color: #34443a; font: 700 14px "Manrope",sans-serif; text-overflow: ellipsis; white-space: nowrap; }
+.circle-payout-summary { display: grid; gap: 4px; margin: 14px 0 12px; padding: 11px 12px; border-radius: 8px; background: #f4f8f4; }
+.circle-payout-summary span,.circle-facts > div > span { color: #98a29b; font-size: 8px; font-weight: 700; letter-spacing: .65px; }
+.circle-payout-summary strong { color: #317650; font: 700 19px "Manrope",sans-serif; }
+.circle-payout-summary small { color: #8a958d; font-size: 8px; }
+.circle-facts { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; margin-bottom: 12px; }
+.circle-facts > div { min-width: 0; display: grid; gap: 4px; }
+.circle-facts > div > strong { color: #4c5b51; font-size: 9px; line-height: 1.45; }
+.circle-next-payout { display: flex; align-items: flex-start; gap: 8px; padding: 10px; border: 1px solid #e9eee8; border-radius: 7px; }
+.circle-next-payout > svg { flex: 0 0 auto; margin-top: 1px; color: #4c8b65; }
+.circle-next-payout > div { display: grid; gap: 4px; }
+.circle-next-payout strong { color: #4a5a4f; font-size: 9px; line-height: 1.4; }
+.circle-next-payout small { color: #909b93; font-size: 8px; line-height: 1.5; }
+.circle-date-field { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 6px; margin-top: 10px; color: #89948c; font-size: 8px; }
+.circle-date-field svg { color: #9aa39d; }
+.circle-date-field input { max-width: 150px; height: 29px; padding: 0 6px; border: 1px solid #e4e8e3; border-radius: 5px; color: #647168; background: #fff; font-size: 8px; }
+.circle-ledger-summary { display: flex; justify-content: space-between; gap: 8px; margin-top: 12px; padding-top: 9px; border-top: 1px solid #eff1ee; color: #8e9991; font-size: 8px; }
+.circle-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.circle-actions .button { min-height: 31px; padding: 0 8px; font-size: 8px; }
+.circle-history { display: grid; gap: 6px; margin-top: 13px; padding-top: 11px; border-top: 1px solid #eff1ee; }
+.circle-history-row { display: flex; justify-content: space-between; gap: 8px; color: #78847b; font-size: 8px; }
+.circle-history-row strong { color: #46554b; font-size: 8px; white-space: nowrap; }
+.circle-history-empty { margin: 12px 0 0; color: #99a29c; font-size: 8px; }
+.circle-empty { min-height: 190px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 22px; text-align: center; }
+.circle-empty > strong { color: #3d4b42; font: 700 13px "Manrope",sans-serif; }
+.circle-empty > p { max-width: 420px; margin: 7px 0 12px; color: #89938c; font-size: 9px; line-height: 1.55; }
+.circle-privacy-note { margin: -3px 0 0; color: #98a29b; font-size: 8px; }
+.circle-modal { width: min(100%,560px); }
+.circle-modal h2 { margin: 0 0 10px; color: #2f3f35; font: 700 18px "Manrope",sans-serif; }
+.circle-form { grid-template-columns: repeat(2,minmax(0,1fr)); }
+.circle-form label:first-child,.circle-form .circle-checkbox,.circle-form .modal-done { grid-column: 1 / -1; }
+.circle-form .circle-checkbox { display: flex; align-items: center; gap: 8px; color: #647168; }
+.circle-form .circle-checkbox input { width: 15px; height: 15px; accent-color: #347957; }
+
 @media (max-width: 700px) {
   .savings-overview { grid-template-columns: minmax(0,1fr); }
   .savings-total-card { min-height: 82px; }
   .savings-goal-grid { grid-template-columns: minmax(0,1fr); }
+  .circle-grid { grid-template-columns: minmax(0,1fr); }
+  .circle-form { grid-template-columns: minmax(0,1fr); }
+  .circle-form label:first-child,.circle-form .circle-checkbox,.circle-form .modal-done { grid-column: auto; }
 }
 @media (max-width: 480px) {
   .savings-total-card { gap: 9px; padding: 13px 11px; }
@@ -393,6 +439,11 @@ h1 { margin: 9px 0 5px; color: #25352c; font: 700 24px "Manrope", sans-serif; le
   .savings-total-note { font-size: 8px; }
   .savings-chart-panel { padding: 14px 12px; }
   .goal-card-main { gap: 10px; }
+  .circle-card { padding: 13px 11px; }
+  .circle-heading { align-items: flex-start; flex-direction: column; }
+  .circle-heading .button { width: 100%; }
+  .circle-facts { gap: 8px; }
+  .circle-ledger-summary { flex-direction: column; }
 }
 
 .betting-page { display: grid; gap: 15px; }

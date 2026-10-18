@@ -33,6 +33,7 @@ import { parseStatementFile } from "./lib/statementImport";
 import SavingsPage from "./SavingsPage";
 import BettingPage from "./BettingPage";
 import { normaliseSavingsGoals } from "./lib/savings";
+import { normaliseSavingsCircles } from "./lib/savingsCircles";
 import { normaliseBets, parseSportyBetPage } from "./lib/sportyBetImport";
 import {
   calculateTotals,
@@ -42,10 +43,11 @@ import {
   largestExpense,
   type Period,
 } from "./lib/insights";
-import type { BetCategory, BetRecord, Category, SavingsContribution, SavingsGoal, Transaction } from "./types";
+import type { BetCategory, BetRecord, Category, SavingsCircle, SavingsContribution, SavingsGoal, Transaction } from "./types";
 
 const STORAGE_KEY = "spendwise.transactions.v1";
 const SAVINGS_STORAGE_KEY = "spendwise.savings-goals.v1";
+const CIRCLES_STORAGE_KEY = "spendwise.savings-circles.v1";
 const BETS_STORAGE_KEY = "spendwise.bets.v1";
 const currency = "NGN";
 const periodOptions: { value: Period; label: string }[] = [
@@ -89,6 +91,14 @@ function readStoredTransactions(): Transaction[] {
 function readStoredSavingsGoals(): SavingsGoal[] {
   try {
     return normaliseSavingsGoals(JSON.parse(localStorage.getItem(SAVINGS_STORAGE_KEY) ?? "[]"));
+  } catch {
+    return [];
+  }
+}
+
+function readStoredSavingsCircles(): SavingsCircle[] {
+  try {
+    return normaliseSavingsCircles(JSON.parse(localStorage.getItem(CIRCLES_STORAGE_KEY) ?? "[]"));
   } catch {
     return [];
   }
@@ -170,6 +180,7 @@ function createDemoTransactions(): Transaction[] {
 function App() {
   const [transactions, setTransactions] = useState<Transaction[]>(readStoredTransactions);
   const [savingsGoals, setSavingsGoals] = useState<SavingsGoal[]>(readStoredSavingsGoals);
+  const [savingsCircles, setSavingsCircles] = useState<SavingsCircle[]>(readStoredSavingsCircles);
   const [bets, setBets] = useState<BetRecord[]>(readStoredBets);
   const [period, setPeriod] = useState<Period>("30d");
   const [activePage, setActivePage] = useState<"overview" | "transactions" | "insights" | "savings" | "betting">("overview");
@@ -253,6 +264,15 @@ function App() {
       localStorage.setItem(SAVINGS_STORAGE_KEY, JSON.stringify(next));
     } catch {
       notify("Could not save your goals in this browser. Export or note them before closing this tab.");
+    }
+  };
+
+  const updateSavingsCircles = (next: SavingsCircle[]) => {
+    setSavingsCircles(next);
+    try {
+      localStorage.setItem(CIRCLES_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      notify("Could not save contribution circles in this browser. Note or export your records before closing this tab.");
     }
   };
 
@@ -389,6 +409,21 @@ function App() {
     notify("Savings goal deleted.");
   };
 
+  const createSavingsCircle = (circle: Omit<SavingsCircle, "id">) => {
+    const id = globalThis.crypto?.randomUUID?.() ?? `circle-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
+    updateSavingsCircles([...savingsCircles, { ...circle, id }]);
+    notify(`“${circle.name}” circle saved in this browser.`);
+  };
+
+  const updateSavingsCircle = (circle: SavingsCircle) => {
+    updateSavingsCircles(savingsCircles.map((item) => item.id === circle.id ? circle : item));
+  };
+
+  const deleteSavingsCircle = (circleId: string) => {
+    updateSavingsCircles(savingsCircles.filter((circle) => circle.id !== circleId));
+    notify("Contribution circle and its local history deleted.");
+  };
+
   const exportCsv = () => {
     if (visibleTransactions.length === 0) {
       notify("There are no transactions to export.");
@@ -448,7 +483,7 @@ function App() {
           </button>
           <button className={activePage === "savings" ? "nav-item active" : "nav-item"} onClick={() => { setActivePage("savings"); setSidebarOpen(false); }}>
             <PiggyBank size={18} /><span>Savings</span>
-            {savingsGoals.length > 0 && <span className="nav-count">{savingsGoals.length}</span>}
+            {savingsGoals.length + savingsCircles.length > 0 && <span className="nav-count">{savingsGoals.length + savingsCircles.length}</span>}
           </button>
           <button className={activePage === "betting" ? "nav-item active" : "nav-item"} onClick={() => { setActivePage("betting"); setSidebarOpen(false); }}>
             <Ticket size={18} /><span>Betting</span>
@@ -622,10 +657,14 @@ function App() {
           {activePage === "savings" && (
             <SavingsPage
               goals={savingsGoals}
+              circles={savingsCircles}
               currency={currency}
               onCreateGoal={createSavingsGoal}
               onAddContribution={addSavingsContribution}
               onDeleteGoal={deleteSavingsGoal}
+              onCreateCircle={createSavingsCircle}
+              onUpdateCircle={updateSavingsCircle}
+              onDeleteCircle={deleteSavingsCircle}
             />
           )}
 
