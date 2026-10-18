@@ -2,13 +2,19 @@ import { useMemo, useState } from "react";
 import { ArrowDownLeft, Check, Plus, PiggyBank, Target, Trash2, Wallet, X } from "lucide-react";
 import type { SavingsGoal } from "./types";
 import { savedForGoal, savingsSummary } from "./lib/savings";
+import SavingsCircles from "./SavingsCircles";
+import type { SavingsCircle } from "./types";
 
 interface SavingsPageProps {
   goals: SavingsGoal[];
+  circles: SavingsCircle[];
   currency: string;
   onCreateGoal: (name: string, targetAmount: number, startingAmount: number) => void;
   onAddContribution: (goalId: string, amount: number) => void;
   onDeleteGoal: (goalId: string) => void;
+  onCreateCircle: (circle: Omit<SavingsCircle, "id">) => void;
+  onUpdateCircle: (circle: SavingsCircle) => void;
+  onDeleteCircle: (circleId: string) => void;
 }
 
 function formatCurrency(amount: number, currency: string): string {
@@ -21,10 +27,14 @@ function formatCurrency(amount: number, currency: string): string {
 
 export default function SavingsPage({
   goals,
+  circles,
   currency,
   onCreateGoal,
   onAddContribution,
   onDeleteGoal,
+  onCreateCircle,
+  onUpdateCircle,
+  onDeleteCircle,
 }: SavingsPageProps) {
   const [showGoalForm, setShowGoalForm] = useState(false);
   const [goalName, setGoalName] = useState("");
@@ -134,6 +144,14 @@ export default function SavingsPage({
           <button className="button button-primary" onClick={() => setShowGoalForm(true)}><Plus size={15} /> Create your first goal</button>
         </section>
       )}
+
+      <SavingsCircles
+        circles={circles}
+        currency={currency}
+        onCreate={onCreateCircle}
+        onUpdate={onUpdateCircle}
+        onDelete={onDeleteCircle}
+      />
 
       {showGoalForm && (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setShowGoalForm(false)}>
