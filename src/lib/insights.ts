@@ -1,6 +1,12 @@
 import type { Category, Transaction } from "../types.ts";
 
-export type Period = "30d" | "90d" | "12m" | "all";
+export type Period = "30d" | "90d" | "this-month" | "last-month" | "12m" | "this-year" | "all" | "custom";
+
+/** Inclusive ISO date bounds; null means open-ended. */
+export interface DateRange {
+  start: string | null;
+  end: string | null;
+}
 
 export interface Totals {
   income: number;
@@ -8,6 +14,8 @@ export interface Totals {
   net: number;
   savingsRate: number;
   transactionCount: number;
+  /** Refunds and reversals; they reduce spending instead of counting as income. */
+  refunds: number;
 }
 
 export interface CategoryTotal {
@@ -25,36 +33,123 @@ export interface MonthTotal {
 }
 
 export function getPeriodStart(period: Period, now = new Date()): Date | null {
-  if (period === "all") return null;
-  const start = new Date(now);
-  if (period === "30d") start.setDate(start.getDate() - 29);
-  if (period === "90d") start.setDate(start.getDate() - 89);
-  if (period === "12m") start.setMonth(start.getMonth() - 11, 1);
-  start.setHours(0, 0, 0, 0);
-  return start;
+  const { start } = resolvePeriod(period, now);
+  return start ? new Date(`${start}T00:00:00`) : null;
+}
+
+export function resolvePeriod(period: Period, now = new Date(), custom: DateRange = { start: null, end: null }): DateRange {
+  const today = toIsoDate(now);
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  switch (period) {
+    case "30d":
+      start.setDate(start.getDate() - 29);
+      return { start: toIsoDate(start), end: today };
+    case "90d":
+      start.setDate(start.getDate() - 89);
+      return { start: toIsoDate(start), end: today };
+    case "this-month":
+      return { start: toIsoDate(new Date(now.getFullYear(), now.getMonth(), 1)), end: today };
+    case "last-month":
+      return {
+        start: toIsoDate(new Date(now.getFullYear(), now.getMonth() - 1, 1)),
+        end: toIsoDate(new Date(now.getFullYear(), now.getMonth(), 0)),
+      };
+    case "12m":
+      return { start: toIsoDate(new Date(now.getFullYear(), now.getMonth() - 11, 1)), end: today };
+    case "this-year":
+      return { start: `${now.getFullYear()}-01-01`, end: today };
+    case "custom": {
+      const [from, to] = custom.start && custom.end && custom.start > custom.end
+        ? [custom.end, custom.start]
+        : [custom.start, custom.end];
+      return { start: from || null, end: to || null };
+    }
+    default:
+      return { start: null, end: null };
+  }
+}
+
+/** The equally long window just before `range`, used for "vs previous" comparisons. */
+export function previousRange(period: Period, range: DateRange): DateRange | null {
+  if (!range.start || !range.end) return null;
+  const start = new Date(`${range.start}T00:00:00`);
+  const end = new Date(`${range.end}T00:00:00`);
+  if (period === "this-month" || period === "last-month" || period === "12m" || period === "this-year") {
+    const months = period === "12m" ? 12 : period === "this-year" ? 12 : 1;
+    const previousStart = new Date(start.getFullYear(), start.getMonth() - months, start.getDate());
+    const previousEnd = new Date(end.getFullYear(), end.getMonth() - months, Math.min(end.getDate(), daysInMonth(end.getFullYear(), end.getMonth() - months)));
+    return { start: toIsoDate(previousStart), end: toIsoDate(previousEnd) };
+  }
+  const days = Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1;
+  const previousEnd = new Date(start);
+  previousEnd.setDate(previousEnd.getDate() - 1);
+  const previousStart = new Date(previousEnd);
+  previousStart.setDate(previousStart.getDate() - days + 1);
+  return { start: toIsoDate(previousStart), end: toIsoDate(previousEnd) };
+}
+
+function daysInMonth(year: number, monthIndex: number): number {
+  return new Date(year, monthIndex + 1, 0).getDate();
+}
+
+export function filterByRange(transactions: Transaction[], range: DateRange): Transaction[] {
+  return transactions.filter((transaction) =>
+    (!range.start || transaction.date >= range.start) && (!range.end || transaction.date <= range.end));
 }
 
 export function filterByPeriod(transactions: Transaction[], period: Period, now = new Date()): Transaction[] {
-  const start = getPeriodStart(period, now);
-  return transactions.filter((transaction) => !start || transaction.date >= toIsoDate(start));
+  return filterByRange(transactions, resolvePeriod(period, now));
+}
+
+/** Monthly income/spending for every month the range covers (or the data covers, when open-ended). */
+export function getMonthlySeries(transactions: Transaction[], range: DateRange): MonthTotal[] {
+  const dates = transactions.map((transaction) => transaction.date).filter(Boolean).sort();
+  const first = range.start ?? dates[0];
+  const last = range.end ?? dates[dates.length - 1];
+  if (!first || !last) return [];
+  const cursor = new Date(Number(first.slice(0, 4)), Number(first.slice(5, 7)) - 1, 1);
+  const stop = new Date(Number(last.slice(0, 4)), Number(last.slice(5, 7)) - 1, 1);
+  const multiYear = first.slice(0, 4) !== last.slice(0, 4);
+  const months: MonthTotal[] = [];
+  while (cursor <= stop && months.length < 240) {
+    const key = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}`;
+    const label = new Intl.DateTimeFormat("en", { month: "short" }).format(cursor);
+    months.push({ month: key, label: multiYear ? `${label} ${String(cursor.getFullYear()).slice(2)}` : label, income: 0, expenses: 0 });
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+  const byMonth = new Map(months.map((month) => [month.month, month]));
+  for (const transaction of filterByRange(transactions, range)) {
+    if (transaction.internalTransfer) continue;
+    const month = byMonth.get(transaction.date.slice(0, 7));
+    if (!month) continue;
+    if (transaction.direction === "income" && transaction.category === "Refunds") month.expenses -= transaction.amount;
+    else if (transaction.direction === "income") month.income += transaction.amount;
+    else month.expenses += transaction.amount;
+  }
+  for (const month of months) month.expenses = Math.max(month.expenses, 0);
+  return months;
 }
 
 export function calculateTotals(transactions: Transaction[]): Totals {
-  const cashflowTransactions = transactions.filter((transaction) => !transaction.internalTransfer);
-  const income = cashflowTransactions.reduce(
-    (total, transaction) => total + (transaction.direction === "income" ? transaction.amount : 0),
-    0,
-  );
-  const expenses = cashflowTransactions.reduce(
-    (total, transaction) => total + (transaction.direction === "expense" ? transaction.amount : 0),
-    0,
-  );
+  let income = 0;
+  let grossExpenses = 0;
+  let refunds = 0;
+  let transactionCount = 0;
+  for (const transaction of transactions) {
+    if (transaction.internalTransfer) continue;
+    transactionCount += 1;
+    if (transaction.direction === "expense") grossExpenses += transaction.amount;
+    else if (transaction.category === "Refunds") refunds += transaction.amount;
+    else income += transaction.amount;
+  }
+  const expenses = Math.max(grossExpenses - refunds, 0);
   return {
     income,
     expenses,
     net: income - expenses,
     savingsRate: income > 0 ? ((income - expenses) / income) * 100 : 0,
-    transactionCount: cashflowTransactions.length,
+    transactionCount,
+    refunds,
   };
 }
 
@@ -95,9 +190,11 @@ export function getMonthlyTotals(transactions: Transaction[], count = 6, now = n
     if (transaction.internalTransfer) continue;
     const month = totalsByMonth.get(transaction.date.slice(0, 7));
     if (!month) continue;
-    if (transaction.direction === "income") month.income += transaction.amount;
+    if (transaction.direction === "income" && transaction.category === "Refunds") month.expenses -= transaction.amount;
+    else if (transaction.direction === "income") month.income += transaction.amount;
     else month.expenses += transaction.amount;
   }
+  for (const month of months) month.expenses = Math.max(month.expenses, 0);
   return months;
 }
 
