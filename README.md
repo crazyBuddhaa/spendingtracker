@@ -52,6 +52,46 @@ Transfers to or from your own name (in any order, at least two name parts, inclu
 
 **Data & rules → Download backup** saves transactions, goals, circles, bets, rules and budgets in one JSON file. **Restore from file** replaces what is in the browser.
 
+## Cloud sync with Cloudflare (D1 + R2 + Access)
+
+When the app runs on Cloudflare Pages with the pieces below connected, the cloud becomes the main copy of your data:
+
+- **D1** stores transactions, savings goals, circles, bets, rules, and budgets, scoped to the signed-in email.
+- **R2** keeps the original statement files you import (CSV, Excel, PDF; up to 25 MB each, de-duplicated). Download or delete them under **Data & rules**.
+- **Cloudflare Access** puts an email login in front of the whole site, and the API verifies the Access token (signature, audience, issuer, expiry) on every request. The API refuses all requests until Access is configured, so nothing is exposed while you set it up.
+- The browser keeps a copy, so the app opens instantly and works offline; changes made offline are queued (even across reloads) and sync when you reconnect. Other devices pick up changes on focus and every minute.
+- The first time a browser connects, any history already saved in it is uploaded automatically.
+
+Without these bindings (or with `npm run dev`), the app works exactly as before, storing everything in the browser.
+
+### One-time setup
+
+Run these from the project folder (log in with `npx wrangler login` first):
+
+```sh
+npx wrangler d1 create spendwise
+npx wrangler d1 execute spendwise --remote --file=migrations/0001_init.sql
+npx wrangler r2 bucket create spendwise-statements
+```
+
+Then in the Cloudflare dashboard:
+
+1. **Bindings**: Workers & Pages → your Pages project → Settings → Bindings → Add:
+   - D1 database: variable name `DB` → `spendwise`
+   - R2 bucket: variable name `STATEMENTS` → `spendwise-statements`
+2. **Access**: Zero Trust → Access → Applications → Add an application → Self-hosted:
+   - Domain: your site (e.g. `your-project.pages.dev`, plus your custom domain if you use one). Add `*.your-project.pages.dev` too if you open preview deployments.
+   - Policy: Action *Allow*, Include → *Emails* → your email address. Login method: *One-time PIN* (or Google, etc.).
+   - After saving, copy the **Application Audience (AUD) Tag** from the application's overview.
+3. **Variables**: Pages project → Settings → Variables and Secrets (Production):
+   - `ACCESS_TEAM_DOMAIN` = `https://<your-team-name>.cloudflareaccess.com` (your team name is under Zero Trust → Settings → Custom pages)
+   - `ACCESS_AUD` = the AUD tag from step 2
+4. **Redeploy** the latest deployment (Deployments → ⋯ → Retry deployment) so the bindings and variables take effect.
+
+Open the site, sign in with the emailed code, and the sidebar should show **Synced to Cloudflare**. To change the schema later, add a new file in `migrations/` and run it with the same `d1 execute` command.
+
+To run the app with its API locally, copy `wrangler.example.toml` to `wrangler.toml`, fill in the IDs, set `DEV_USER_EMAIL`, then `npm run build && npx wrangler pages dev`.
+
 ## Savings and betting
 
 Savings goals store a target and a local contribution history. Contributions are manual tracker entries; the app does not move money between accounts.
@@ -64,11 +104,14 @@ Betting analytics include all-record stake and return totals, resolved net and R
 
 ## Privacy and scope
 
+With cloud sync set up, data is stored only in your own Cloudflare account (D1 and R2), behind your Cloudflare Access login. Without it:
+
 CSV, Excel, text-based PDF, and saved betting-page parsing run in the browser. Transactions are saved in that browser's IndexedDB (multi-year statements outgrow `localStorage`; data from older versions is moved over automatically), and savings goals, bets, rules, and budgets in `localStorage`; source files and records are not sent to a server. Clearing browser data removes the saved history. The app does not request bank logins or connect to bank APIs. Direct bank feeds require a supported open-banking provider and a separate server-side integration.
 
 ## Stack
 
 - React, TypeScript, and Vite
 - Browser IndexedDB and `localStorage` for local persistence
-- Node's built-in test runner for import and calculation tests (Node 22.13+)
+- Node's built-in test runner for import, calculation, and API tests (Node 22.13+)
+- Optional Cloudflare Pages Functions (`functions/`, `server/`) with D1, R2, and Access
 
