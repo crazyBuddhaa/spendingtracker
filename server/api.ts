@@ -105,13 +105,19 @@ async function writeTransactions(db: D1Database, email: string, request: Request
   const updatedAt = Date.now();
   const statements = [];
   if (upserts.length) {
-    // One statement per request: the rows travel as a single JSON parameter.
+    // Allocate a per-user monotonic change stamp inside the write statement. A
+    // millisecond timestamp alone can collide across concurrent requests and make
+    // lower-sorting IDs invisible behind an incremental cursor.
     statements.push(db.prepare(
-      `INSERT INTO transactions (user_email, id, date, time, description, amount, direction, category, source, flags, note, deleted, updated_at)
-       SELECT ?1, json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]'),
-              json_extract(value, '$[4]'), json_extract(value, '$[5]'), json_extract(value, '$[6]'), json_extract(value, '$[7]'),
-              json_extract(value, '$[8]'), json_extract(value, '$[9]'), 0, ?2
-         FROM json_each(?3) WHERE true
+      `WITH change_stamp AS (
+         SELECT MAX(?2, COALESCE(MAX(updated_at), 0) + 1) AS value
+           FROM transactions WHERE user_email = ?1
+       )
+       INSERT INTO transactions (user_email, id, date, time, description, amount, direction, category, source, flags, note, deleted, updated_at)
+       SELECT ?1, json_extract(incoming.value, '$[0]'), json_extract(incoming.value, '$[1]'), json_extract(incoming.value, '$[2]'), json_extract(incoming.value, '$[3]'),
+              json_extract(incoming.value, '$[4]'), json_extract(incoming.value, '$[5]'), json_extract(incoming.value, '$[6]'), json_extract(incoming.value, '$[7]'),
+              json_extract(incoming.value, '$[8]'), json_extract(incoming.value, '$[9]'), 0, change_stamp.value
+         FROM json_each(?3) AS incoming, change_stamp WHERE true
        ON CONFLICT (user_email, id) DO UPDATE SET
          date = excluded.date, time = excluded.time, description = excluded.description, amount = excluded.amount,
          direction = excluded.direction, category = excluded.category, source = excluded.source, flags = excluded.flags,
@@ -119,12 +125,18 @@ async function writeTransactions(db: D1Database, email: string, request: Request
     ).bind(email, updatedAt, JSON.stringify(upserts as SyncRow[])));
   }
   if (deletes.length) {
-    // Tombstones keep the id so other devices learn about the delete; the content is wiped.
+    // Tombstones keep only the id and change marker so other devices learn about the delete.
     statements.push(db.prepare(
-      `INSERT INTO transactions (user_email, id, date, time, description, amount, direction, category, source, flags, note, deleted, updated_at)
-       SELECT ?1, value, '1970-01-01', '', '', 0, 0, 'Other', '', 0, '', 1, ?2 FROM json_each(?3) WHERE true
+      `WITH change_stamp AS (
+         SELECT MAX(?2, COALESCE(MAX(updated_at), 0) + 1) AS value
+           FROM transactions WHERE user_email = ?1
+       )
+       INSERT INTO transactions (user_email, id, date, time, description, amount, direction, category, source, flags, note, deleted, updated_at)
+       SELECT ?1, incoming.value, '1970-01-01', '', '', 0, 0, 'Other', '', 0, '', 1, change_stamp.value
+         FROM json_each(?3) AS incoming, change_stamp WHERE true
        ON CONFLICT (user_email, id) DO UPDATE SET
-         deleted = 1, description = '', note = '', amount = 0, updated_at = excluded.updated_at`,
+         date = '1970-01-01', time = '', description = '', amount = 0, direction = 0,
+         category = 'Other', source = '', flags = 0, note = '', deleted = 1, updated_at = excluded.updated_at`,
     ).bind(email, updatedAt, JSON.stringify(deletes)));
   }
   if (statements.length) await db.batch(statements);
@@ -134,7 +146,14 @@ async function writeTransactions(db: D1Database, email: string, request: Request
 async function clearTransactions(db: D1Database, email: string): Promise<Response> {
   const updatedAt = Date.now();
   await db.prepare(
-    `UPDATE transactions SET deleted = 1, description = '', note = '', amount = 0, updated_at = ?2
+    `WITH change_stamp AS (
+       SELECT MAX(?2, COALESCE(MAX(updated_at), 0) + 1) AS value
+         FROM transactions WHERE user_email = ?1
+     )
+     UPDATE transactions
+        SET date = '1970-01-01', time = '', description = '', amount = 0, direction = 0,
+            category = 'Other', source = '', flags = 0, note = '', deleted = 1,
+            updated_at = (SELECT value FROM change_stamp)
       WHERE user_email = ?1 AND deleted = 0`,
   ).bind(email, updatedAt).run();
   return json({ updatedAt });

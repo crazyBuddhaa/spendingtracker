@@ -71,6 +71,7 @@ Run these from the project folder (log in with `npx wrangler login` first):
 ```sh
 npx wrangler d1 create spendwise
 npx wrangler d1 execute spendwise --remote --file=migrations/0001_init.sql
+npx wrangler d1 execute spendwise --remote --file=migrations/0002_scrub_transaction_tombstones.sql
 npx wrangler r2 bucket create spendwise-statements
 ```
 

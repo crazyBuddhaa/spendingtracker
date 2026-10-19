@@ -1,6 +1,7 @@
 import { categoryList, type Category, type Transaction } from "../types.ts";
 
 const categories: readonly Category[] = categoryList;
+export const TRANSACTIONS_STORAGE_KEY = "spendwise.transactions.v1";
 const FORMAT_V1 = "spendwise.transactions.compact.v1";
 const FORMAT_V2 = "spendwise.transactions.compact.v2";
 

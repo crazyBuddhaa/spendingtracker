@@ -92,10 +92,25 @@ describe("Cloudflare API", () => {
       assert.equal(edited[0][6], "Business");
       assert.equal(edited[0][9], "edited");
       assert.equal(removed[1], 1);
-      assert.equal(removed[0][3], "", "deleted rows keep no description");
+      assert.deepEqual(removed[0].slice(1), ["1970-01-01", "", "", 0, 0, "Other", "", 0, ""], "deleted rows retain no transaction details");
 
       const me = await (await call("/api/me")).json();
       assert.equal(me.transactions, 24);
+    });
+
+    it("does not skip lower-sorting IDs written in the same millisecond", async () => {
+      const realNow = Date.now;
+      const fixedNow = realNow();
+      Date.now = () => fixedNow;
+      try {
+        await post({ upserts: [row("z")] });
+        const first = await (await call("/api/transactions?limit=1")).json();
+        await post({ upserts: [row("a")] });
+        const next = await (await call(`/api/transactions?after=${encodeURIComponent(first.next)}`)).json();
+        assert.deepEqual(next.rows.map(([transaction]) => transaction[0]), ["a"]);
+      } finally {
+        Date.now = realNow;
+      }
     });
 
     it("keeps each user's data separate", async () => {
@@ -119,6 +134,9 @@ describe("Cloudflare API", () => {
       assert.equal((await call("/api/transactions", { method: "DELETE" })).status, 200);
       const all = await (await call("/api/transactions")).json();
       assert.deepEqual(all.rows.map((item) => item[1]), [1, 1]);
+      assert.ok(all.rows.every(([transaction]) => transaction.slice(1).every((value, index) =>
+        value === ["1970-01-01", "", "", 0, 0, "Other", "", 0, ""][index],
+      )));
     });
   });
 
