@@ -6,6 +6,8 @@ import {
   BarChart3,
   Check,
   ChevronDown,
+  Cloud,
+  CloudOff,
   CloudUpload,
   DatabaseBackup,
   Download,
@@ -16,6 +18,7 @@ import {
   Lightbulb,
   LoaderCircle,
   LockKeyhole,
+  RefreshCw,
   Menu,
   PiggyBank,
   Plus,
@@ -46,6 +49,8 @@ import BettingPage from "./BettingPage";
 import BudgetsPage from "./BudgetsPage";
 import DataPage from "./DataPage";
 import InsightsExtras from "./InsightsExtras";
+import { useCloudSync, type SyncStatus } from "./useCloudSync";
+import type { CollectionName } from "./lib/syncFormat";
 import { normaliseSavingsGoals } from "./lib/savings";
 import { normaliseSavingsCircles } from "./lib/savingsCircles";
 import { normaliseBets, parseSportyBetPage } from "./lib/sportyBetImport";
@@ -337,6 +342,47 @@ function App() {
   const displayedTransactions = useMemo(() => visibleTransactions.slice(0, transactionLimit), [visibleTransactions, transactionLimit]);
   const visibleTotals = useMemo(() => calculateTotals(visibleTransactions), [visibleTransactions]);
 
+  const collections = useMemo(
+    () => ({ savingsGoals, savingsCircles, bets, rules, budgets }),
+    [savingsGoals, savingsCircles, bets, rules, budgets],
+  );
+  const applyCollection = useCallback((name: CollectionName, data: unknown): unknown[] => {
+    switch (name) {
+      case "savingsGoals": {
+        const value = normaliseSavingsGoals(data);
+        setSavingsGoals(value);
+        saveJson(SAVINGS_STORAGE_KEY, value);
+        return value;
+      }
+      case "savingsCircles": {
+        const value = normaliseSavingsCircles(data);
+        setSavingsCircles(value);
+        saveJson(CIRCLES_STORAGE_KEY, value);
+        return value;
+      }
+      case "bets": {
+        const value = normaliseBets(data);
+        setBets(value);
+        saveJson(BETS_STORAGE_KEY, value);
+        return value;
+      }
+      case "rules": {
+        const value = normaliseRules(data);
+        setRules(value);
+        saveJson(RULES_STORAGE_KEY, value);
+        return value;
+      }
+      default: {
+        const value = normaliseBudgets(data);
+        setBudgets(value);
+        saveJson(BUDGETS_STORAGE_KEY, value);
+        return value;
+      }
+    }
+  }, []);
+  const cloud = useCloudSync({ loaded, transactions, setTransactions, collections, applyCollection });
+  const cloudActive = cloud.status.mode === "cloud";
+
   const updateSavingsGoals = (next: SavingsGoal[]) => {
     setSavingsGoals(next);
     if (!saveJson(SAVINGS_STORAGE_KEY, next)) notify("Could not save your goals in this browser. Download a backup before closing this tab.");
@@ -372,6 +418,7 @@ function App() {
     setImporting(true);
     setImportWarnings([]);
     const imported: Transaction[] = [];
+    const readFiles: Array<{ file: File; rows: number }> = [];
     let skipped = 0;
     const messages: string[] = [];
 
@@ -380,6 +427,7 @@ function App() {
         try {
           const result = await parseStatementFile(file);
           imported.push(...result.transactions);
+          if (result.transactions.length) readFiles.push({ file, rows: result.transactions.length });
           skipped += result.skipped;
           messages.push(...result.warnings.map((warning) => `${file.name}: ${warning}`));
         } catch {
@@ -402,9 +450,22 @@ function App() {
       } else {
         notify(messages[0] ?? "No transactions could be imported. Check the statement columns and try again.");
       }
+      if (cloudActive && cloud.status.filesEnabled && readFiles.length) void storeStatementFiles(readFiles);
     } finally {
       setImporting(false);
       if (fileInput.current) fileInput.current.value = "";
+    }
+  };
+
+  /** Keeps a copy of each imported statement file in R2. Runs in the background. */
+  const storeStatementFiles = async (files: Array<{ file: File; rows: number }>) => {
+    const results = await Promise.allSettled(files.map(({ file, rows }) => cloud.uploadStatement(file, rows)));
+    const failed = results.filter((result) => result.status === "rejected").length;
+    const stored = results.filter((result) => result.status === "fulfilled" && !result.value.duplicate).length;
+    if (failed) {
+      setImportWarnings((current) => [...current, `${failed} statement file${failed === 1 ? "" : "s"} could not be saved to cloud storage. The transactions were imported; you can re-import the file later to store it.`]);
+    } else if (stored) {
+      setImportWarnings((current) => [...current, `${stored} original statement file${stored === 1 ? " was" : "s were"} saved to your cloud storage (Data & rules → Statement files).`]);
     }
   };
 
@@ -611,7 +672,9 @@ function App() {
 
   const clearTransactions = () => {
     if (!transactions.length) return;
-    if (!window.confirm("Delete all locally saved transactions? This cannot be undone.")) return;
+    if (!window.confirm(cloudActive
+      ? "Delete all transactions from this browser AND your cloud database? This cannot be undone."
+      : "Delete all locally saved transactions? This cannot be undone.")) return;
     setTransactions([]);
     notify("Transaction history cleared from this browser.");
   };
@@ -685,12 +748,7 @@ function App() {
           <NavButton page="data" active={activePage} onClick={goTo} icon={<DatabaseBackup size={18} />} count={rules.length || undefined} />
         </nav>
         <div className="sidebar-bottom">
-          <div className="privacy-card">
-            <div className="privacy-icon"><LockKeyhole size={16} /></div>
-            <strong>Your data stays yours</strong>
-            <p>Imports and records are processed and stored in this browser only. Download a backup from Data & rules.</p>
-            <button onClick={() => setShowPrivacy(true)}>How it works <ArrowUpRight size={13} /></button>
-          </div>
+          <SyncCard status={cloud.status} onSync={() => void cloud.syncNow()} onDetails={() => setShowPrivacy(true)} />
         </div>
       </aside>
       {sidebarOpen && <div className="sidebar-scrim" onClick={() => setSidebarOpen(false)} aria-hidden="true" />}
@@ -741,7 +799,7 @@ function App() {
               </div>
 
               {transactions.length === 0 ? (
-                <EmptyState onImport={() => fileInput.current?.click()} onDemo={loadDemo} />
+                <EmptyState cloud={cloudActive} onImport={() => fileInput.current?.click()} onDemo={loadDemo} />
               ) : (
                 <>
                   {emptyPeriodNotice}
@@ -847,7 +905,7 @@ function App() {
                   </div>
                 </>
               )}
-              <div className="page-footnote"><ShieldCheck size={14} /> Your transaction data is private and stays on this device.</div>
+              <div className="page-footnote"><ShieldCheck size={14} /> {cloudActive ? "Your data is private: it syncs only to your own Cloudflare account, behind your Cloudflare Access sign-in." : "Your transaction data is private and stays on this device."}</div>
             </>
           )}
 
@@ -977,6 +1035,13 @@ function App() {
               onExportBackup={exportBackup}
               onRestoreBackup={(file) => void restoreBackup(file)}
               onClearTransactions={clearTransactions}
+              cloud={{
+                status: cloud.status,
+                onSync: () => void cloud.syncNow(),
+                listStatements: cloud.listStatements,
+                deleteStatement: cloud.deleteStatement,
+                statementUrl: cloud.statementUrl,
+              }}
             />
           )}
 
@@ -991,7 +1056,7 @@ function App() {
                 <div className="heading-actions">{periodControls}</div>
               </div>
               {transactions.length === 0 ? (
-                <EmptyState onImport={() => fileInput.current?.click()} onDemo={loadDemo} />
+                <EmptyState cloud={cloudActive} onImport={() => fileInput.current?.click()} onDemo={loadDemo} />
               ) : (
                 <>
                   {emptyPeriodNotice}
@@ -1057,7 +1122,7 @@ function App() {
 
       {importing && <div className="import-overlay"><div className="import-message"><LoaderCircle className="spin" size={22} /><strong>Reading your {activePage === "betting" ? "betting page" : "statement"}…</strong><span>Everything stays in this browser.</span></div></div>}
       {toast && <div className="toast" role="status"><Check size={16} />{toast}</div>}
-      {showPrivacy && <PrivacyModal onClose={() => setShowPrivacy(false)} />}
+      {showPrivacy && <PrivacyModal cloud={cloudActive ? cloud.status.email : null} onClose={() => setShowPrivacy(false)} />}
       {showAddTransaction && <AddTransactionModal currency={currency} sources={sources} onClose={() => setShowAddTransaction(false)} onSave={addManualTransaction} />}
     </div>
   );
@@ -1139,7 +1204,7 @@ function MetricCard({
   );
 }
 
-function EmptyState({ onImport, onDemo }: { onImport: () => void; onDemo: () => void }) {
+function EmptyState({ onImport, onDemo, cloud = false }: { onImport: () => void; onDemo: () => void; cloud?: boolean }) {
   return (
     <section className="empty-state">
       <div className="empty-art">
@@ -1152,7 +1217,7 @@ function EmptyState({ onImport, onDemo }: { onImport: () => void; onDemo: () => 
       <h2>Start with your transaction history.</h2>
       <p>Import CSV, Excel, or text-based PDF statements (OPay, Access Bank, Moniepoint and similar). Spendwise brings them together and shows your income, spending, and patterns in one place.</p>
       <div className="empty-actions"><button className="button button-primary" onClick={onImport}><CloudUpload size={17} /> Import a bank statement</button><button className="button button-text" onClick={onDemo}>Explore with sample data</button></div>
-      <div className="empty-foot"><LockKeyhole size={13} /> Statements are read locally and never uploaded.</div>
+      <div className="empty-foot"><LockKeyhole size={13} /> {cloud ? "Statements are read in your browser and saved only to your own Cloudflare account." : "Statements are read locally and never uploaded."}</div>
     </section>
   );
 }
@@ -1494,19 +1559,90 @@ function summarySentence(
   return `${start}${topCategory ? `, and ${topCategory.category.toLowerCase()} was your largest spending area at ${formatCurrency(topCategory.amount, currency)}.` : "."}`;
 }
 
-function PrivacyModal({ onClose }: { onClose: () => void }) {
+function PrivacyModal({ cloud, onClose }: { cloud: string | null; onClose: () => void }) {
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className="privacy-modal" role="dialog" aria-modal="true" aria-labelledby="privacy-heading">
         <button className="icon-button modal-close" onClick={onClose} aria-label="Close"><X size={18} /></button>
         <div className="privacy-modal-icon"><LockKeyhole size={21} /></div>
         <div className="panel-kicker">PRIVATE BY DESIGN</div>
-        <h2 id="privacy-heading">Your records stay in this browser.</h2>
-        <p>Statements and saved SportyBet pages are read on your device. Transactions are kept in this browser’s IndexedDB storage; goals, bets, rules, and budgets in its local storage.</p>
-        <ul><li><Check size={15} /> No bank login or credentials are collected</li><li><Check size={15} /> No financial records are sent to a server</li><li><Check size={15} /> Download a full backup file any time from Data & rules</li></ul>
-        <p className="privacy-modal-note">If you clear browser data or switch devices, restore your backup file or import your statements again. This app does not connect directly to bank APIs.</p>
+        {cloud ? (
+          <>
+            <h2 id="privacy-heading">Synced to your own Cloudflare account.</h2>
+            <p>Signed in as <strong>{cloud}</strong>. Transactions, goals, bets, rules, and budgets are stored in your Cloudflare D1 database, and original statement files in your R2 bucket. Every request is checked against your Cloudflare Access sign-in, and each person only sees their own records.</p>
+            <ul><li><Check size={15} /> No bank login or credentials are collected</li><li><Check size={15} /> Statements are read in the browser; only the results and the original file are stored</li><li><Check size={15} /> A copy stays in this browser so the app opens fast and works offline</li></ul>
+            <p className="privacy-modal-note">Changes made offline are queued on this device and sync when you reconnect. You can still download a full backup file from Data & rules.</p>
+          </>
+        ) : (
+          <>
+            <h2 id="privacy-heading">Your records stay in this browser.</h2>
+            <p>Statements and saved SportyBet pages are read on your device. Transactions are kept in this browser’s IndexedDB storage; goals, bets, rules, and budgets in its local storage.</p>
+            <ul><li><Check size={15} /> No bank login or credentials are collected</li><li><Check size={15} /> No financial records are sent to a server</li><li><Check size={15} /> Download a full backup file any time from Data & rules</li></ul>
+            <p className="privacy-modal-note">When this app runs on Cloudflare Pages with D1, R2, and Access set up, it syncs to your own Cloudflare account instead.</p>
+          </>
+        )}
         <button className="button button-primary modal-done" onClick={onClose}>Got it</button>
       </section>
+    </div>
+  );
+}
+
+function timeAgo(timestamp: number | null): string {
+  if (!timestamp) return "not yet";
+  const seconds = Math.round((Date.now() - timestamp) / 1000);
+  if (seconds < 45) return "just now";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} h ago`;
+  return formatDate(localIsoDate(new Date(timestamp)));
+}
+
+function syncSummary(status: SyncStatus): { title: string; detail: string; tone: "ok" | "busy" | "warn" | "local" } {
+  if (status.mode === "checking") return { title: "Checking cloud sync…", detail: "Your data is loaded from this browser.", tone: "busy" };
+  if (status.mode === "local") {
+    if (status.state === "not-configured") return { title: "Cloud not set up", detail: status.message ?? "Connect D1 to this Pages project to sync.", tone: "warn" };
+    return { title: "Stored in this browser", detail: "Imports and records stay on this device. Download a backup from Data & rules.", tone: "local" };
+  }
+  const pending = status.pending ? ` · ${status.pending.toLocaleString("en-NG")} change${status.pending === 1 ? "" : "s"} waiting` : "";
+  switch (status.state) {
+    case "syncing":
+      return {
+        title: "Syncing…",
+        detail: status.progress
+          ? `${status.progress.done.toLocaleString("en-NG")} of ${status.progress.total.toLocaleString("en-NG")} uploaded`
+          : status.message ?? "Saving your latest changes.",
+        tone: "busy",
+      };
+    case "offline":
+      return { title: "Offline", detail: `Changes are kept on this device${pending}.`, tone: "warn" };
+    case "signed-out":
+      return { title: "Sign-in expired", detail: "Reload the page to sign in with Cloudflare Access.", tone: "warn" };
+    case "not-configured":
+      return { title: "Cloud not set up", detail: status.message ?? "Connect D1 to this Pages project.", tone: "warn" };
+    case "error":
+      return { title: "Sync paused", detail: `${status.message ?? "Will retry shortly."}${pending}`, tone: "warn" };
+    default:
+      return { title: "Synced to Cloudflare", detail: `${status.email ?? ""} · ${timeAgo(status.lastSyncedAt)}${pending}`, tone: "ok" };
+  }
+}
+
+function SyncCard({ status, onSync, onDetails }: { status: SyncStatus; onSync: () => void; onDetails: () => void }) {
+  const summary = syncSummary(status);
+  const Icon = summary.tone === "local" ? LockKeyhole : summary.tone === "warn" ? CloudOff : Cloud;
+  return (
+    <div className={`privacy-card sync-card sync-${summary.tone}`} role="status" aria-live="polite">
+      <div className="privacy-icon">{summary.tone === "busy" ? <LoaderCircle className="spin" size={16} /> : <Icon size={16} />}</div>
+      <strong>{summary.title}</strong>
+      <p title={summary.detail}>{summary.detail}</p>
+      <div className="sync-card-actions">
+        {status.mode === "cloud" && status.state !== "syncing" && (
+          status.state === "signed-out"
+            ? <button onClick={() => window.location.reload()}><RefreshCw size={12} /> Reload to sign in</button>
+            : <button onClick={onSync}><RefreshCw size={12} /> Sync now</button>
+        )}
+        <button onClick={onDetails}>How it works <ArrowUpRight size={13} /></button>
+      </div>
     </div>
   );
 }

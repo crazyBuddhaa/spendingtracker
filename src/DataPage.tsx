@@ -1,7 +1,17 @@
-import { useRef, useState } from "react";
-import { DatabaseBackup, Download, ListChecks, Plus, RefreshCw, Trash2, Upload, Wand2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Cloud, DatabaseBackup, Download, FileSpreadsheet, ListChecks, Plus, RefreshCw, Trash2, Upload, Wand2 } from "lucide-react";
 import { categoryList, type Category, type CategoryRule, type Direction } from "./types";
-import { formatDate } from "./lib/format";
+import { formatDate, localIsoDate } from "./lib/format";
+import type { SyncStatus } from "./useCloudSync";
+import type { StoredStatement } from "./lib/cloudApi";
+
+interface CloudProps {
+  status: SyncStatus;
+  onSync: () => void;
+  listStatements: () => Promise<StoredStatement[]>;
+  deleteStatement: (id: string) => Promise<void>;
+  statementUrl: (id: string) => string;
+}
 
 interface DataPageProps {
   rules: CategoryRule[];
@@ -13,6 +23,7 @@ interface DataPageProps {
   onExportBackup: () => void;
   onRestoreBackup: (file: File) => void;
   onClearTransactions: () => void;
+  cloud: CloudProps;
 }
 
 export default function DataPage({
@@ -25,6 +36,7 @@ export default function DataPage({
   onExportBackup,
   onRestoreBackup,
   onClearTransactions,
+  cloud,
 }: DataPageProps) {
   const restoreInput = useRef<HTMLInputElement>(null);
   const [pattern, setPattern] = useState("");
@@ -50,6 +62,8 @@ export default function DataPage({
           <p className="page-subtitle">Teach Spendwise how to categorise your payees, and keep a backup file so your history survives a cleared browser or a new device.</p>
         </div>
       </div>
+
+      <CloudPanel cloud={cloud} />
 
       <div className="data-grid">
         <section className="panel data-card">
@@ -126,6 +140,107 @@ export default function DataPage({
         </div>
         <button className="button button-danger" onClick={onClearTransactions} disabled={!counts.transactions}><Trash2 size={14} /> Clear transactions</button>
       </section>
+    </section>
+  );
+}
+
+function formatBytes(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(0)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function CloudPanel({ cloud }: { cloud: CloudProps }) {
+  const { status } = cloud;
+  const [statements, setStatements] = useState<StoredStatement[] | null>(null);
+  const [error, setError] = useState("");
+  const active = status.mode === "cloud";
+  const canListFiles = active && status.filesEnabled && status.state !== "signed-out" && status.state !== "offline";
+
+  const load = useCallback(async () => {
+    if (!canListFiles) return;
+    try {
+      setError("");
+      setStatements(await cloud.listStatements());
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not load stored statements.");
+    }
+  }, [canListFiles, cloud]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const remove = async (statement: StoredStatement) => {
+    if (!window.confirm(`Delete the stored file “${statement.fileName}” from R2? Transactions already imported from it are kept.`)) return;
+    try {
+      await cloud.deleteStatement(statement.id);
+      setStatements((current) => current?.filter((item) => item.id !== statement.id) ?? null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not delete the file.");
+    }
+  };
+
+  if (!active) {
+    return (
+      <section className="panel cloud-panel cloud-panel--local">
+        <div className="data-card-icon"><Cloud size={18} /></div>
+        <div>
+          <h2>Cloud sync is off</h2>
+          <p>{status.state === "not-configured" && status.message
+            ? status.message
+            : "This copy of the app is not connected to Cloudflare, so everything stays in this browser. When it runs on Cloudflare Pages with the D1 database, R2 bucket, and Cloudflare Access set up (see the README), your data syncs automatically across devices."}</p>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="panel cloud-panel">
+      <div className="panel-heading">
+        <div>
+          <div className="panel-kicker">CLOUDFLARE</div>
+          <h2>Cloud sync and statement files</h2>
+        </div>
+        <button className="button button-secondary" onClick={cloud.onSync} disabled={status.state === "syncing"}><RefreshCw size={14} /> Sync now</button>
+      </div>
+      <div className="cloud-facts">
+        <div><span>SIGNED IN AS</span><strong>{status.email ?? "—"}</strong></div>
+        <div><span>LAST SYNCED</span><strong>{status.lastSyncedAt ? new Date(status.lastSyncedAt).toLocaleString("en-NG", { dateStyle: "medium", timeStyle: "short" }) : "Not yet"}</strong></div>
+        <div><span>WAITING TO SYNC</span><strong>{status.pending.toLocaleString("en-NG")}</strong></div>
+      </div>
+      {status.message && <p className="panel-note">{status.message}</p>}
+
+      <h3 className="cloud-subheading"><FileSpreadsheet size={14} /> Original statement files (R2)</h3>
+      {!status.filesEnabled ? (
+        <div className="counterparty-empty">R2 storage is not connected. Add an R2 binding named STATEMENTS to keep copies of imported statements.</div>
+      ) : error ? (
+        <div className="counterparty-empty">{error}</div>
+      ) : statements === null ? (
+        <div className="counterparty-empty">Loading…</div>
+      ) : statements.length === 0 ? (
+        <div className="counterparty-empty">No files yet. Statements you import from now on are stored here automatically.</div>
+      ) : (
+        <div className="simple-table-wrap">
+          <table className="simple-table">
+            <thead><tr><th>FILE</th><th>ROWS</th><th>SIZE</th><th>UPLOADED</th><th /></tr></thead>
+            <tbody>
+              {statements.map((statement) => (
+                <tr key={statement.id}>
+                  <td><strong>{statement.fileName}</strong></td>
+                  <td>{statement.rowsImported.toLocaleString("en-NG")}</td>
+                  <td>{formatBytes(statement.size)}</td>
+                  <td>{formatDate(localIsoDate(new Date(statement.uploadedAt)))}</td>
+                  <td className="row-actions">
+                    <a className="icon-button" href={cloud.statementUrl(statement.id)} download={statement.fileName} title="Download" aria-label={`Download ${statement.fileName}`}><Download size={14} /></a>
+                    <button className="icon-button" onClick={() => void remove(statement)} title="Delete file" aria-label={`Delete ${statement.fileName}`}><Trash2 size={14} /></button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </section>
   );
 }
