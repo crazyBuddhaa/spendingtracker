@@ -7,6 +7,8 @@ export type Category =
   | "Bills & utilities"
   | "Shopping"
   | "Transfers"
+  | "Betting"
+  | "Bank fees"
   | "Health"
   | "Entertainment"
   | "Education"
@@ -20,6 +22,8 @@ export interface Transaction {
   direction: Direction;
   category: Category;
   source: string;
+  internalTransfer?: boolean;
+  ownAccountCandidate?: boolean;
 }
 
 export interface ImportResult {

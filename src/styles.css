@@ -160,6 +160,8 @@ h1 { margin: 9px 0 5px; color: #25352c; font: 700 24px "Manrope", sans-serif; le
 .category-bills-utilities { color: #4c7e7d; background: #edf5f4; }
 .category-shopping { color: #a66056; background: #faf0ed; }
 .category-transfers { color: #697b82; background: #eff2f3; }
+.category-betting { color: #a95f3d; background: #fbefe8; }
+.category-bank-fees { color: #796a59; background: #f4f0ea; }
 .category-health { color: #a25c79; background: #f8eef3; }
 .category-entertainment { color: #4c759b; background: #edf3f8; }
 .category-education { color: #927847; background: #f7f3e9; }
@@ -210,6 +212,14 @@ h1 { margin: 9px 0 5px; color: #25352c; font: 700 24px "Manrope", sans-serif; le
 .filter-select select { max-width: 125px; appearance: none; padding-right: 14px; border: 0; outline: 0; color: #647168; background: transparent; font-size: 9px; cursor: pointer; }
 .filter-select > svg:last-child { position: absolute; right: 7px; pointer-events: none; }
 .transaction-summary { display: flex; justify-content: space-between; padding: 10px 2px; border-top: 1px solid #eef0ed; color: #919b94; font-size: 9px; }
+.table-load-more { display: flex; justify-content: center; padding: 12px 0 6px; }
+.filter-candidate-toggle { min-height: 34px; padding: 0 10px; border: 1px solid #e6eae5; border-radius: 7px; color: #6d7c72; background: #fff; font-size: 9px; cursor: pointer; }
+.filter-candidate-toggle--active { border-color: #b8d5c1; color: #31724e; background: #edf6ef; }
+.filter-candidate-toggle:disabled { opacity: .55; cursor: not-allowed; }
+.transaction-review-label { color: #92733f !important; font-size: 8px !important; }
+.transaction-review-row { display: flex; align-items: center; gap: 7px; white-space: normal; }
+.transaction-confirm-button { padding: 2px 6px; border: 1px solid #dbe8dc; border-radius: 5px; color: #357450; background: #f5faf5; font-size: 8px; cursor: pointer; }
+.transaction-confirm-button:hover { background: #eaf4ec; }
 .no-results { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 64px 10px; color: #a3aca5; }
 .no-results strong { color: #57645b; font-size: 12px; }
 .no-results span { font-size: 10px; }
@@ -220,6 +230,23 @@ h1 { margin: 9px 0 5px; color: #25352c; font: 700 24px "Manrope", sans-serif; le
 .insight-summary p { margin: 5px 0 0; color: #3e4e43; font: 600 12px "Manrope",sans-serif; line-height: 1.65; }
 .insight-page-grid { display: grid; grid-template-columns: minmax(0,1.2fr) minmax(300px,1fr); gap: 14px; margin-bottom: 14px; }
 .insight-category-panel { padding: 18px; }
+.transfer-review-panel { margin-top: 14px; padding: 17px 18px; }
+.transfer-review-summary { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; margin: 12px 0; }
+.transfer-review-summary > div { display: grid; gap: 4px; padding: 12px; border: 1px solid #edf0ec; border-radius: 8px; background: #fbfcfa; }
+.transfer-review-summary strong { color: #36483c; font: 700 17px "Manrope",sans-serif; }
+.transfer-review-summary span { color: #7d8981; font-size: 9px; line-height: 1.5; }
+.transfer-review-note { margin: 0 0 11px; color: #89948d; font-size: 9px; line-height: 1.5; }
+.counterparty-list { overflow-x: auto; }
+.counterparty-list-heading,.counterparty-list-row { min-width: 520px; display: grid; grid-template-columns: minmax(150px,1fr) 60px minmax(90px,.8fr) minmax(90px,.8fr); align-items: center; gap: 10px; }
+.counterparty-list-heading { padding: 8px 5px; border-bottom: 1px solid #edf0ec; color: #9aa49c; font-size: 8px; font-weight: 700; letter-spacing: .5px; }
+.counterparty-list-row { padding: 9px 5px; border-bottom: 1px solid #f0f2ef; color: #6f7c73; font-size: 9px; }
+.counterparty-list-row:last-child { border-bottom: 0; }
+.counterparty-list-row strong { overflow: hidden; color: #445249; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.counterparty-empty { padding: 16px 5px; color: #929d95; font-size: 9px; }
+.import-notice { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 14px; padding: 12px 14px; border: 1px solid #efe4c6; border-radius: 9px; background: #fffcf3; }
+.import-notice-copy { min-width: 0; }
+.import-notice-copy strong { color: #725c2f; font-size: 10px; }
+.import-notice-copy p { margin: 5px 0 0; color: #827657; font-size: 9px; line-height: 1.5; }
 .category-chart-layout--large { min-height: 270px; justify-content: center; gap: 38px; }
 .category-chart-layout--large .donut-wrap { width: 205px; height: 205px; flex-basis: 205px; }
 .category-chart-layout--large .donut-chart { width: 205px; height: 205px; }
@@ -309,6 +336,9 @@ h1 { margin: 9px 0 5px; color: #25352c; font: 700 24px "Manrope", sans-serif; le
   .filter-select select { max-width: 114px; }
   .transaction-table th,.transaction-table td { padding-right: 6px; padding-left: 6px; }
   .insight-page-grid { grid-template-columns: minmax(0,1fr); }
+  .transfer-review-summary { grid-template-columns: minmax(0,1fr); }
+  .transfer-review-panel .panel-heading { align-items: flex-start; flex-direction: column; }
+  .bet-match-row { grid-template-columns: minmax(75px,.8fr) minmax(95px,1fr) minmax(90px,1fr); gap: 7px; font-size: 8px; }
   .category-chart-layout--large { min-height: unset; justify-content: center; gap: 14px; }
   .category-chart-layout--large .donut-wrap { width: 150px; height: 150px; flex-basis: 150px; }
   .category-chart-layout--large .donut-chart { width: 150px; height: 150px; }
@@ -479,6 +509,12 @@ h1 { margin: 9px 0 5px; color: #25352c; font: 700 24px "Manrope", sans-serif; le
 .bet-quick-stat strong { overflow: hidden; color: #34443a; font: 700 14px "Manrope",sans-serif; text-overflow: ellipsis; white-space: nowrap; }
 .bet-quick-stat small { color: #929c95; font-size: 8px; line-height: 1.45; }
 .bet-analysis-note { margin: 11px 0 0; color: #909a93; font-size: 8px; line-height: 1.55; }
+.bet-reconciliation-panel { margin-bottom: 14px; }
+.bet-match-list { margin-top: 10px; }
+.bet-match-row { display: grid; grid-template-columns: minmax(90px,1fr) minmax(110px,1fr) minmax(100px,1fr); gap: 12px; padding: 9px 4px; border-bottom: 1px solid #f0f2ef; color: #78847c; font-size: 9px; }
+.bet-match-row strong { color: #45554a; }
+.bet-match-row span:last-child { text-align: right; }
+.bet-match-more { padding: 9px 4px 2px; color: #89948d; font-size: 9px; }
 .bet-analytics-grid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 15px; }
 .bet-analysis-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .bet-analysis-heading select { max-width: 125px; height: 30px; padding: 0 8px; border: 1px solid #e4e8e3; border-radius: 6px; color: #69756d; background: #fff; font-size: 9px; }

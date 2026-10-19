@@ -40,11 +40,12 @@ export function filterByPeriod(transactions: Transaction[], period: Period, now 
 }
 
 export function calculateTotals(transactions: Transaction[]): Totals {
-  const income = transactions.reduce(
+  const cashflowTransactions = transactions.filter((transaction) => !transaction.internalTransfer);
+  const income = cashflowTransactions.reduce(
     (total, transaction) => total + (transaction.direction === "income" ? transaction.amount : 0),
     0,
   );
-  const expenses = transactions.reduce(
+  const expenses = cashflowTransactions.reduce(
     (total, transaction) => total + (transaction.direction === "expense" ? transaction.amount : 0),
     0,
   );
@@ -53,14 +54,14 @@ export function calculateTotals(transactions: Transaction[]): Totals {
     expenses,
     net: income - expenses,
     savingsRate: income > 0 ? ((income - expenses) / income) * 100 : 0,
-    transactionCount: transactions.length,
+    transactionCount: cashflowTransactions.length,
   };
 }
 
 export function getCategoryTotals(transactions: Transaction[]): CategoryTotal[] {
   const map = new Map<Category, { amount: number; count: number }>();
   for (const transaction of transactions) {
-    if (transaction.direction !== "expense") continue;
+    if (transaction.direction !== "expense" || transaction.internalTransfer) continue;
     const current = map.get(transaction.category) ?? { amount: 0, count: 0 };
     current.amount += transaction.amount;
     current.count += 1;
@@ -91,6 +92,7 @@ export function getMonthlyTotals(transactions: Transaction[], count = 6, now = n
   }
   const totalsByMonth = new Map(months.map((month) => [month.month, month]));
   for (const transaction of transactions) {
+    if (transaction.internalTransfer) continue;
     const month = totalsByMonth.get(transaction.date.slice(0, 7));
     if (!month) continue;
     if (transaction.direction === "income") month.income += transaction.amount;
@@ -101,7 +103,7 @@ export function getMonthlyTotals(transactions: Transaction[], count = 6, now = n
 
 export function largestExpense(transactions: Transaction[]): Transaction | undefined {
   return transactions
-    .filter((transaction) => transaction.direction === "expense")
+    .filter((transaction) => transaction.direction === "expense" && !transaction.internalTransfer)
     .sort((a, b) => b.amount - a.amount)[0];
 }
 
