@@ -366,11 +366,6 @@ export function useCloudSync({ loaded, transactions, setTransactions, collection
       update({ mode: "local", state: notConfigured ? "not-configured" : "idle", message: notConfigured ? error.message : null, progress: null });
       return;
     }
-    if (!account.storage.database) {
-      mode.current = "local";
-      update({ mode: "local", state: "not-configured", email: account.email, message: "Signed in, but the D1 database is not connected to this Pages project yet." });
-      return;
-    }
     if (persisted.current.email && persisted.current.email !== account.email) {
       // Preserve the previous identity's local-only work, but never merge it into the
       // next identity's first sync. Each account gets its own browser-side snapshot.
@@ -443,6 +438,11 @@ export function useCloudSync({ loaded, transactions, setTransactions, collection
         });
         return;
       }
+    }
+    if (!account.storage.database) {
+      mode.current = "local";
+      update({ mode: "local", state: "not-configured", email: account.email, message: "Signed in, but the D1 database is not connected to this Pages project yet." });
+      return;
     }
     persisted.current.email = account.email;
     mode.current = "cloud";
@@ -551,3 +551,4 @@ export function useCloudSync({ loaded, transactions, setTransactions, collection
 
   return { status, syncNow, listStatements, uploadStatement, deleteStatement, statementUrl: cloudApi.statementUrl };
 }
+
