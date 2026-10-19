@@ -2,13 +2,17 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import * as XLSX from "xlsx";
 import { parseTransactionsCsv, transactionsToCsv } from "./csv.ts";
-import { parseExcelStatement } from "./excelImport.ts";
+import { expandSheetRange, parseExcelStatement } from "./excelImport.ts";
 import { calculateTotals, getCategoryTotals } from "./insights.ts";
+import { findBetMatchCandidates } from "./bettingReconciliation.ts";
 import { parsePdfPages } from "./pdfText.ts";
 import { savedForGoal, savingsSummary } from "./savings.ts";
 import { normaliseBets, parseSportyBetPage } from "./sportyBetImport.ts";
 import { getBettingInsights } from "./bettingInsights.ts";
 import { normaliseSavingsCircles, savingsCircleSummary } from "./savingsCircles.ts";
+import { getTransferInsights } from "./transactionPatterns.ts";
+import { parseStoredTransactions, serializeTransactions } from "./transactionStorage.ts";
+import { findNewTransactions } from "./transactionDeduplication.ts";
 
 describe("parseTransactionsCsv", () => {
   it("reads debit and credit columns and Nigerian day-first dates", () => {
@@ -110,6 +114,19 @@ describe("parseTransactionsCsv", () => {
     );
     assert.equal(result.transactions[0].date, "2026-10-16");
   });
+
+  it("classifies OPay betting and fees and flags exact same-name transfers", () => {
+    const result = parseTransactionsCsv(
+      "Date,Description,Debit,Credit\n2026-10-16,Betting | 123 | SPORTYBET,3500,\n2026-10-16,USSD Charge,50,\n2026-10-16,Transfer to Test User | Local Bank,1000,",
+      "opay.xlsx",
+      { source: "OPay Wallet", accountHolderName: "Test User" },
+    );
+    assert.equal(result.transactions[0].category, "Betting");
+    assert.equal(result.transactions[1].category, "Bank fees");
+    assert.equal(result.transactions[2].category, "Transfers");
+    assert.equal(result.transactions[2].ownAccountCandidate, true);
+    assert.equal(result.transactions[2].internalTransfer, undefined);
+  });
 });
 
 describe("insights and export", () => {
@@ -136,6 +153,86 @@ describe("insights and export", () => {
     ).transactions;
     assert.match(transactionsToCsv(transactions), /"Market, Lagos"/);
   });
+
+  it("excludes confirmed internal transfers but keeps unconfirmed name matches in cash flow", () => {
+    const transactions = parseTransactionsCsv(
+      "date,description,debit,credit\n2026-10-01,Salary,,100000\n2026-10-02,Transfer to Test User | bank,12000,\n2026-10-03,OWealth Deposit,4000,",
+      "opay.csv",
+      { accountHolderName: "Test User" },
+    ).transactions;
+    transactions[2].internalTransfer = true;
+    assert.deepEqual(calculateTotals(transactions), {
+      income: 100000,
+      expenses: 12000,
+      net: 88000,
+      savingsRate: 88,
+      transactionCount: 2,
+    });
+    assert.equal(getCategoryTotals(transactions).find((item) => item.category === "Transfers")?.amount, 12000);
+  });
+});
+
+describe("transaction storage and review helpers", () => {
+  it("keeps identical repeated payments distinct and deduplicates re-imports by multiplicity", () => {
+    const imported = parseTransactionsCsv(
+      "date,description,debit,credit\n2026-10-01,Same merchant,500,\n2026-10-01,Same merchant,500,\n2026-10-01,Same merchant,500,",
+      "bank.csv",
+    ).transactions;
+    assert.equal(new Set(imported.map((item) => item.id)).size, 3);
+    const legacyExisting = [{ ...imported[0], id: "legacy-id" }];
+    const added = findNewTransactions(legacyExisting, imported);
+    assert.equal(added.length, 2);
+    assert.equal(findNewTransactions([...legacyExisting, ...added], imported).length, 0);
+  });
+
+  it("round-trips compact local transaction storage and review flags", () => {
+    const transactions = parseTransactionsCsv(
+      "date,description,debit,credit\n2026-10-01,Transfer to Test User | bank,12000,",
+      "opay.csv",
+      { source: "OPay Wallet", accountHolderName: "Test User" },
+    ).transactions;
+    transactions[0].ownAccountCandidate = true;
+    transactions[0].internalTransfer = true;
+    const serialized = serializeTransactions(transactions);
+    assert.deepEqual(parseStoredTransactions(serialized), transactions);
+    assert.equal(parseStoredTransactions(JSON.stringify(transactions)).length, 1);
+  });
+
+  it("summarizes repeated counterparties and same-name review candidates", () => {
+    const transactions = parseTransactionsCsv(
+      "date,description,debit,credit\n2026-10-01,Transfer to Alpha Store | bank,1000,\n2026-10-02,Transfer to Alpha Store | bank,2000,\n2026-10-03,Transfer from Alpha Store | bank,,500\n2026-10-04,Transfer to Test User | bank,4000,",
+      "opay.csv",
+      { accountHolderName: "Test User" },
+    ).transactions;
+    const insights = getTransferInsights(transactions);
+    assert.equal(insights.ownAccountCandidateCount, 1);
+    assert.equal(insights.ownAccountSent, 4000);
+    assert.equal(insights.repeatedCounterparties[0].name, "Alpha Store");
+    assert.equal(insights.repeatedCounterparties[0].count, 3);
+    assert.equal(insights.repeatedCounterparties[0].sent, 3000);
+    assert.equal(insights.repeatedCounterparties[0].received, 500);
+  });
+
+  it("suggests only unique same-date bookmaker stake matches", () => {
+    const transaction = parseTransactionsCsv(
+      "date,description,debit,credit\n2026-10-01,Betting | REF | SPORTYBET,2500,",
+      "opay.csv",
+    ).transactions[0];
+    const bet = {
+      id: "bet-1",
+      date: "2026-10-01",
+      category: "Football",
+      betType: "Single",
+      status: "lost",
+      stake: 2500,
+      returnAmount: 0,
+      events: ["Example match"],
+      hiddenEvents: 0,
+      source: "SportyBet",
+    };
+    assert.equal(findBetMatchCandidates([transaction], [bet]).length, 1);
+    assert.equal(findBetMatchCandidates([transaction, { ...transaction, id: "duplicate" }], [bet]).length, 0);
+  });
 });
 
 describe("statement file imports", () => {
@@ -154,6 +251,77 @@ describe("statement file imports", () => {
     assert.equal(result.transactions[0].source, "Access Bank");
     assert.equal(result.transactions[0].amount, 3500);
     assert.equal(result.transactions[0].direction, "expense");
+  });
+
+  it("expands OPay preamble rows, pairs OWealth entries, and reports summary mismatches", () => {
+    const header = ["Transaction Date", "Value Date", "Description", "Debit (₦)", "Credit (₦)", "Balance After (₦)", "Channel", "Reference"];
+    const makeSheet = (accountType, debitTotal, debitCount, creditTotal, creditCount, rows) => XLSX.utils.aoa_to_sheet([
+      [`${accountType} Statement`],
+      ["Account Name", "Test User", "Account Number", "masked"],
+      ["Account Type", accountType],
+      ["Opening Balance", "₦0.00", "Total Debit", `₦${debitTotal.toFixed(2)}`, "Debit Count", String(debitCount)],
+      ["Closing Balance", "₦0.00", "Total Credit", `₦${creditTotal.toFixed(2)}`, "Credit Count", String(creditCount)],
+      [],
+      header,
+      ...rows,
+    ]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, makeSheet(
+      "Wallet Account",
+      23,
+      3,
+      20,
+      1,
+      [
+        ["16-Oct-2026", "16-Oct-2026", "Transfer to Test User | Local Bank", 10, "", 0, "Transfer", "W1"],
+        ["16-Oct-2026", "16-Oct-2026", "Betting | 123 | SPORTYBET", 7, "", 0, "Betting", "W2"],
+        ["16-Oct-2026", "16-Oct-2026", "OWealth Deposit", 5, "", 0, "OWealth", "W3"],
+        ["16-Oct-2026", "16-Oct-2026", "Transfer from Test User | Local Bank", "", 20, 20, "Transfer", "W4"],
+      ],
+    ), "Wallet Account Transactions");
+    XLSX.utils.book_append_sheet(workbook, makeSheet(
+      "Savings Account",
+      0,
+      0,
+      5,
+      1,
+      [["16-Oct-2026", "16-Oct-2026", "OWealth Deposit", "", 5, 5, "OWealth", "S1"]],
+    ), "Savings Account Transactions");
+
+    const data = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
+    const result = parseExcelStatement(data, "opay-history.xlsx");
+
+    assert.equal(result.transactions.length, 5);
+    assert.equal(result.transactions.filter((item) => item.source === "OPay Wallet").length, 4);
+    assert.equal(result.transactions.filter((item) => item.source === "OPay Savings").length, 1);
+    assert.equal(result.transactions.filter((item) => item.ownAccountCandidate).length, 2);
+    assert.equal(result.transactions.filter((item) => item.internalTransfer).length, 2);
+    assert.equal(result.transactions.find((item) => item.category === "Betting")?.amount, 7);
+    assert.ok(result.warnings.some((warning) => /summary and transaction rows do not agree/.test(warning)));
+    assert.ok(result.warnings.some((warning) => /Matched 1 OPay Wallet↔Savings transfer pair/.test(warning)));
+    assert.deepEqual(
+      { income: calculateTotals(result.transactions).income, expenses: calculateTotals(result.transactions).expenses },
+      { income: 20, expenses: 17 },
+    );
+  });
+
+  it("expands a worksheet range back to A1 so earlier rows remain readable", () => {
+    const sheet = XLSX.utils.aoa_to_sheet([
+      ["Statement export"],
+      [],
+      [],
+      [],
+      [],
+      [],
+      ["Date", "Description", "Debit", "Credit"],
+      ["2026-10-16", "Market purchase", 900, ""],
+    ]);
+    sheet["!ref"] = "A10:H12";
+    expandSheetRange(sheet);
+    assert.equal(sheet["!ref"], "A1:H12");
+    const result = parseTransactionsCsv(XLSX.utils.sheet_to_csv(sheet, { blankrows: false }), "range-test.xlsx");
+    assert.equal(result.transactions.length, 1);
+    assert.equal(result.transactions[0].amount, 900);
   });
 
   it("maps positioned PDF table columns into transactions", () => {

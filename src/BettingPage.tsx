@@ -1,11 +1,13 @@
 import { useMemo, useState } from "react";
 import { Check, CircleHelp, Plus, Search, Ticket, Trash2, Upload, X } from "lucide-react";
-import type { BetCategory, BetRecord, BetStatus } from "./types";
+import type { BetCategory, BetRecord, BetStatus, Transaction } from "./types";
 import { betCategories } from "./types";
 import { getBettingInsights, type BetAggregate } from "./lib/bettingInsights";
+import { findBetMatchCandidates } from "./lib/bettingReconciliation";
 
 interface BettingPageProps {
   bets: BetRecord[];
+  transactions: Transaction[];
   currency: string;
   onImport: () => void;
   onAddBet: (bet: Omit<BetRecord, "id">) => void;
@@ -47,6 +49,7 @@ function localDate(): string {
 
 export default function BettingPage({
   bets,
+  transactions,
   currency,
   onImport,
   onAddBet,
@@ -73,6 +76,14 @@ export default function BettingPage({
     .filter((bet) => !normalizedQuery || `${bet.events.join(" ")} ${bet.source} ${bet.betType}`.toLowerCase().includes(normalizedQuery))
     .sort((a, b) => b.date.localeCompare(a.date)), [bets, categoryFilter, statusFilter, normalizedQuery]);
   const insights = useMemo(() => getBettingInsights(bets), [bets]);
+  const betMatchCandidates = useMemo(
+    () => findBetMatchCandidates(transactions, bets),
+    [transactions, bets],
+  );
+  const bettingBankDebits = useMemo(
+    () => transactions.filter((transaction) => transaction.direction === "expense" && transaction.category === "Betting"),
+    [transactions],
+  );
   const outcomes: BetStatus[] = ["won", "lost", "open", "void", "cashed-out", "other"];
   const outcomeCounts = outcomes.map((outcome) => ({
     status: outcome,
@@ -148,6 +159,33 @@ export default function BettingPage({
           <QuickStat label="EVENTS CAPTURED" value={String(insights.capturedEvents)} detail={`${insights.hiddenEvents} hidden by source · ${insights.averageEventsPerBet?.toFixed(1) ?? "—"} average per bet`} />
         </div>
         <p className="bet-analysis-note">ROI is settled net divided by settled stake. Return rate is gross settled return divided by settled stake, including returned stake. Win rate counts only won and lost bets. Void and cashed-out returns are included in settled net; open and “other” records are excluded.</p>
+      </section>
+
+      <section className="panel bet-detail-panel bet-reconciliation-panel">
+        <div className="panel-heading">
+          <div><div className="panel-kicker">BANK-LEDGER REVIEW</div><h2>Possible statement-to-bet matches</h2></div>
+          <span className="bet-outcome-total">{betMatchCandidates.length} exact candidate{betMatchCandidates.length === 1 ? "" : "s"}</span>
+        </div>
+        <p className="bet-analysis-note">Suggestions require one bank debit and one bet with the same date, bookmaker, and stake. A statement debit may be a wallet top-up rather than a bet, so these are not linked automatically or included in betting profit.</p>
+        {betMatchCandidates.length > 0 ? (
+          <div className="bet-match-list">
+            {betMatchCandidates.slice(0, 10).map((candidate) => (
+              <div className="bet-match-row" key={candidate.transactionId}>
+                <span>{formatBetDate(candidate.date)}</span>
+                <strong>{candidate.operator}</strong>
+                <span>{formatCurrency(candidate.amount, currency)}</span>
+              </div>
+            ))}
+            {betMatchCandidates.length > 10 && <div className="bet-match-more">And {betMatchCandidates.length - 10} more exact candidates.</div>}
+          </div>
+        ) : (
+          <div className="bet-empty-chart">
+            <CircleHelp size={18} />
+            {bettingBankDebits.length
+              ? `${bettingBankDebits.length} betting-related debit${bettingBankDebits.length === 1 ? "" : "s"} found, but none has a unique date, bookmaker, and stake match.`
+              : "Import an OPay statement and a bookmaker bet history to check for possible matches."}
+          </div>
+        )}
       </section>
 
       <section className="panel bet-outcomes-panel">

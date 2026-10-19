@@ -9,6 +9,11 @@ type HeaderMap = {
   type: number;
 };
 
+export interface CsvParseOptions {
+  source?: string;
+  accountHolderName?: string;
+}
+
 const headerAliases = {
   date: [
     "date",
@@ -210,17 +215,37 @@ function inferDirection(type: string, description: string): Direction {
 }
 
 export function categorise(description: string, direction: Direction): Category {
-  if (direction === "income") return "Income";
   const text = description.toLowerCase();
-  if (/\b(transfer|trf|xfer|internal transfer|own account)\b/.test(text)) return "Transfers";
+  if (/\bowealth interest earned\b/.test(text)) return "Income";
+  if (/\b(owealth|auto-save to owealth|spend & save deposit)\b/.test(text)) return "Transfers";
+  if (/\b(betting|sportybet|sporty\s*bet|footballing|msport|one_xbet|1xbet|betano|bet9ja|betlion|betking|paripesa|bangbet|surebet|betwinner|betway|ilot)\b/.test(text)) return "Betting";
+  if (/\b(ussd charge|vat on transfer fee|transfer fee|bank charge|service charge|stamp duty)\b/.test(text)) return "Bank fees";
   if (/\b(uber|bolt|taxi|bus|transport|fuel|petrol|diesel|parking|ride)\b/.test(text)) return "Transport";
-  if (/\b(grocery|market|food|restaurant|cafe|supermarket|shoprite|eat|chicken|mcdonald)\b/.test(text)) return "Food & groceries";
-  if (/\b(electric|electricity|power|water|internet|airtime|data|dstv|gotv|utility|bill)\b/.test(text)) return "Bills & utilities";
+  if (/\b(grocery|provision store|market|food|restaurant|cafe|supermarket|shoprite|eat|chicken|mcdonald)\b/.test(text)) return "Food & groceries";
+  if (/\b(electric|electricity|power|water|internet|airtime|mobile data|data|dstv|gotv|startimes|multichoice|utility|bill)\b/.test(text)) return "Bills & utilities";
   if (/\b(pharmacy|hospital|clinic|health|medical|doctor|lab test)\b/.test(text)) return "Health";
   if (/\b(school|tuition|course|udemy|education|books)\b/.test(text)) return "Education";
   if (/\b(netflix|spotify|cinema|movie|game|concert|entertainment)\b/.test(text)) return "Entertainment";
   if (/\b(shop|store|clothing|fashion|amazon|jumia|konga|purchase)\b/.test(text)) return "Shopping";
+  if (direction === "income") return "Income";
+  if (/\b(transfer|trf|xfer|internal transfer|own account)\b/.test(text)) return "Transfers";
   return "Other";
+}
+
+function normalisePersonName(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .sort()
+    .join(" ");
+}
+
+function isOwnAccountTransfer(description: string, accountHolderName?: string): boolean {
+  if (!accountHolderName || !/^transfer\s+(?:to|from)\b/i.test(description)) return false;
+  const counterparty = description.match(/^transfer\s+(?:to|from)\s+([^|]+)/i)?.[1];
+  return Boolean(counterparty && normalisePersonName(counterparty) === normalisePersonName(accountHolderName));
 }
 
 function sourceName(fileName: string): string {
@@ -232,17 +257,17 @@ function sourceName(fileName: string): string {
   return baseName || "Imported statement";
 }
 
-function stableId(date: string, description: string, amount: number, source: string): string {
-  const input = `${date}|${description.toLowerCase()}|${amount.toFixed(2)}|${source}`;
+function stableId(date: string, description: string, amount: number, source: string, rowIndex: number): string {
+  const input = `${date}|${description.toLowerCase()}|${amount.toFixed(2)}|${source}|${rowIndex}`;
   let hash = 2166136261;
   for (let i = 0; i < input.length; i += 1) {
     hash ^= input.charCodeAt(i);
     hash = Math.imul(hash, 16777619);
   }
-  return `txn-${(hash >>> 0).toString(36)}`;
+  return `txn-${(hash >>> 0).toString(36)}-${rowIndex.toString(36)}`;
 }
 
-export function parseTransactionsCsv(text: string, fileName: string): ImportResult {
+export function parseTransactionsCsv(text: string, fileName: string, options: CsvParseOptions = {}): ImportResult {
   const rows = readCsvRecords(text);
   if (rows.length < 2) {
     return { transactions: [], skipped: 0, warnings: ["The CSV needs a header row and at least one transaction."] };
@@ -269,14 +294,15 @@ export function parseTransactionsCsv(text: string, fileName: string): ImportResu
   }
 
   const map = mapHeaders(rows[headerIndex]);
-  const source = sourceName(fileName);
+  const source = options.source?.trim() || sourceName(fileName);
   const warnings: string[] = [];
   const transactions: Transaction[] = [];
   let skipped = 0;
   const hasSignedAmount = map.amount >= 0;
   let ambiguousPositiveRows = 0;
 
-  for (const row of rows.slice(headerIndex + 1)) {
+  for (let rowIndex = headerIndex + 1; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex];
     const date = parseDate(row[map.date] ?? "");
     const description = (row[map.description] ?? "").trim();
     const debitText = map.debit >= 0 ? row[map.debit] ?? "" : "";
@@ -320,15 +346,20 @@ export function parseTransactionsCsv(text: string, fileName: string): ImportResu
       continue;
     }
 
-    transactions.push({
-      id: stableId(date, description, amount, source),
+    const transaction: Transaction = {
+      id: stableId(date, description, amount, source, rowIndex),
       date,
       description,
       amount,
       direction,
       category: categorise(description, direction),
       source,
-    });
+    };
+    if (isOwnAccountTransfer(description, options.accountHolderName)) {
+      transaction.category = "Transfers";
+      transaction.ownAccountCandidate = true;
+    }
+    transactions.push(transaction);
   }
 
   if (hasSignedAmount && ambiguousPositiveRows > 0) {
@@ -343,7 +374,7 @@ export function parseTransactionsCsv(text: string, fileName: string): ImportResu
 export function transactionsToCsv(transactions: Transaction[]): string {
   const quote = (value: string) => `"${value.replace(/"/g, '""')}"`;
   const rows = [
-    ["Date", "Description", "Direction", "Amount", "Category", "Source"].join(","),
+    ["Date", "Description", "Direction", "Amount", "Category", "Source", "Internal transfer", "Possible own-account transfer"].join(","),
     ...transactions.map((transaction) =>
       [
         transaction.date,
@@ -352,6 +383,8 @@ export function transactionsToCsv(transactions: Transaction[]): string {
         transaction.amount.toFixed(2),
         quote(transaction.category),
         quote(transaction.source),
+        transaction.internalTransfer ? "yes" : "no",
+        transaction.ownAccountCandidate ? "yes" : "no",
       ].join(","),
     ),
   ];

@@ -30,6 +30,9 @@ import {
 } from "lucide-react";
 import { transactionsToCsv } from "./lib/csv";
 import { parseStatementFile } from "./lib/statementImport";
+import { parseStoredTransactions, serializeTransactions } from "./lib/transactionStorage";
+import { findNewTransactions } from "./lib/transactionDeduplication";
+import { getTransferInsights } from "./lib/transactionPatterns";
 import SavingsPage from "./SavingsPage";
 import BettingPage from "./BettingPage";
 import { normaliseSavingsGoals } from "./lib/savings";
@@ -63,6 +66,8 @@ const categoryColors: Record<Category, string> = {
   "Bills & utilities": "#5da1a0",
   Shopping: "#e17e73",
   Transfers: "#7b8c93",
+  Betting: "#d47f57",
+  "Bank fees": "#9a8b7a",
   Health: "#c56f91",
   Entertainment: "#5286b6",
   Education: "#b99557",
@@ -71,18 +76,7 @@ const categoryColors: Record<Category, string> = {
 
 function readStoredTransactions(): Transaction[] {
   try {
-    const value: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]");
-    if (!Array.isArray(value)) return [];
-    return value.filter(
-      (item): item is Transaction =>
-        item &&
-        typeof item.id === "string" &&
-        typeof item.date === "string" &&
-        typeof item.description === "string" &&
-        typeof item.amount === "number" &&
-        (item.direction === "income" || item.direction === "expense") &&
-        typeof item.source === "string",
-    );
+    return parseStoredTransactions(localStorage.getItem(STORAGE_KEY) ?? "[]");
   } catch {
     return [];
   }
@@ -188,8 +182,11 @@ function App() {
   const [categoryFilter, setCategoryFilter] = useState("All categories");
   const [directionFilter, setDirectionFilter] = useState("All types");
   const [sourceFilter, setSourceFilter] = useState("All accounts");
+  const [ownTransferFilter, setOwnTransferFilter] = useState(false);
   const [toast, setToast] = useState("");
+  const [importWarnings, setImportWarnings] = useState<string[]>([]);
   const [importing, setImporting] = useState(false);
+  const [transactionLimit, setTransactionLimit] = useState(100);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showPrivacy, setShowPrivacy] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -198,6 +195,7 @@ function App() {
   const withinPeriod = useMemo(() => filterByPeriod(transactions, period), [transactions, period]);
   const totals = useMemo(() => calculateTotals(withinPeriod), [withinPeriod]);
   const categories = useMemo(() => getCategoryTotals(withinPeriod), [withinPeriod]);
+  const transferInsights = useMemo(() => getTransferInsights(withinPeriod), [withinPeriod]);
   const monthly = useMemo(() => getMonthlyTotals(transactions, 6), [transactions]);
   const sources = useMemo(
     () => [...new Set(transactions.map((transaction) => transaction.source))].sort(),
@@ -234,6 +232,7 @@ function App() {
       .filter((transaction) => categoryFilter === "All categories" || transaction.category === categoryFilter)
       .filter((transaction) => directionFilter === "All types" || transaction.direction === directionFilter)
       .filter((transaction) => sourceFilter === "All accounts" || transaction.source === sourceFilter)
+      .filter((transaction) => !ownTransferFilter || transaction.ownAccountCandidate === true)
       .filter(
         (transaction) =>
           !normalizedQuery ||
@@ -242,7 +241,11 @@ function App() {
             .includes(normalizedQuery),
       )
       .sort((a, b) => b.date.localeCompare(a.date));
-  }, [withinPeriod, query, categoryFilter, directionFilter, sourceFilter]);
+  }, [withinPeriod, query, categoryFilter, directionFilter, sourceFilter, ownTransferFilter]);
+  const displayedTransactions = useMemo(
+    () => visibleTransactions.slice(0, transactionLimit),
+    [visibleTransactions, transactionLimit],
+  );
 
   const notify = (message: string) => {
     setToast(message);
@@ -252,7 +255,7 @@ function App() {
   const updateTransactions = (next: Transaction[]) => {
     setTransactions(next);
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      localStorage.setItem(STORAGE_KEY, serializeTransactions(next));
     } catch {
       notify("Could not save to browser storage. Export your transactions before closing this tab.");
     }
@@ -293,6 +296,7 @@ function App() {
       return;
     }
     setImporting(true);
+    setImportWarnings([]);
     const imported: Transaction[] = [];
     let skipped = 0;
     const messages: string[] = [];
@@ -308,19 +312,15 @@ function App() {
           messages.push(`${file.name} could not be read. Scanned or password-protected PDFs may need to be exported as CSV or Excel.`);
         }
       }
+      setImportWarnings(messages);
 
-      const existingKeys = new Set(
-        transactions.map((transaction) => `${transaction.date}|${transaction.description.toLowerCase()}|${transaction.amount}|${transaction.source}`),
-      );
-      const newTransactions = imported.filter((transaction) => {
-        const key = `${transaction.date}|${transaction.description.toLowerCase()}|${transaction.amount}|${transaction.source}`;
-        if (existingKeys.has(key)) return false;
-        existingKeys.add(key);
-        return true;
-      });
+      const newTransactions = findNewTransactions(transactions, imported);
       if (newTransactions.length) {
         updateTransactions([...transactions, ...newTransactions]);
-        notify(`${newTransactions.length} transaction${newTransactions.length === 1 ? "" : "s"} imported${skipped ? ` · ${skipped} skipped` : ""}.`);
+        if (newTransactions.some((transaction) => transaction.source === "OPay Wallet" || transaction.source === "OPay Savings")) {
+          setPeriod("all");
+        }
+        notify(`${newTransactions.length} transaction${newTransactions.length === 1 ? "" : "s"} imported${skipped ? ` · ${skipped} skipped` : ""}${messages.length ? " · review the import note below" : ""}.`);
         setActivePage("overview");
       } else if (imported.length) {
         notify("Those transactions are already in your history.");
@@ -452,6 +452,15 @@ function App() {
     notify("Transaction history cleared from this browser.");
   };
 
+  const confirmOwnAccountTransfer = (transactionId: string) => {
+    updateTransactions(transactions.map((transaction) =>
+      transaction.id === transactionId
+        ? { ...transaction, category: "Transfers", internalTransfer: true, ownAccountCandidate: false }
+        : transaction,
+    ));
+    notify("Marked as an internal transfer; it is now excluded from income and spending totals.");
+  };
+
   const activeCategories = categories.filter((item) => item.category !== "Transfers");
   const topCategory = activeCategories[0];
   const biggest = largestExpense(withinPeriod);
@@ -522,6 +531,15 @@ function App() {
         </header>
 
         <div className="page-content">
+          {importWarnings.length > 0 && (
+            <section className="import-notice" role="status">
+              <div className="import-notice-copy">
+                <strong>Import review</strong>
+                {importWarnings.map((warning, index) => <p key={`${index}-${warning}`}>{warning}</p>)}
+              </div>
+              <button className="icon-button" onClick={() => setImportWarnings([])} aria-label="Dismiss import notes"><X size={16} /></button>
+            </section>
+          )}
           {activePage === "overview" && (
             <>
               <div className="page-heading">
@@ -607,7 +625,11 @@ function App() {
                         </div>
                         <button className="subtle-link" onClick={() => setActivePage("transactions")}>See all <ArrowUpRight size={14} /></button>
                       </div>
-                      <TransactionTable transactions={[...withinPeriod].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6)} currency={currency} />
+                      <TransactionTable
+                        transactions={[...withinPeriod].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6)}
+                        currency={currency}
+                        onConfirmInternalTransfer={confirmOwnAccountTransfer}
+                      />
                     </section>
                     <InsightsPanel
                       count={withinPeriod.length}
@@ -644,11 +666,32 @@ function App() {
                     <label className="filter-select"><Filter size={14} /><select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}><option>All categories</option>{[...new Set(transactions.map((item) => item.category))].sort().map((item) => <option key={item}>{item}</option>)}</select><ChevronDown size={13} /></label>
                     <label className="filter-select"><select value={directionFilter} onChange={(event) => setDirectionFilter(event.target.value)}><option>All types</option><option value="income">Income</option><option value="expense">Spending</option></select><ChevronDown size={13} /></label>
                     <label className="filter-select"><select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}><option>All accounts</option>{sources.map((item) => <option key={item}>{item}</option>)}</select><ChevronDown size={13} /></label>
+                    <button
+                      className={`filter-candidate-toggle ${ownTransferFilter ? "filter-candidate-toggle--active" : ""}`}
+                      onClick={() => setOwnTransferFilter((value) => !value)}
+                      disabled={transferInsights.ownAccountCandidateCount === 0 && !ownTransferFilter}
+                    >
+                      Possible self-transfers · {transferInsights.ownAccountCandidateCount}
+                    </button>
                   </div>
                 </div>
-                <div className="transaction-summary"><span>{visibleTransactions.length} transaction{visibleTransactions.length === 1 ? "" : "s"}</span><span>{formatCurrency(calculateTotals(visibleTransactions).expenses, currency)} outgoing</span></div>
+                <div className="transaction-summary"><span>Showing {displayedTransactions.length} of {visibleTransactions.length} transaction{visibleTransactions.length === 1 ? "" : "s"}</span><span>{formatCurrency(calculateTotals(visibleTransactions).expenses, currency)} outgoing</span></div>
                 {visibleTransactions.length
-                  ? <TransactionTable transactions={visibleTransactions} currency={currency} showSource />
+                  ? <>
+                    <TransactionTable
+                      transactions={displayedTransactions}
+                      currency={currency}
+                      showSource
+                      onConfirmInternalTransfer={confirmOwnAccountTransfer}
+                    />
+                    {displayedTransactions.length < visibleTransactions.length && (
+                      <div className="table-load-more">
+                        <button className="button button-secondary" onClick={() => setTransactionLimit((limit) => limit + 100)}>
+                          Show 100 more
+                        </button>
+                      </div>
+                    )}
+                  </>
                   : <div className="no-results"><Search size={20} /><strong>No transactions match those filters</strong><span>Try another search or import a statement.</span></div>}
               </section>
             </>
@@ -671,6 +714,7 @@ function App() {
           {activePage === "betting" && (
             <BettingPage
               bets={bets}
+              transactions={transactions}
               currency={currency}
               onImport={() => betFileInput.current?.click()}
               onAddBet={createBetRecord}
@@ -731,6 +775,20 @@ function App() {
                     <div className="panel-heading"><div><div className="panel-kicker">MONTH BY MONTH</div><h2>Cash flow trend</h2></div><div className="chart-legend"><span><i className="legend-dot income-dot" /> Income</span><span><i className="legend-dot spending-dot" /> Spending</span></div></div>
                     <CashflowChart data={monthly} currency={currency} />
                   </section>
+                  <TransferReviewPanel
+                    insights={transferInsights}
+                    currency={currency}
+                    onReview={() => {
+                      setActivePage("transactions");
+                      setPeriod("all");
+                      setQuery("");
+                      setCategoryFilter("All categories");
+                      setDirectionFilter("All types");
+                      setSourceFilter("All accounts");
+                      setOwnTransferFilter(true);
+                      setTransactionLimit(100);
+                    }}
+                  />
                 </>
               )}
             </>
@@ -887,10 +945,12 @@ function TransactionTable({
   transactions,
   currency,
   showSource = false,
+  onConfirmInternalTransfer,
 }: {
   transactions: Transaction[];
   currency: string;
   showSource?: boolean;
+  onConfirmInternalTransfer?: (transactionId: string) => void;
 }) {
   return (
     <div className="transaction-table-wrap">
@@ -901,7 +961,28 @@ function TransactionTable({
             const isIncome = transaction.direction === "income";
             return (
               <tr key={transaction.id}>
-                <td><div className="transaction-name-cell"><div className={`transaction-icon ${isIncome ? "transaction-icon-income" : ""}`}>{isIncome ? <ArrowDownLeft size={16} /> : transaction.category === "Transfers" ? <ArrowLeftRight size={15} /> : <FileText size={15} />}</div><div className="transaction-name-copy"><strong>{transaction.description}</strong><span>{transaction.source}</span></div></div></td>
+                <td>
+                  <div className="transaction-name-cell">
+                    <div className={`transaction-icon ${isIncome ? "transaction-icon-income" : ""}`}>
+                      {isIncome ? <ArrowDownLeft size={16} /> : transaction.category === "Transfers" ? <ArrowLeftRight size={15} /> : <FileText size={15} />}
+                    </div>
+                    <div className="transaction-name-copy">
+                      <strong>{transaction.description}</strong>
+                      <span>{transaction.source}</span>
+                      {transaction.internalTransfer && <span className="transaction-review-label">Internal transfer · excluded from totals</span>}
+                      {transaction.ownAccountCandidate && (
+                        <span className="transaction-review-row">
+                          <span className="transaction-review-label">Possible own-account transfer</span>
+                          {onConfirmInternalTransfer && (
+                            <button className="transaction-confirm-button" onClick={() => onConfirmInternalTransfer(transaction.id)}>
+                              Mark internal
+                            </button>
+                          )}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </td>
                 <td className="transaction-date">{formatDate(transaction.date)}</td>
                 {showSource && <td><span className="account-pill"><span className="account-mini">{initialLetter(transaction.source)}</span>{transaction.source}</span></td>}
                 <td><span className={`category-pill category-${transaction.category.toLowerCase().replace(/[^a-z]+/g, "-")}`}>{transaction.category}</span></td>
@@ -912,6 +993,53 @@ function TransactionTable({
         </tbody>
       </table>
     </div>
+  );
+}
+
+function TransferReviewPanel({
+  insights,
+  currency,
+  onReview,
+}: {
+  insights: ReturnType<typeof getTransferInsights>;
+  currency: string;
+  onReview: () => void;
+}) {
+  return (
+    <section className="panel transfer-review-panel">
+      <div className="panel-heading">
+        <div><div className="panel-kicker">TRANSFER REVIEW</div><h2>Same-name and repeat transfers</h2></div>
+        <button className="button button-secondary" onClick={onReview} disabled={insights.ownAccountCandidateCount === 0}>
+          Review likely own transfers
+        </button>
+      </div>
+      <div className="transfer-review-summary">
+        <div>
+          <strong>{insights.ownAccountCandidateCount}</strong>
+          <span>same-name candidates · {formatCurrency(insights.ownAccountSent, currency)} sent · {formatCurrency(insights.ownAccountReceived, currency)} received</span>
+        </div>
+        <div>
+          <strong>{insights.confirmedInternalCount}</strong>
+          <span>confirmed internal entries excluded from cash-flow totals</span>
+        </div>
+      </div>
+      <p className="transfer-review-note">Same-name matches are only candidates until you confirm them. Repeated counterparties below are grouped by name, not treated as self-transfers.</p>
+      {insights.repeatedCounterparties.length > 0 ? (
+        <div className="counterparty-list">
+          <div className="counterparty-list-heading"><span>REPEATED COUNTERPARTY</span><span>COUNT</span><span>SENT</span><span>RECEIVED</span></div>
+          {insights.repeatedCounterparties.map((counterparty) => (
+            <div className="counterparty-list-row" key={counterparty.name}>
+              <strong title={counterparty.name}>{counterparty.name}</strong>
+              <span>{counterparty.count}</span>
+              <span>{formatCurrency(counterparty.sent, currency, true)}</span>
+              <span>{formatCurrency(counterparty.received, currency, true)}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="counterparty-empty">No transfer counterparty appears three or more times in this period.</div>
+      )}
+    </section>
   );
 }
 
