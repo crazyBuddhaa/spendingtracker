@@ -1,0 +1,131 @@
+import { useRef, useState } from "react";
+import { DatabaseBackup, Download, ListChecks, Plus, RefreshCw, Trash2, Upload, Wand2 } from "lucide-react";
+import { categoryList, type Category, type CategoryRule, type Direction } from "./types";
+import { formatDate } from "./lib/format";
+
+interface DataPageProps {
+  rules: CategoryRule[];
+  counts: { transactions: number; goals: number; circles: number; bets: number; budgets: number };
+  matchCount: (rule: Pick<CategoryRule, "pattern" | "direction">) => number;
+  onAddRule: (rule: Omit<CategoryRule, "id" | "createdAt">) => void;
+  onDeleteRule: (ruleId: string) => void;
+  onRefreshCategories: () => void;
+  onExportBackup: () => void;
+  onRestoreBackup: (file: File) => void;
+  onClearTransactions: () => void;
+}
+
+export default function DataPage({
+  rules,
+  counts,
+  matchCount,
+  onAddRule,
+  onDeleteRule,
+  onRefreshCategories,
+  onExportBackup,
+  onRestoreBackup,
+  onClearTransactions,
+}: DataPageProps) {
+  const restoreInput = useRef<HTMLInputElement>(null);
+  const [pattern, setPattern] = useState("");
+  const [category, setCategory] = useState<Category>("Business");
+  const [direction, setDirection] = useState<"" | Direction>("");
+  const [markInternal, setMarkInternal] = useState(false);
+  const preview = pattern.trim().length >= 2 ? matchCount({ pattern: pattern.trim().toLowerCase(), direction: direction || undefined }) : null;
+
+  const submitRule = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (pattern.trim().length < 2) return;
+    onAddRule({ pattern: pattern.trim().toLowerCase(), category, direction: direction || undefined, markInternal: markInternal || undefined });
+    setPattern("");
+    setMarkInternal(false);
+  };
+
+  return (
+    <section className="data-page">
+      <div className="page-heading">
+        <div>
+          <div className="eyebrow"><span className="eyebrow-dot" /> YOUR DATA</div>
+          <h1>Rules, backups, and housekeeping.</h1>
+          <p className="page-subtitle">Teach Spendwise how to categorise your payees, and keep a backup file so your history survives a cleared browser or a new device.</p>
+        </div>
+      </div>
+
+      <div className="data-grid">
+        <section className="panel data-card">
+          <div className="data-card-icon"><DatabaseBackup size={18} /></div>
+          <h2>Backup and restore</h2>
+          <p>One file with your {counts.transactions.toLocaleString("en-NG")} transactions, {counts.goals} savings goal{counts.goals === 1 ? "" : "s"}, {counts.circles} circle{counts.circles === 1 ? "" : "s"}, {counts.bets} bet record{counts.bets === 1 ? "" : "s"}, {counts.budgets} budget{counts.budgets === 1 ? "" : "s"}, and {rules.length} rule{rules.length === 1 ? "" : "s"}. Restoring replaces what is in this browser.</p>
+          <div className="data-actions">
+            <button className="button button-primary" onClick={onExportBackup}><Download size={14} /> Download backup</button>
+            <button className="button button-secondary" onClick={() => restoreInput.current?.click()}><Upload size={14} /> Restore from file</button>
+            <input
+              ref={restoreInput}
+              className="visually-hidden"
+              type="file"
+              accept=".json,application/json"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) onRestoreBackup(file);
+                event.target.value = "";
+              }}
+            />
+          </div>
+        </section>
+
+        <section className="panel data-card">
+          <div className="data-card-icon"><RefreshCw size={18} /></div>
+          <h2>Re-check categories</h2>
+          <p>Runs the latest automatic categorisation and your rules over everything already imported. Categories you picked by hand and manual entries are left alone.</p>
+          <div className="data-actions">
+            <button className="button button-secondary" onClick={onRefreshCategories} disabled={!counts.transactions}><Wand2 size={14} /> Re-categorise history</button>
+          </div>
+        </section>
+      </div>
+
+      <section className="panel rules-panel">
+        <div className="panel-heading">
+          <div><div className="panel-kicker">CATEGORY RULES</div><h2>Always categorise these payees the same way</h2></div>
+          <span className="heading-note"><ListChecks size={13} /> {rules.length} rule{rules.length === 1 ? "" : "s"}</span>
+        </div>
+        <p className="panel-note">A rule matches when its text appears in a transaction description. Rules apply to future imports and to history (except categories you set by hand). Tip: changing a category on the Transactions page offers to create a rule for you.</p>
+        <form className="rule-form" onSubmit={submitRule}>
+          <label>Description contains<input value={pattern} onChange={(event) => setPattern(event.target.value)} placeholder="e.g. transfer to kehinde ibukun" maxLength={120} /></label>
+          <label>Category<select value={category} onChange={(event) => setCategory(event.target.value as Category)}>{categoryList.map((item) => <option key={item}>{item}</option>)}</select></label>
+          <label>Applies to<select value={direction} onChange={(event) => setDirection(event.target.value as "" | Direction)}><option value="">Money in and out</option><option value="expense">Money out only</option><option value="income">Money in only</option></select></label>
+          <label className="rule-check"><input type="checkbox" checked={markInternal} onChange={(event) => setMarkInternal(event.target.checked)} /> Treat as my own money moving (exclude from totals)</label>
+          <button className="button button-primary" type="submit" disabled={pattern.trim().length < 2}><Plus size={14} /> Add rule{preview !== null ? ` · matches ${preview.toLocaleString("en-NG")}` : ""}</button>
+        </form>
+        {rules.length ? (
+          <div className="simple-table-wrap">
+            <table className="simple-table">
+              <thead><tr><th>WHEN DESCRIPTION CONTAINS</th><th>CATEGORY</th><th>APPLIES TO</th><th>MATCHES</th><th>ADDED</th><th /></tr></thead>
+              <tbody>
+                {[...rules].reverse().map((rule) => (
+                  <tr key={rule.id}>
+                    <td><strong>“{rule.pattern}”</strong>{rule.markInternal && <small>Excluded from totals</small>}</td>
+                    <td>{rule.category}</td>
+                    <td>{rule.direction === "income" ? "Money in" : rule.direction === "expense" ? "Money out" : "Both"}</td>
+                    <td>{matchCount(rule).toLocaleString("en-NG")}</td>
+                    <td>{rule.createdAt ? formatDate(rule.createdAt) : "—"}</td>
+                    <td><button className="icon-button" onClick={() => onDeleteRule(rule.id)} aria-label={`Delete rule ${rule.pattern}`}><Trash2 size={14} /></button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="counterparty-empty">No rules yet.</div>
+        )}
+      </section>
+
+      <section className="panel danger-panel">
+        <div>
+          <h2>Clear transaction history</h2>
+          <p>Removes every imported and manual transaction from this browser. Download a backup first if you may need it.</p>
+        </div>
+        <button className="button button-danger" onClick={onClearTransactions} disabled={!counts.transactions}><Trash2 size={14} /> Clear transactions</button>
+      </section>
+    </section>
+  );
+}

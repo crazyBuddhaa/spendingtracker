@@ -1,18 +1,26 @@
 export type Direction = "income" | "expense";
 
-export type Category =
-  | "Income"
-  | "Food & groceries"
-  | "Transport"
-  | "Bills & utilities"
-  | "Shopping"
-  | "Transfers"
-  | "Betting"
-  | "Bank fees"
-  | "Health"
-  | "Entertainment"
-  | "Education"
-  | "Other";
+export const categoryList = [
+  "Income",
+  "Refunds",
+  "Food & groceries",
+  "Transport",
+  "Bills & utilities",
+  "Airtime & data",
+  "Shopping",
+  "Rent & housing",
+  "Business",
+  "Cash withdrawal",
+  "Transfers",
+  "Betting",
+  "Bank fees",
+  "Health",
+  "Entertainment",
+  "Education",
+  "Other",
+] as const;
+
+export type Category = typeof categoryList[number];
 
 export interface Transaction {
   id: string;
@@ -24,6 +32,31 @@ export interface Transaction {
   source: string;
   internalTransfer?: boolean;
   ownAccountCandidate?: boolean;
+  /** Time of day (HH:MM or HH:MM:SS) when the statement provides it. */
+  time?: string;
+  /** Free-text note added by the user. */
+  note?: string;
+  /** True for entries typed in by hand rather than imported. */
+  manual?: boolean;
+  /** True once the user has chosen the category; automatic rules no longer change it. */
+  categoryLocked?: boolean;
+}
+
+export interface CategoryRule {
+  id: string;
+  /** Lower-case text that must appear in the transaction description. */
+  pattern: string;
+  category: Category;
+  /** Restrict the rule to money in or money out. */
+  direction?: Direction;
+  /** Also exclude matching transactions from income/spending totals. */
+  markInternal?: boolean;
+  createdAt: string;
+}
+
+export interface Budget {
+  category: Category;
+  monthlyLimit: number;
 }
 
 export interface ImportResult {

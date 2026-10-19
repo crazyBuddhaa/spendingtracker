@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownLeft,
   ArrowLeftRight,
@@ -7,6 +7,7 @@ import {
   Check,
   ChevronDown,
   CloudUpload,
+  DatabaseBackup,
   Download,
   FileText,
   Filter,
@@ -18,9 +19,11 @@ import {
   Menu,
   PiggyBank,
   Plus,
+  Receipt,
   Search,
   ShieldCheck,
   Sparkles,
+  Target,
   Ticket,
   Trash2,
   TrendingDown,
@@ -33,38 +36,87 @@ import { parseStatementFile } from "./lib/statementImport";
 import { parseStoredTransactions, serializeTransactions } from "./lib/transactionStorage";
 import { findNewTransactions } from "./lib/transactionDeduplication";
 import { getTransferInsights } from "./lib/transactionPatterns";
+import { readValue, writeValue } from "./lib/persistentStore";
+import { applyCategoryRules, categorise, refreshCategories, ruleMatches, similarityKey } from "./lib/categorise";
+import { createBackup, normaliseBudgets, normaliseRules, readBackup } from "./lib/backup";
+import { getFeeSummary } from "./lib/analytics";
+import { downloadFile, formatCurrency, formatDate, localIsoDate, newId } from "./lib/format";
 import SavingsPage from "./SavingsPage";
 import BettingPage from "./BettingPage";
+import BudgetsPage from "./BudgetsPage";
+import DataPage from "./DataPage";
+import InsightsExtras from "./InsightsExtras";
 import { normaliseSavingsGoals } from "./lib/savings";
 import { normaliseSavingsCircles } from "./lib/savingsCircles";
 import { normaliseBets, parseSportyBetPage } from "./lib/sportyBetImport";
 import {
   calculateTotals,
-  filterByPeriod,
+  filterByRange,
   getCategoryTotals,
-  getMonthlyTotals,
-  largestExpense,
+  getMonthlySeries,
+  previousRange,
+  resolvePeriod,
+  type DateRange,
+  type MonthTotal,
   type Period,
 } from "./lib/insights";
-import type { BetCategory, BetRecord, Category, SavingsCircle, SavingsContribution, SavingsGoal, Transaction } from "./types";
+import {
+  categoryList,
+  type BetCategory,
+  type BetRecord,
+  type Budget,
+  type Category,
+  type CategoryRule,
+  type Direction,
+  type SavingsCircle,
+  type SavingsContribution,
+  type SavingsGoal,
+  type Transaction,
+} from "./types";
 
 const STORAGE_KEY = "spendwise.transactions.v1";
 const SAVINGS_STORAGE_KEY = "spendwise.savings-goals.v1";
 const CIRCLES_STORAGE_KEY = "spendwise.savings-circles.v1";
 const BETS_STORAGE_KEY = "spendwise.bets.v1";
+const RULES_STORAGE_KEY = "spendwise.rules.v1";
+const BUDGETS_STORAGE_KEY = "spendwise.budgets.v1";
+const PERIOD_STORAGE_KEY = "spendwise.period.v1";
 const currency = "NGN";
+
+type Page = "overview" | "transactions" | "insights" | "budgets" | "savings" | "betting" | "data";
+
+const pageTitles: Record<Page, string> = {
+  overview: "Overview",
+  transactions: "Transactions",
+  insights: "Insights",
+  budgets: "Budgets",
+  savings: "Savings",
+  betting: "Betting",
+  data: "Data & rules",
+};
+
 const periodOptions: { value: Period; label: string }[] = [
   { value: "30d", label: "Last 30 days" },
   { value: "90d", label: "Last 90 days" },
+  { value: "this-month", label: "This month" },
+  { value: "last-month", label: "Last month" },
   { value: "12m", label: "Last 12 months" },
+  { value: "this-year", label: "This year" },
   { value: "all", label: "All time" },
+  { value: "custom", label: "Custom dates…" },
 ];
+
 const categoryColors: Record<Category, string> = {
   Income: "#317a60",
+  Refunds: "#58a37f",
   "Food & groceries": "#e5aa51",
   Transport: "#8d7bd1",
   "Bills & utilities": "#5da1a0",
+  "Airtime & data": "#4f9bd0",
   Shopping: "#e17e73",
+  "Rent & housing": "#a7745a",
+  Business: "#3f6f8f",
+  "Cash withdrawal": "#c9a227",
   Transfers: "#7b8c93",
   Betting: "#d47f57",
   "Bank fees": "#9a8b7a",
@@ -74,67 +126,51 @@ const categoryColors: Record<Category, string> = {
   Other: "#a6aaa4",
 };
 
-function readStoredTransactions(): Transaction[] {
+function readJson<T>(key: string, normalise: (value: unknown) => T, fallback: T): T {
   try {
-    return parseStoredTransactions(localStorage.getItem(STORAGE_KEY) ?? "[]");
+    return normalise(JSON.parse(localStorage.getItem(key) ?? "null"));
   } catch {
-    return [];
+    return fallback;
   }
 }
 
-function readStoredSavingsGoals(): SavingsGoal[] {
+function saveJson(key: string, value: unknown): boolean {
   try {
-    return normaliseSavingsGoals(JSON.parse(localStorage.getItem(SAVINGS_STORAGE_KEY) ?? "[]"));
+    localStorage.setItem(key, JSON.stringify(value));
+    return true;
   } catch {
-    return [];
+    return false;
   }
 }
 
-function readStoredSavingsCircles(): SavingsCircle[] {
-  try {
-    return normaliseSavingsCircles(JSON.parse(localStorage.getItem(CIRCLES_STORAGE_KEY) ?? "[]"));
-  } catch {
-    return [];
-  }
-}
-
-function readStoredBets(): BetRecord[] {
-  try {
-    return normaliseBets(JSON.parse(localStorage.getItem(BETS_STORAGE_KEY) ?? "[]"));
-  } catch {
-    return [];
-  }
-}
-
-function formatCurrency(amount: number, currency: string, compact = false): string {
-  if (compact && Math.abs(amount) >= 1_000_000) {
-    return new Intl.NumberFormat("en-NG", {
-      style: "currency",
-      currency,
-      notation: "compact",
-      maximumFractionDigits: 1,
-    }).format(amount);
-  }
-  return new Intl.NumberFormat("en-NG", {
-    style: "currency",
-    currency,
-    maximumFractionDigits: 0,
-  }).format(amount);
-}
-
-function formatDate(date: string): string {
-  return new Intl.DateTimeFormat("en-NG", { day: "numeric", month: "short", year: "numeric" })
-    .format(new Date(`${date}T00:00:00`));
+function readStoredPeriod(): { period: Period; custom: DateRange } {
+  return readJson(PERIOD_STORAGE_KEY, (value) => {
+    const stored = value as { period?: unknown; custom?: { start?: unknown; end?: unknown } } | null;
+    const period = periodOptions.some((option) => option.value === stored?.period) ? stored!.period as Period : "30d";
+    const start = typeof stored?.custom?.start === "string" ? stored.custom.start : null;
+    const end = typeof stored?.custom?.end === "string" ? stored.custom.end : null;
+    return { period, custom: { start, end } };
+  }, { period: "30d" as Period, custom: { start: null, end: null } });
 }
 
 function initialLetter(value: string): string {
   return value.trim().slice(0, 1).toUpperCase() || "B";
 }
 
-function relativeChange(current: number, previous: number): string {
-  if (previous === 0) return current === 0 ? "No change" : "New this period";
+interface Change {
+  text: string;
+  direction: "up" | "down" | null;
+}
+
+function relativeChange(current: number, previous: number): Change {
+  if (previous === 0) return { text: current === 0 ? "No change" : "Nothing in the previous period", direction: null };
   const change = ((current - previous) / previous) * 100;
-  return `${change > 0 ? "+" : ""}${Math.round(change)}% vs previous`;
+  if (Math.abs(change) < 0.5) return { text: "About the same as previous", direction: null };
+  return { text: `${change > 0 ? "+" : ""}${Math.round(change)}% vs previous period`, direction: change > 0 ? "up" : "down" };
+}
+
+function sortNewestFirst(a: Transaction, b: Transaction): number {
+  return b.date.localeCompare(a.date) || (b.time ?? "").localeCompare(a.time ?? "");
 }
 
 function createDemoTransactions(): Transaction[] {
@@ -145,6 +181,7 @@ function createDemoTransactions(): Transaction[] {
     ["Market groceries", 0.12, "expense", "Food & groceries"],
     ["Bolt ride", 0.055, "expense", "Transport"],
     ["Electricity bill", 0.048, "expense", "Bills & utilities"],
+    ["Mobile Data | MTN", 0.02, "expense", "Airtime & data"],
     ["Streaming subscription", 0.018, "expense", "Entertainment"],
     ["Pharmacy", 0.026, "expense", "Health"],
     ["Clothing store", 0.045, "expense", "Shopping"],
@@ -157,8 +194,9 @@ function createDemoTransactions(): Transaction[] {
       const [description, ratio, direction, category] = demo[index];
       const day = index === 0 ? 25 : 2 + ((index * 4 + monthOffset) % 25);
       const when = new Date(date.getFullYear(), date.getMonth(), day);
+      if (when > now) continue;
       rows.push({
-        date: `${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, "0")}-${String(when.getDate()).padStart(2, "0")}`,
+        date: localIsoDate(when),
         description,
         amount: Math.round((2_450_000 * ratio) / 100) * 100,
         direction,
@@ -171,126 +209,162 @@ function createDemoTransactions(): Transaction[] {
   return rows.map((row, index) => ({ ...row, id: `demo-${index}` }));
 }
 
+interface PendingRule {
+  pattern: string;
+  category: Category;
+  direction: Direction;
+  count: number;
+}
+
 function App() {
-  const [transactions, setTransactions] = useState<Transaction[]>(readStoredTransactions);
-  const [savingsGoals, setSavingsGoals] = useState<SavingsGoal[]>(readStoredSavingsGoals);
-  const [savingsCircles, setSavingsCircles] = useState<SavingsCircle[]>(readStoredSavingsCircles);
-  const [bets, setBets] = useState<BetRecord[]>(readStoredBets);
-  const [period, setPeriod] = useState<Period>("30d");
-  const [activePage, setActivePage] = useState<"overview" | "transactions" | "insights" | "savings" | "betting">("overview");
+  const storedPeriod = useMemo(readStoredPeriod, []);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [savingsGoals, setSavingsGoals] = useState<SavingsGoal[]>(() => readJson(SAVINGS_STORAGE_KEY, normaliseSavingsGoals, []));
+  const [savingsCircles, setSavingsCircles] = useState<SavingsCircle[]>(() => readJson(CIRCLES_STORAGE_KEY, normaliseSavingsCircles, []));
+  const [bets, setBets] = useState<BetRecord[]>(() => readJson(BETS_STORAGE_KEY, normaliseBets, []));
+  const [rules, setRules] = useState<CategoryRule[]>(() => readJson(RULES_STORAGE_KEY, normaliseRules, []));
+  const [budgets, setBudgets] = useState<Budget[]>(() => readJson(BUDGETS_STORAGE_KEY, normaliseBudgets, []));
+  const [period, setPeriod] = useState<Period>(storedPeriod.period);
+  const [customRange, setCustomRange] = useState<DateRange>(storedPeriod.custom);
+  const [activePage, setActivePage] = useState<Page>("overview");
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("All categories");
   const [directionFilter, setDirectionFilter] = useState("All types");
   const [sourceFilter, setSourceFilter] = useState("All accounts");
   const [ownTransferFilter, setOwnTransferFilter] = useState(false);
+  const [hideInternal, setHideInternal] = useState(false);
   const [toast, setToast] = useState("");
   const [importWarnings, setImportWarnings] = useState<string[]>([]);
   const [importing, setImporting] = useState(false);
   const [transactionLimit, setTransactionLimit] = useState(100);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showPrivacy, setShowPrivacy] = useState(false);
+  const [showAddTransaction, setShowAddTransaction] = useState(false);
+  const [pendingRule, setPendingRule] = useState<PendingRule | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const betFileInput = useRef<HTMLInputElement>(null);
+  const toastTimer = useRef<number | undefined>(undefined);
+  const skipNextSave = useRef(true);
 
-  const withinPeriod = useMemo(() => filterByPeriod(transactions, period), [transactions, period]);
+  const notify = useCallback((message: string) => {
+    window.clearTimeout(toastTimer.current);
+    setToast(message);
+    toastTimer.current = window.setTimeout(() => setToast(""), 4200);
+  }, []);
+
+  // Transactions live in IndexedDB (statements with tens of thousands of rows outgrow localStorage).
+  useEffect(() => {
+    let cancelled = false;
+    void readValue(STORAGE_KEY).then((value) => {
+      if (cancelled) return;
+      setTransactions(parseStoredTransactions(value ?? "[]"));
+      setLoaded(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!loaded) return;
+    if (skipNextSave.current) {
+      skipNextSave.current = false;
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void writeValue(STORAGE_KEY, serializeTransactions(transactions)).then((ok) => {
+        if (!ok) notify("Could not save to this browser. Download a backup from Data & rules before closing this tab.");
+      });
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [transactions, loaded, notify]);
+
+  useEffect(() => {
+    saveJson(PERIOD_STORAGE_KEY, { period, custom: customRange });
+  }, [period, customRange]);
+
+  useEffect(() => {
+    setTransactionLimit(100);
+  }, [query, categoryFilter, directionFilter, sourceFilter, ownTransferFilter, hideInternal, period, customRange]);
+
+  const range = useMemo(() => resolvePeriod(period, new Date(), customRange), [period, customRange]);
+  const withinPeriod = useMemo(() => filterByRange(transactions, range), [transactions, range]);
   const totals = useMemo(() => calculateTotals(withinPeriod), [withinPeriod]);
   const categories = useMemo(() => getCategoryTotals(withinPeriod), [withinPeriod]);
   const transferInsights = useMemo(() => getTransferInsights(withinPeriod), [withinPeriod]);
-  const monthly = useMemo(() => getMonthlyTotals(transactions, 6), [transactions]);
-  const sources = useMemo(
-    () => [...new Set(transactions.map((transaction) => transaction.source))].sort(),
-    [transactions],
-  );
-  const previousTotals = useMemo(() => {
-    const now = new Date();
-    const currentStart = new Date(now);
-    const previousStart = new Date(now);
-    if (period === "30d") {
-      currentStart.setDate(now.getDate() - 29);
-      previousStart.setDate(now.getDate() - 59);
-    } else if (period === "90d") {
-      currentStart.setDate(now.getDate() - 89);
-      previousStart.setDate(now.getDate() - 179);
-    } else if (period === "12m") {
-      currentStart.setMonth(now.getMonth() - 11, 1);
-      previousStart.setMonth(now.getMonth() - 23, 1);
-    } else {
-      return calculateTotals([]);
+  const allOwnCandidates = useMemo(() => transactions.filter((transaction) => transaction.ownAccountCandidate && !transaction.internalTransfer).length, [transactions]);
+  const fees = useMemo(() => getFeeSummary(withinPeriod), [withinPeriod]);
+  const dataBounds = useMemo(() => {
+    let first = "";
+    let last = "";
+    for (const transaction of transactions) {
+      if (!first || transaction.date < first) first = transaction.date;
+      if (!last || transaction.date > last) last = transaction.date;
     }
-    currentStart.setHours(0, 0, 0, 0);
-    previousStart.setHours(0, 0, 0, 0);
-    const currentFloor = localIsoDate(currentStart);
-    const previousFloor = localIsoDate(previousStart);
-    const previous = transactions.filter(
-      (transaction) => transaction.date >= previousFloor && transaction.date < currentFloor,
-    );
-    return calculateTotals(previous);
-  }, [transactions, period]);
+    return { first, last };
+  }, [transactions]);
+  const chartRange = useMemo<DateRange>(() => {
+    const end = range.end && dataBounds.last && dataBounds.last < range.end ? dataBounds.last : range.end ?? dataBounds.last;
+    if (!end) return range;
+    const startLimit = range.start ?? dataBounds.first;
+    const days = startLimit ? (new Date(`${end}T00:00:00`).getTime() - new Date(`${startLimit}T00:00:00`).getTime()) / 86_400_000 : 0;
+    if (days >= 150) return { start: startLimit, end };
+    // Short periods still get a six-month trend for context.
+    const sixMonthsBack = new Date(`${end}T00:00:00`);
+    sixMonthsBack.setMonth(sixMonthsBack.getMonth() - 5, 1);
+    return { start: localIsoDate(sixMonthsBack), end };
+  }, [range, dataBounds]);
+  const monthly = useMemo(() => getMonthlySeries(transactions, chartRange), [transactions, chartRange]);
+  const sources = useMemo(() => [...new Set(transactions.map((transaction) => transaction.source))].sort(), [transactions]);
+  const previousTotals = useMemo(() => {
+    const previous = previousRange(period, range);
+    return previous ? calculateTotals(filterByRange(transactions, previous)) : null;
+  }, [transactions, period, range]);
   const visibleTransactions = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-    return [...withinPeriod]
+    const normalizedQuery = query.trim().toLowerCase().replace(/\s+/g, " ");
+    return withinPeriod
       .filter((transaction) => categoryFilter === "All categories" || transaction.category === categoryFilter)
       .filter((transaction) => directionFilter === "All types" || transaction.direction === directionFilter)
       .filter((transaction) => sourceFilter === "All accounts" || transaction.source === sourceFilter)
-      .filter((transaction) => !ownTransferFilter || transaction.ownAccountCandidate === true)
-      .filter(
-        (transaction) =>
-          !normalizedQuery ||
-          `${transaction.description} ${transaction.category} ${transaction.source}`
-            .toLowerCase()
-            .includes(normalizedQuery),
-      )
-      .sort((a, b) => b.date.localeCompare(a.date));
-  }, [withinPeriod, query, categoryFilter, directionFilter, sourceFilter, ownTransferFilter]);
-  const displayedTransactions = useMemo(
-    () => visibleTransactions.slice(0, transactionLimit),
-    [visibleTransactions, transactionLimit],
-  );
-
-  const notify = (message: string) => {
-    setToast(message);
-    window.setTimeout(() => setToast(""), 3200);
-  };
-
-  const updateTransactions = (next: Transaction[]) => {
-    setTransactions(next);
-    try {
-      localStorage.setItem(STORAGE_KEY, serializeTransactions(next));
-    } catch {
-      notify("Could not save to browser storage. Export your transactions before closing this tab.");
-    }
-  };
+      .filter((transaction) => !ownTransferFilter || (transaction.ownAccountCandidate === true && !transaction.internalTransfer))
+      .filter((transaction) => !hideInternal || !transaction.internalTransfer)
+      .filter((transaction) =>
+        !normalizedQuery ||
+        `${transaction.description} ${transaction.category} ${transaction.source} ${transaction.note ?? ""} ${transaction.amount}`.toLowerCase().replace(/\s+/g, " ").includes(normalizedQuery))
+      .sort(sortNewestFirst);
+  }, [withinPeriod, query, categoryFilter, directionFilter, sourceFilter, ownTransferFilter, hideInternal]);
+  const displayedTransactions = useMemo(() => visibleTransactions.slice(0, transactionLimit), [visibleTransactions, transactionLimit]);
+  const visibleTotals = useMemo(() => calculateTotals(visibleTransactions), [visibleTransactions]);
 
   const updateSavingsGoals = (next: SavingsGoal[]) => {
     setSavingsGoals(next);
-    try {
-      localStorage.setItem(SAVINGS_STORAGE_KEY, JSON.stringify(next));
-    } catch {
-      notify("Could not save your goals in this browser. Export or note them before closing this tab.");
-    }
+    if (!saveJson(SAVINGS_STORAGE_KEY, next)) notify("Could not save your goals in this browser. Download a backup before closing this tab.");
   };
 
   const updateSavingsCircles = (next: SavingsCircle[]) => {
     setSavingsCircles(next);
-    try {
-      localStorage.setItem(CIRCLES_STORAGE_KEY, JSON.stringify(next));
-    } catch {
-      notify("Could not save contribution circles in this browser. Note or export your records before closing this tab.");
-    }
+    if (!saveJson(CIRCLES_STORAGE_KEY, next)) notify("Could not save contribution circles in this browser. Download a backup before closing this tab.");
   };
 
   const updateBets = (next: BetRecord[]) => {
     setBets(next);
-    try {
-      localStorage.setItem(BETS_STORAGE_KEY, JSON.stringify(next));
-    } catch {
-      notify("Could not save betting records in this browser. Export or note them before closing this tab.");
-    }
+    if (!saveJson(BETS_STORAGE_KEY, next)) notify("Could not save betting records in this browser. Download a backup before closing this tab.");
+  };
+
+  const updateRules = (next: CategoryRule[]) => {
+    setRules(next);
+    if (!saveJson(RULES_STORAGE_KEY, next)) notify("Could not save your rules in this browser.");
+  };
+
+  const updateBudgets = (next: Budget[]) => {
+    setBudgets(next);
+    if (!saveJson(BUDGETS_STORAGE_KEY, next)) notify("Could not save your budgets in this browser.");
   };
 
   const importFiles = async (files: FileList | File[]) => {
-    const selectedFiles = Array.from(files);
-    const statementFiles = selectedFiles.filter((file) => /\.(csv|xls|xlsx|pdf)$/i.test(file.name));
+    if (!loaded) return;
+    const statementFiles = Array.from(files).filter((file) => /\.(csv|xls|xlsx|pdf)$/i.test(file.name));
     if (statementFiles.length === 0) {
       notify("Choose a CSV, Excel (.xls/.xlsx), or text-based PDF statement.");
       return;
@@ -312,15 +386,16 @@ function App() {
           messages.push(`${file.name} could not be read. Scanned or password-protected PDFs may need to be exported as CSV or Excel.`);
         }
       }
+
+      const newTransactions = findNewTransactions(transactions, applyCategoryRules(imported, rules));
+      const duplicates = imported.length - newTransactions.length;
+      if (duplicates > 0 && newTransactions.length) messages.push(`${duplicates.toLocaleString("en-NG")} rows were already in your history and were skipped.`);
       setImportWarnings(messages);
 
-      const newTransactions = findNewTransactions(transactions, imported);
       if (newTransactions.length) {
-        updateTransactions([...transactions, ...newTransactions]);
-        if (newTransactions.some((transaction) => transaction.source === "OPay Wallet" || transaction.source === "OPay Savings")) {
-          setPeriod("all");
-        }
-        notify(`${newTransactions.length} transaction${newTransactions.length === 1 ? "" : "s"} imported${skipped ? ` · ${skipped} skipped` : ""}${messages.length ? " · review the import note below" : ""}.`);
+        setTransactions((current) => [...current, ...newTransactions]);
+        if (!newTransactions.some((transaction) => filterByRange([transaction], range).length)) setPeriod("all");
+        notify(`${newTransactions.length.toLocaleString("en-NG")} transaction${newTransactions.length === 1 ? "" : "s"} imported${skipped ? ` · ${skipped} skipped` : ""}${messages.length ? " · see the import notes" : ""}.`);
         setActivePage("overview");
       } else if (imported.length) {
         notify("Those transactions are already in your history.");
@@ -351,10 +426,8 @@ function App() {
       });
       if (newBets.length) {
         updateBets([...bets, ...newBets]);
-        setActivePage("betting");
         notify(`${newBets.length} bet${newBets.length === 1 ? "" : "s"} imported${result.warnings.length ? ` · ${result.warnings[0]}` : ""}.`);
       } else if (result.bets.length) {
-        setActivePage("betting");
         notify("Those betting records are already in your ledger.");
       } else {
         notify(result.warnings[0] ?? "No bet records could be extracted from this page.");
@@ -367,9 +440,86 @@ function App() {
     }
   };
 
+  /* ------------------------------------------------ transaction editing */
+
+  const changeCategory = (transactionId: string, category: Category) => {
+    const target = transactions.find((transaction) => transaction.id === transactionId);
+    if (!target) return;
+    setTransactions((current) => current.map((transaction) =>
+      transaction.id === transactionId ? { ...transaction, category, categoryLocked: true } : transaction));
+    const pattern = similarityKey(target.description);
+    if (pattern.length < 3) return;
+    const probe = { id: "", pattern, category, direction: target.direction, createdAt: "" };
+    const similar = transactions.filter((transaction) =>
+      transaction.id !== transactionId && !transaction.categoryLocked && !transaction.manual &&
+      transaction.category !== category && ruleMatches(probe, transaction)).length;
+    setPendingRule(similar > 0 ? { pattern, category, direction: target.direction, count: similar } : null);
+    if (!similar) notify(`Category set to ${category}.`);
+  };
+
+  const addRule = (rule: Omit<CategoryRule, "id" | "createdAt">) => {
+    const created: CategoryRule = { ...rule, id: newId("rule"), createdAt: localIsoDate() };
+    updateRules([...rules, created]);
+    const next = applyCategoryRules(transactions, [created]);
+    const changed = next.filter((transaction, index) => transaction !== transactions[index]).length;
+    setTransactions(next);
+    notify(`Rule saved · ${changed.toLocaleString("en-NG")} transaction${changed === 1 ? "" : "s"} updated.`);
+  };
+
+  const acceptPendingRule = () => {
+    if (!pendingRule) return;
+    addRule({ pattern: pendingRule.pattern, category: pendingRule.category, direction: pendingRule.direction });
+    setPendingRule(null);
+  };
+
+  const toggleInternal = (transactionId: string) => {
+    setTransactions((current) => current.map((transaction) => {
+      if (transaction.id !== transactionId) return transaction;
+      if (transaction.internalTransfer) {
+        return {
+          ...transaction,
+          internalTransfer: false,
+          category: transaction.categoryLocked ? transaction.category : categorise(transaction.description, transaction.direction),
+        };
+      }
+      return { ...transaction, internalTransfer: true, ownAccountCandidate: false, category: "Transfers" };
+    }));
+  };
+
+  const confirmAllOwnTransfers = () => {
+    if (!allOwnCandidates) return;
+    if (!window.confirm(`Mark all ${allOwnCandidates.toLocaleString("en-NG")} possible own-account transfers as internal? They will be excluded from income and spending totals. You can undo any one of them from the Transactions page.`)) return;
+    setTransactions((current) => current.map((transaction) =>
+      transaction.ownAccountCandidate && !transaction.internalTransfer
+        ? { ...transaction, internalTransfer: true, ownAccountCandidate: false, category: "Transfers" }
+        : transaction));
+    notify(`${allOwnCandidates.toLocaleString("en-NG")} transfers between your own accounts are now excluded from totals.`);
+  };
+
+  const deleteTransaction = (transactionId: string) => {
+    if (!window.confirm("Delete this transaction from your history?")) return;
+    setTransactions((current) => current.filter((transaction) => transaction.id !== transactionId));
+    notify("Transaction deleted.");
+  };
+
+  const addManualTransaction = (transaction: Omit<Transaction, "id">) => {
+    setTransactions((current) => [...current, { ...transaction, id: newId("manual"), manual: true, categoryLocked: true }]);
+    setShowAddTransaction(false);
+    if (!filterByRange([{ ...transaction, id: "" }], range).length) setPeriod("all");
+    notify("Transaction added.");
+  };
+
+  const refreshAllCategories = () => {
+    if (!window.confirm("Re-run automatic categorisation and your rules over your imported history? Categories you set by hand are kept.")) return;
+    const result = refreshCategories(transactions, rules);
+    setTransactions(result.transactions);
+    notify(`${result.changed.toLocaleString("en-NG")} transaction${result.changed === 1 ? "" : "s"} re-categorised.`);
+  };
+
+  /* ---------------------------------------------- savings and betting */
+
   const createBetRecord = (bet: Omit<BetRecord, "id">) => {
-    const id = globalThis.crypto?.randomUUID?.() ?? `bet-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
-    updateBets([...bets, { ...bet, id }]);
+    updateBets([...bets, { ...bet, id: newId("bet") }]);
     notify("Bet record added.");
   };
 
@@ -383,24 +533,16 @@ function App() {
   };
 
   const createSavingsGoal = (name: string, targetAmount: number, startingAmount: number) => {
-    const id = globalThis.crypto?.randomUUID?.() ?? `goal-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
-    const date = localIsoDate(new Date());
-    const contributions: SavingsContribution[] = startingAmount > 0
-      ? [{ id: `${id}-starting`, date, amount: startingAmount }]
-      : [];
+    const id = newId("goal");
+    const date = localIsoDate();
+    const contributions: SavingsContribution[] = startingAmount > 0 ? [{ id: `${id}-starting`, date, amount: startingAmount }] : [];
     updateSavingsGoals([...savingsGoals, { id, name, targetAmount, createdAt: date, contributions }]);
     notify(`“${name}” savings goal created.`);
   };
 
   const addSavingsContribution = (goalId: string, amount: number) => {
-    const id = globalThis.crypto?.randomUUID?.() ?? `contribution-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
-    const date = localIsoDate(new Date());
-    const next = savingsGoals.map((goal) =>
-      goal.id === goalId
-        ? { ...goal, contributions: [...goal.contributions, { id, date, amount }] }
-        : goal,
-    );
-    updateSavingsGoals(next);
+    const contribution = { id: newId("contribution"), date: localIsoDate(), amount };
+    updateSavingsGoals(savingsGoals.map((goal) => goal.id === goalId ? { ...goal, contributions: [...goal.contributions, contribution] } : goal));
     notify("Savings contribution recorded.");
   };
 
@@ -410,8 +552,7 @@ function App() {
   };
 
   const createSavingsCircle = (circle: Omit<SavingsCircle, "id">) => {
-    const id = globalThis.crypto?.randomUUID?.() ?? `circle-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
-    updateSavingsCircles([...savingsCircles, { ...circle, id }]);
+    updateSavingsCircles([...savingsCircles, { ...circle, id: newId("circle") }]);
     notify(`“${circle.name}” circle saved in this browser.`);
   };
 
@@ -424,46 +565,102 @@ function App() {
     notify("Contribution circle and its local history deleted.");
   };
 
-  const exportCsv = () => {
-    if (visibleTransactions.length === 0) {
+  /* ------------------------------------------------------ data & files */
+
+  const exportCsv = (rows: Transaction[]) => {
+    if (rows.length === 0) {
       notify("There are no transactions to export.");
       return;
     }
-    const blob = new Blob([transactionsToCsv(visibleTransactions)], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "spendwise-transactions.csv";
-    link.click();
-    URL.revokeObjectURL(url);
-    notify(`${visibleTransactions.length} transactions exported.`);
+    downloadFile(transactionsToCsv([...rows].sort(sortNewestFirst)), "spendwise-transactions.csv", "text/csv;charset=utf-8");
+    notify(`${rows.length.toLocaleString("en-NG")} transactions exported.`);
+  };
+
+  const exportBackup = () => {
+    downloadFile(
+      createBackup({ transactions, savingsGoals, savingsCircles, bets, rules, budgets }),
+      `spendwise-backup-${localIsoDate()}.json`,
+      "application/json",
+    );
+    notify("Backup downloaded. Keep it somewhere safe — it contains your full history.");
+  };
+
+  const restoreBackup = async (file: File) => {
+    const backup = readBackup(await file.text());
+    if (!backup) {
+      notify("That file is not a Spendwise backup.");
+      return;
+    }
+    if (!window.confirm(`Replace everything in this browser with the backup (${backup.transactions.length.toLocaleString("en-NG")} transactions, ${backup.savingsGoals.length} goals, ${backup.bets.length} bets, ${backup.rules.length} rules, ${backup.budgets.length} budgets)?`)) return;
+    setTransactions(backup.transactions);
+    updateSavingsGoals(backup.savingsGoals);
+    updateSavingsCircles(backup.savingsCircles);
+    updateBets(backup.bets);
+    updateRules(backup.rules);
+    updateBudgets(backup.budgets);
+    setPeriod("all");
+    notify("Backup restored.");
   };
 
   const loadDemo = () => {
     if (transactions.length && !window.confirm("Replace your current transactions with fictional demo data?")) return;
-    updateTransactions(createDemoTransactions());
+    setTransactions(createDemoTransactions());
+    setPeriod("90d");
     notify("Fictional demo data loaded. Import your own statement when ready.");
   };
 
   const clearTransactions = () => {
     if (!transactions.length) return;
     if (!window.confirm("Delete all locally saved transactions? This cannot be undone.")) return;
-    updateTransactions([]);
+    setTransactions([]);
     notify("Transaction history cleared from this browser.");
   };
 
-  const confirmOwnAccountTransfer = (transactionId: string) => {
-    updateTransactions(transactions.map((transaction) =>
-      transaction.id === transactionId
-        ? { ...transaction, category: "Transfers", internalTransfer: true, ownAccountCandidate: false }
-        : transaction,
-    ));
-    notify("Marked as an internal transfer; it is now excluded from income and spending totals.");
+  const goTo = (page: Page) => {
+    setActivePage(page);
+    setSidebarOpen(false);
+    window.scrollTo({ top: 0 });
+  };
+
+  const searchTransactions = (text: string) => {
+    setQuery(text);
+    setCategoryFilter("All categories");
+    setDirectionFilter("All types");
+    setSourceFilter("All accounts");
+    setOwnTransferFilter(false);
+    goTo("transactions");
   };
 
   const activeCategories = categories.filter((item) => item.category !== "Transfers");
   const topCategory = activeCategories[0];
-  const biggest = largestExpense(withinPeriod);
+  const biggest = useMemo(() => withinPeriod
+    .filter((transaction) => transaction.direction === "expense" && !transaction.internalTransfer && transaction.category !== "Transfers")
+    .reduce<Transaction | undefined>((max, transaction) => (!max || transaction.amount > max.amount ? transaction : max), undefined), [withinPeriod]);
+  const comparisonsAvailable = previousTotals !== null;
+  const periodHint = loaded && transactions.length > 0 && withinPeriod.length === 0;
+
+  const periodControls = (
+    <PeriodSelect
+      value={period}
+      custom={customRange}
+      bounds={dataBounds}
+      onChange={setPeriod}
+      onCustomChange={setCustomRange}
+    />
+  );
+
+  const emptyPeriodNotice = periodHint ? (
+    <section className="period-hint" role="status">
+      <span>No transactions in this period. Your history runs from <strong>{formatDate(dataBounds.first)}</strong> to <strong>{formatDate(dataBounds.last)}</strong>.</span>
+      <span className="period-hint-actions">
+        <button className="button button-secondary" onClick={() => {
+          setCustomRange({ start: `${dataBounds.last.slice(0, 7)}-01`, end: dataBounds.last });
+          setPeriod("custom");
+        }}>Show latest month</button>
+        <button className="button button-primary" onClick={() => setPeriod("all")}>Show all time</button>
+      </span>
+    </section>
+  ) : null;
 
   return (
     <div className="app-shell">
@@ -475,55 +672,39 @@ function App() {
         </div>
         <div className="workspace-switch">
           <div className="workspace-avatar"><Landmark size={16} /></div>
-          <div className="workspace-copy"><strong>My finances</strong><span>Personal workspace</span></div>
-          <ChevronDown size={15} className="muted-icon" />
+          <div className="workspace-copy"><strong>My finances</strong><span>{dataBounds.first ? `${formatDate(dataBounds.first)} – ${formatDate(dataBounds.last)}` : "Personal workspace"}</span></div>
         </div>
         <div className="nav-label">MENU</div>
         <nav className="primary-nav" aria-label="Main navigation">
-          <button className={activePage === "overview" ? "nav-item active" : "nav-item"} onClick={() => { setActivePage("overview"); setSidebarOpen(false); }}>
-            <LayoutDashboard size={18} /><span>Overview</span>
-          </button>
-          <button className={activePage === "transactions" ? "nav-item active" : "nav-item"} onClick={() => { setActivePage("transactions"); setSidebarOpen(false); }}>
-            <ArrowLeftRight size={18} /><span>Transactions</span>
-            <span className="nav-count">{transactions.length}</span>
-          </button>
-          <button className={activePage === "insights" ? "nav-item active" : "nav-item"} onClick={() => { setActivePage("insights"); setSidebarOpen(false); }}>
-            <BarChart3 size={18} /><span>Insights</span>
-          </button>
-          <button className={activePage === "savings" ? "nav-item active" : "nav-item"} onClick={() => { setActivePage("savings"); setSidebarOpen(false); }}>
-            <PiggyBank size={18} /><span>Savings</span>
-            {savingsGoals.length + savingsCircles.length > 0 && <span className="nav-count">{savingsGoals.length + savingsCircles.length}</span>}
-          </button>
-          <button className={activePage === "betting" ? "nav-item active" : "nav-item"} onClick={() => { setActivePage("betting"); setSidebarOpen(false); }}>
-            <Ticket size={18} /><span>Betting</span>
-            {bets.length > 0 && <span className="nav-count">{bets.length}</span>}
-          </button>
+          <NavButton page="overview" active={activePage} onClick={goTo} icon={<LayoutDashboard size={18} />} />
+          <NavButton page="transactions" active={activePage} onClick={goTo} icon={<ArrowLeftRight size={18} />} count={transactions.length} />
+          <NavButton page="insights" active={activePage} onClick={goTo} icon={<BarChart3 size={18} />} />
+          <NavButton page="budgets" active={activePage} onClick={goTo} icon={<Target size={18} />} count={budgets.length || undefined} />
+          <NavButton page="savings" active={activePage} onClick={goTo} icon={<PiggyBank size={18} />} count={savingsGoals.length + savingsCircles.length || undefined} />
+          <NavButton page="betting" active={activePage} onClick={goTo} icon={<Ticket size={18} />} count={bets.length || undefined} />
+          <NavButton page="data" active={activePage} onClick={goTo} icon={<DatabaseBackup size={18} />} count={rules.length || undefined} />
         </nav>
         <div className="sidebar-bottom">
           <div className="privacy-card">
             <div className="privacy-icon"><LockKeyhole size={16} /></div>
             <strong>Your data stays yours</strong>
-            <p>Imports and records are processed and stored in this browser only.</p>
+            <p>Imports and records are processed and stored in this browser only. Download a backup from Data & rules.</p>
             <button onClick={() => setShowPrivacy(true)}>How it works <ArrowUpRight size={13} /></button>
-          </div>
-          <div className="profile-row">
-            <div className="profile-avatar">Y</div>
-            <div className="profile-copy"><strong>Your workspace</strong><span>Private account</span></div>
-            <button className="icon-button" onClick={clearTransactions} title="Clear all transactions" aria-label="Clear all transactions"><Trash2 size={16} /></button>
           </div>
         </div>
       </aside>
+      {sidebarOpen && <div className="sidebar-scrim" onClick={() => setSidebarOpen(false)} aria-hidden="true" />}
 
       <main className="main-area">
         <header className="topbar">
           <button className="icon-button menu-toggle" aria-label="Open menu" onClick={() => setSidebarOpen(true)}><Menu size={19} /></button>
-          <div className="breadcrumbs"><span>My finances</span><span className="crumb-slash">/</span><strong>{activePage === "overview" ? "Overview" : activePage === "transactions" ? "Transactions" : activePage === "savings" ? "Savings" : activePage === "betting" ? "Betting" : "Insights"}</strong></div>
+          <div className="breadcrumbs"><span>My finances</span><span className="crumb-slash">/</span><strong>{pageTitles[activePage]}</strong></div>
           <div className="topbar-actions">
             <span className="currency-badge">{currency}</span>
             {activePage === "betting" ? (
               <button className="button button-primary top-import" onClick={() => betFileInput.current?.click()}><Plus size={16} /> Import bets</button>
             ) : (
-              <button className="button button-primary top-import" onClick={() => fileInput.current?.click()}><Plus size={16} /> Import statement</button>
+              <button className="button button-primary top-import" disabled={!loaded} onClick={() => fileInput.current?.click()}><Plus size={16} /> Import statement</button>
             )}
             <input ref={fileInput} className="visually-hidden" type="file" accept=".csv,.xls,.xlsx,.pdf,text/csv,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple onChange={(event) => event.target.files && void importFiles(event.target.files)} />
             <input ref={betFileInput} className="visually-hidden" type="file" accept=".mhtml,.mht,.html,.htm,application/x-mimearchive,text/html" onChange={(event) => event.target.files && void importBetPage(event.target.files)} />
@@ -540,7 +721,12 @@ function App() {
               <button className="icon-button" onClick={() => setImportWarnings([])} aria-label="Dismiss import notes"><X size={16} /></button>
             </section>
           )}
-          {activePage === "overview" && (
+
+          {!loaded && (activePage === "overview" || activePage === "transactions" || activePage === "insights") && (
+            <div className="loading-state"><LoaderCircle className="spin" size={20} /> Loading your history…</div>
+          )}
+
+          {loaded && activePage === "overview" && (
             <>
               <div className="page-heading">
                 <div>
@@ -549,8 +735,8 @@ function App() {
                   <p className="page-subtitle">A calm, clear picture of where your money comes from and where it goes.</p>
                 </div>
                 <div className="heading-actions">
-                  <PeriodSelect value={period} onChange={setPeriod} />
-                  <button className="button button-secondary" onClick={exportCsv}><Download size={15} /> Export</button>
+                  {periodControls}
+                  <button className="button button-secondary" onClick={() => exportCsv(withinPeriod)}><Download size={15} /> Export</button>
                 </div>
               </div>
 
@@ -558,43 +744,62 @@ function App() {
                 <EmptyState onImport={() => fileInput.current?.click()} onDemo={loadDemo} />
               ) : (
                 <>
+                  {emptyPeriodNotice}
                   <div className="metric-grid">
                     <MetricCard
                       label="Money in"
                       amount={formatCurrency(totals.income, currency)}
-                      comparison={period === "all" ? "Across all imported history" : relativeChange(totals.income, previousTotals.income)}
+                      change={comparisonsAvailable ? relativeChange(totals.income, previousTotals!.income) : { text: "Across the whole period", direction: null }}
+                      goodWhenUp
                       icon={<ArrowDownLeft size={18} />}
                       tint="mint"
                     />
                     <MetricCard
                       label="Money out"
                       amount={formatCurrency(totals.expenses, currency)}
-                      comparison={period === "all" ? "Across all imported history" : relativeChange(totals.expenses, previousTotals.expenses)}
+                      change={comparisonsAvailable ? relativeChange(totals.expenses, previousTotals!.expenses) : { text: totals.refunds ? `After ${formatCurrency(totals.refunds, currency)} in refunds` : "Across the whole period", direction: null }}
+                      goodWhenUp={false}
                       icon={<ArrowUpRight size={18} />}
                       tint="peach"
                     />
                     <MetricCard
                       label="Net cash flow"
                       amount={formatCurrency(totals.net, currency)}
-                      comparison="Income minus outgoing"
+                      change={{ text: "Money in minus money out", direction: null }}
+                      goodWhenUp
                       icon={<ArrowLeftRight size={18} />}
                       tint="lavender"
                     />
                     <MetricCard
                       label="Kept this period"
-                      amount={`${Math.round(totals.savingsRate)}%`}
-                      comparison={totals.income > 0 ? "Of your income after spending" : "Add income to calculate"}
+                      amount={totals.income > 0 ? `${Math.round(totals.savingsRate)}%` : "—"}
+                      change={{ text: totals.income > 0 ? "Of money in, after spending" : "Add income to calculate", direction: null }}
+                      goodWhenUp
                       icon={<Wallet size={18} />}
                       tint="blue"
                     />
                   </div>
+
+                  {allOwnCandidates > 0 && (
+                    <section className="review-banner">
+                      <span><strong>{allOwnCandidates.toLocaleString("en-NG")} transfers look like moves between your own accounts</strong> (same name or your own card/account number). They still count as money in and out until you confirm them.</span>
+                      <span className="review-banner-actions">
+                        <button className="button button-secondary" onClick={() => {
+                          searchTransactions("");
+                          setPeriod("all");
+                          setOwnTransferFilter(true);
+                        }}>Review</button>
+                        <button className="button button-primary" onClick={confirmAllOwnTransfers}>Exclude all from totals</button>
+                      </span>
+                    </section>
+                  )}
 
                   <div className="dashboard-grid">
                     <section className="panel cashflow-panel">
                       <div className="panel-heading">
                         <div>
                           <div className="panel-kicker">CASH FLOW</div>
-                          <h2>Income vs. spending</h2>
+                          <h2>Income vs. spending by month</h2>
                         </div>
                         <div className="chart-legend">
                           <span><i className="legend-dot income-dot" /> Income</span>
@@ -610,9 +815,12 @@ function App() {
                           <div className="panel-kicker">WHERE IT GOES</div>
                           <h2>Spending breakdown</h2>
                         </div>
-                        <button className="subtle-link" onClick={() => setActivePage("insights")}>Details <ArrowUpRight size={14} /></button>
+                        <button className="subtle-link" onClick={() => goTo("insights")}>Details <ArrowUpRight size={14} /></button>
                       </div>
-                      <CategoryChart categories={activeCategories} currency={currency} />
+                      <CategoryChart categories={activeCategories} currency={currency} onSelect={(category) => {
+                        searchTransactions("");
+                        setCategoryFilter(category);
+                      }} />
                     </section>
                   </div>
 
@@ -621,23 +829,20 @@ function App() {
                       <div className="panel-heading transaction-heading">
                         <div>
                           <div className="panel-kicker">LATEST ACTIVITY</div>
-                          <h2>Recent transactions <span className="heading-count">{withinPeriod.length}</span></h2>
+                          <h2>Recent transactions <span className="heading-count">{withinPeriod.length.toLocaleString("en-NG")}</span></h2>
                         </div>
-                        <button className="subtle-link" onClick={() => setActivePage("transactions")}>See all <ArrowUpRight size={14} /></button>
+                        <button className="subtle-link" onClick={() => goTo("transactions")}>See all <ArrowUpRight size={14} /></button>
                       </div>
-                      <TransactionTable
-                        transactions={[...withinPeriod].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6)}
-                        currency={currency}
-                        onConfirmInternalTransfer={confirmOwnAccountTransfer}
-                      />
+                      <TransactionTable transactions={[...withinPeriod].sort(sortNewestFirst).slice(0, 6)} currency={currency} />
                     </section>
                     <InsightsPanel
                       count={withinPeriod.length}
                       topCategory={topCategory}
                       biggest={biggest}
+                      fees={fees.total}
                       totals={totals}
                       currency={currency}
-                      onOpen={() => setActivePage("insights")}
+                      onOpen={() => goTo("insights")}
                     />
                   </div>
                 </>
@@ -646,55 +851,90 @@ function App() {
             </>
           )}
 
-          {activePage === "transactions" && (
+          {loaded && activePage === "transactions" && (
             <>
               <div className="page-heading">
                 <div>
                   <div className="eyebrow"><span className="eyebrow-dot" /> YOUR ACTIVITY</div>
                   <h1>Transactions</h1>
-                  <p className="page-subtitle">Search and filter transactions across all your imported statements.</p>
+                  <p className="page-subtitle">Search, re-categorise, and tidy up transactions across all your statements. Change a category and Spendwise offers to remember it.</p>
                 </div>
                 <div className="heading-actions">
-                  <PeriodSelect value={period} onChange={setPeriod} />
-                  <button className="button button-secondary" onClick={exportCsv}><Download size={15} /> Export CSV</button>
+                  {periodControls}
+                  <button className="button button-secondary" onClick={() => setShowAddTransaction(true)}><Plus size={15} /> Add</button>
+                  <button className="button button-secondary" onClick={() => exportCsv(visibleTransactions)}><Download size={15} /> Export CSV</button>
                 </div>
               </div>
+              {emptyPeriodNotice}
+              {pendingRule && (
+                <section className="rule-suggestion" role="status">
+                  <span>Also set <strong>{pendingRule.count.toLocaleString("en-NG")}</strong> similar transaction{pendingRule.count === 1 ? "" : "s"} matching “{pendingRule.pattern}” to <strong>{pendingRule.category}</strong>, and do the same for future imports?</span>
+                  <span className="rule-suggestion-actions">
+                    <button className="button button-secondary" onClick={() => setPendingRule(null)}>Only this one</button>
+                    <button className="button button-primary" onClick={acceptPendingRule}><Check size={14} /> Apply to all &amp; remember</button>
+                  </span>
+                </section>
+              )}
               <section className="panel all-transactions">
                 <div className="table-tools">
-                  <div className="search-field"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search transactions" /></div>
+                  <div className="search-field">
+                    <Search size={16} />
+                    <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search description, amount, account…" />
+                    {query && <button className="icon-button search-clear" onClick={() => setQuery("")} aria-label="Clear search"><X size={14} /></button>}
+                  </div>
                   <div className="filter-row">
-                    <label className="filter-select"><Filter size={14} /><select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}><option>All categories</option>{[...new Set(transactions.map((item) => item.category))].sort().map((item) => <option key={item}>{item}</option>)}</select><ChevronDown size={13} /></label>
-                    <label className="filter-select"><select value={directionFilter} onChange={(event) => setDirectionFilter(event.target.value)}><option>All types</option><option value="income">Income</option><option value="expense">Spending</option></select><ChevronDown size={13} /></label>
-                    <label className="filter-select"><select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}><option>All accounts</option>{sources.map((item) => <option key={item}>{item}</option>)}</select><ChevronDown size={13} /></label>
+                    <label className="filter-select"><Filter size={14} /><select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} aria-label="Category"><option>All categories</option>{categoryList.filter((item) => transactions.some((transaction) => transaction.category === item)).map((item) => <option key={item}>{item}</option>)}</select><ChevronDown size={13} /></label>
+                    <label className="filter-select"><select value={directionFilter} onChange={(event) => setDirectionFilter(event.target.value)} aria-label="Money in or out"><option>All types</option><option value="income">Money in</option><option value="expense">Money out</option></select><ChevronDown size={13} /></label>
+                    <label className="filter-select"><select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)} aria-label="Account"><option>All accounts</option>{sources.map((item) => <option key={item}>{item}</option>)}</select><ChevronDown size={13} /></label>
+                    <button className={`filter-candidate-toggle ${hideInternal ? "filter-candidate-toggle--active" : ""}`} onClick={() => setHideInternal((value) => !value)}>
+                      Hide own-pot moves
+                    </button>
                     <button
                       className={`filter-candidate-toggle ${ownTransferFilter ? "filter-candidate-toggle--active" : ""}`}
                       onClick={() => setOwnTransferFilter((value) => !value)}
                       disabled={transferInsights.ownAccountCandidateCount === 0 && !ownTransferFilter}
                     >
-                      Possible self-transfers · {transferInsights.ownAccountCandidateCount}
+                      Possible self-transfers · {transferInsights.ownAccountCandidateCount.toLocaleString("en-NG")}
                     </button>
                   </div>
                 </div>
-                <div className="transaction-summary"><span>Showing {displayedTransactions.length} of {visibleTransactions.length} transaction{visibleTransactions.length === 1 ? "" : "s"}</span><span>{formatCurrency(calculateTotals(visibleTransactions).expenses, currency)} outgoing</span></div>
+                <div className="transaction-summary">
+                  <span>Showing {displayedTransactions.length.toLocaleString("en-NG")} of {visibleTransactions.length.toLocaleString("en-NG")} transaction{visibleTransactions.length === 1 ? "" : "s"}</span>
+                  <span>{formatCurrency(visibleTotals.income, currency)} in · {formatCurrency(visibleTotals.expenses, currency)} out <small>(own transfers excluded)</small></span>
+                </div>
                 {visibleTransactions.length
                   ? <>
                     <TransactionTable
                       transactions={displayedTransactions}
                       currency={currency}
                       showSource
-                      onConfirmInternalTransfer={confirmOwnAccountTransfer}
+                      onChangeCategory={changeCategory}
+                      onToggleInternal={toggleInternal}
+                      onDelete={deleteTransaction}
                     />
                     {displayedTransactions.length < visibleTransactions.length && (
                       <div className="table-load-more">
-                        <button className="button button-secondary" onClick={() => setTransactionLimit((limit) => limit + 100)}>
-                          Show 100 more
-                        </button>
+                        <button className="button button-secondary" onClick={() => setTransactionLimit((limit) => limit + 100)}>Show 100 more</button>
+                        <button className="button button-text" onClick={() => setTransactionLimit(visibleTransactions.length)}>Show all {visibleTransactions.length.toLocaleString("en-NG")}</button>
                       </div>
                     )}
                   </>
-                  : <div className="no-results"><Search size={20} /><strong>No transactions match those filters</strong><span>Try another search or import a statement.</span></div>}
+                  : <div className="no-results"><Search size={20} /><strong>No transactions match those filters</strong><span>Try another search, period, or import a statement.</span></div>}
               </section>
             </>
+          )}
+
+          {activePage === "budgets" && (
+            <BudgetsPage
+              transactions={transactions}
+              budgets={budgets}
+              currency={currency}
+              onSaveBudget={(budget) => {
+                updateBudgets([...budgets.filter((item) => item.category !== budget.category), budget]);
+                notify(`${budget.category} budget saved.`);
+              }}
+              onDeleteBudget={(category) => updateBudgets(budgets.filter((item) => item.category !== category))}
+            />
           )}
 
           {activePage === "savings" && (
@@ -723,20 +963,38 @@ function App() {
             />
           )}
 
-          {activePage === "insights" && (
+          {activePage === "data" && (
+            <DataPage
+              rules={rules}
+              counts={{ transactions: transactions.length, goals: savingsGoals.length, circles: savingsCircles.length, bets: bets.length, budgets: budgets.length }}
+              matchCount={(rule) => transactions.filter((transaction) => ruleMatches({ id: "", category: "Other", createdAt: "", ...rule }, transaction)).length}
+              onAddRule={addRule}
+              onDeleteRule={(ruleId) => {
+                updateRules(rules.filter((rule) => rule.id !== ruleId));
+                notify("Rule deleted. Existing categories are unchanged; use Re-categorise history to undo its effect.");
+              }}
+              onRefreshCategories={refreshAllCategories}
+              onExportBackup={exportBackup}
+              onRestoreBackup={(file) => void restoreBackup(file)}
+              onClearTransactions={clearTransactions}
+            />
+          )}
+
+          {loaded && activePage === "insights" && (
             <>
               <div className="page-heading">
                 <div>
                   <div className="eyebrow"><span className="eyebrow-dot" /> SPENDING PATTERNS</div>
                   <h1>Insights that make sense.</h1>
-                  <p className="page-subtitle">Simple patterns from the transactions you’ve imported. No guesswork, no judgement.</p>
+                  <p className="page-subtitle">Patterns from the transactions you’ve imported. No guesswork, no judgement.</p>
                 </div>
-                <div className="heading-actions"><PeriodSelect value={period} onChange={setPeriod} /></div>
+                <div className="heading-actions">{periodControls}</div>
               </div>
               {transactions.length === 0 ? (
                 <EmptyState onImport={() => fileInput.current?.click()} onDemo={loadDemo} />
               ) : (
                 <>
+                  {emptyPeriodNotice}
                   <div className="insight-summary">
                     <div className="insight-summary-icon"><Sparkles size={18} /></div>
                     <div><span>YOUR PERIOD SUMMARY</span><p>{summarySentence(totals, topCategory, currency)}</p></div>
@@ -744,19 +1002,22 @@ function App() {
                   <div className="insight-page-grid">
                     <section className="panel insight-category-panel">
                       <div className="panel-heading"><div><div className="panel-kicker">SPENDING MIX</div><h2>Where your money goes</h2></div></div>
-                      <CategoryChart categories={activeCategories} currency={currency} large />
+                      <CategoryChart categories={activeCategories} currency={currency} large onSelect={(category) => {
+                        searchTransactions("");
+                        setCategoryFilter(category);
+                      }} />
                     </section>
                     <div className="insight-side">
                       <InsightDetail
                         icon={<TrendingUp size={18} />}
                         title="Biggest spending category"
                         value={topCategory?.category ?? "No spending yet"}
-                        detail={topCategory ? `${formatCurrency(topCategory.amount, currency)} · ${Math.round(topCategory.share)}% of categorized outgoings` : "Import transactions to find a pattern."}
+                        detail={topCategory ? `${formatCurrency(topCategory.amount, currency)} · ${Math.round(topCategory.share)}% of categorised spending (transfers to people shown separately)` : "Import transactions to find a pattern."}
                         tone="mint"
                       />
                       <InsightDetail
                         icon={<TrendingDown size={18} />}
-                        title="Largest outgoing"
+                        title="Largest single payment"
                         value={biggest ? formatCurrency(biggest.amount, currency) : "No outgoing yet"}
                         detail={biggest ? `${biggest.description} · ${formatDate(biggest.date)}` : "Import transactions to find a pattern."}
                         tone="peach"
@@ -764,29 +1025,27 @@ function App() {
                       <InsightDetail
                         icon={<Wallet size={18} />}
                         title="Savings rate"
-                        value={`${Math.round(totals.savingsRate)}%`}
+                        value={totals.income > 0 ? `${Math.round(totals.savingsRate)}%` : "—"}
                         detail={totals.income > 0 ? `${formatCurrency(Math.max(totals.net, 0), currency)} left after recorded spending` : "Add an income transaction to calculate this."}
                         tone="lavender"
                       />
-                      <div className="insight-note"><Lightbulb size={17} /><p>Transfers are shown separately from lifestyle spending so it’s easier to spot where money is actually going.</p></div>
+                      <div className="insight-note"><Lightbulb size={17} /><p>Money moving between your own wallet and savings pots (OWealth, Spend & Save, Targets) is left out of every total, so the numbers show what actually came in and went out.</p></div>
                     </div>
                   </div>
                   <section className="panel trend-panel">
                     <div className="panel-heading"><div><div className="panel-kicker">MONTH BY MONTH</div><h2>Cash flow trend</h2></div><div className="chart-legend"><span><i className="legend-dot income-dot" /> Income</span><span><i className="legend-dot spending-dot" /> Spending</span></div></div>
                     <CashflowChart data={monthly} currency={currency} />
                   </section>
+                  <InsightsExtras transactions={withinPeriod} allTransactions={transactions} range={range} currency={currency} onSearch={searchTransactions} />
                   <TransferReviewPanel
                     insights={transferInsights}
                     currency={currency}
+                    pendingCount={allOwnCandidates}
+                    onConfirmAll={confirmAllOwnTransfers}
                     onReview={() => {
-                      setActivePage("transactions");
+                      searchTransactions("");
                       setPeriod("all");
-                      setQuery("");
-                      setCategoryFilter("All categories");
-                      setDirectionFilter("All types");
-                      setSourceFilter("All accounts");
                       setOwnTransferFilter(true);
-                      setTransactionLimit(100);
                     }}
                   />
                 </>
@@ -799,46 +1058,82 @@ function App() {
       {importing && <div className="import-overlay"><div className="import-message"><LoaderCircle className="spin" size={22} /><strong>Reading your {activePage === "betting" ? "betting page" : "statement"}…</strong><span>Everything stays in this browser.</span></div></div>}
       {toast && <div className="toast" role="status"><Check size={16} />{toast}</div>}
       {showPrivacy && <PrivacyModal onClose={() => setShowPrivacy(false)} />}
+      {showAddTransaction && <AddTransactionModal currency={currency} sources={sources} onClose={() => setShowAddTransaction(false)} onSave={addManualTransaction} />}
     </div>
   );
 }
 
-function localIsoDate(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+function NavButton({ page, active, onClick, icon, count }: { page: Page; active: Page; onClick: (page: Page) => void; icon: React.ReactNode; count?: number }) {
+  return (
+    <button className={active === page ? "nav-item active" : "nav-item"} onClick={() => onClick(page)} aria-current={active === page ? "page" : undefined}>
+      {icon}<span>{pageTitles[page]}</span>
+      {count !== undefined && count > 0 && <span className="nav-count">{count.toLocaleString("en-NG")}</span>}
+    </button>
+  );
 }
 
-function PeriodSelect({ value, onChange }: { value: Period; onChange: (value: Period) => void }) {
+function PeriodSelect({
+  value,
+  custom,
+  bounds,
+  onChange,
+  onCustomChange,
+}: {
+  value: Period;
+  custom: DateRange;
+  bounds: { first: string; last: string };
+  onChange: (value: Period) => void;
+  onCustomChange: (range: DateRange) => void;
+}) {
   return (
-    <label className="period-select">
-      <select value={value} onChange={(event) => onChange(event.target.value as Period)}>
-        {periodOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
-      </select>
-      <ChevronDown size={15} />
-    </label>
+    <div className="period-controls">
+      <label className="period-select">
+        <select value={value} aria-label="Period" onChange={(event) => {
+          const next = event.target.value as Period;
+          if (next === "custom" && !custom.start && !custom.end && bounds.last) {
+            onCustomChange({ start: `${bounds.last.slice(0, 7)}-01`, end: bounds.last });
+          }
+          onChange(next);
+        }}>
+          {periodOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
+        </select>
+        <ChevronDown size={15} />
+      </label>
+      {value === "custom" && (
+        <span className="custom-range">
+          <input type="date" aria-label="From" value={custom.start ?? ""} max={custom.end ?? undefined} onChange={(event) => onCustomChange({ ...custom, start: event.target.value || null })} />
+          <span>to</span>
+          <input type="date" aria-label="To" value={custom.end ?? ""} min={custom.start ?? undefined} onChange={(event) => onCustomChange({ ...custom, end: event.target.value || null })} />
+        </span>
+      )}
+    </div>
   );
 }
 
 function MetricCard({
   label,
   amount,
-  comparison,
+  change,
+  goodWhenUp,
   icon,
   tint,
 }: {
   label: string;
   amount: string;
-  comparison: string;
+  change: Change;
+  goodWhenUp: boolean;
   icon: React.ReactNode;
   tint: string;
 }) {
-  const isNegative = comparison.startsWith("+") && label === "Money out";
+  const bad = change.direction !== null && (change.direction === "up") !== goodWhenUp;
   return (
     <section className="metric-card">
       <div className="metric-top"><span>{label}</span><span className={`metric-icon ${tint}`}>{icon}</span></div>
       <strong className="metric-value">{amount}</strong>
-      <div className={`metric-comparison ${isNegative ? "comparison-warn" : ""}`}>
-        {comparison.includes("%") && (isNegative ? <TrendingUp size={13} /> : <TrendingDown size={13} />)}
-        <span>{comparison}</span>
+      <div className={`metric-comparison ${bad ? "comparison-warn" : ""}`}>
+        {change.direction === "up" && <TrendingUp size={13} />}
+        {change.direction === "down" && <TrendingDown size={13} />}
+        <span>{change.text}</span>
       </div>
     </section>
   );
@@ -855,46 +1150,49 @@ function EmptyState({ onImport, onDemo }: { onImport: () => void; onDemo: () => 
       </div>
       <div className="eyebrow"><span className="eyebrow-dot" /> YOUR PRIVATE MONEY DASHBOARD</div>
       <h2>Start with your transaction history.</h2>
-       <p>Import CSV, Excel, or text-based PDF statements. Spendwise will bring them together and show your income, spending, and patterns in one place.</p>
+      <p>Import CSV, Excel, or text-based PDF statements (OPay, Access Bank, Moniepoint and similar). Spendwise brings them together and shows your income, spending, and patterns in one place.</p>
       <div className="empty-actions"><button className="button button-primary" onClick={onImport}><CloudUpload size={17} /> Import a bank statement</button><button className="button button-text" onClick={onDemo}>Explore with sample data</button></div>
-       <div className="empty-foot"><LockKeyhole size={13} /> Statements are read locally and never uploaded.</div>
+      <div className="empty-foot"><LockKeyhole size={13} /> Statements are read locally and never uploaded.</div>
     </section>
   );
 }
 
-function CashflowChart({ data, currency }: { data: ReturnType<typeof getMonthlyTotals>; currency: string }) {
+function CashflowChart({ data, currency }: { data: MonthTotal[]; currency: string }) {
+  if (!data.length) return <div className="chart-empty"><BarChart3 size={17} />No months to chart yet</div>;
   const maxValue = Math.max(...data.flatMap((item) => [item.income, item.expenses]), 1);
   const chartHeight = 190;
   const chartWidth = 600;
-  const left = 50;
-  const right = 8;
+  const left = 54;
+  const right = 10;
   const top = 8;
   const bottom = 30;
   const usableHeight = chartHeight - top - bottom;
   const usableWidth = chartWidth - left - right;
-  const scaleValue = (value: number) => chartHeight - bottom - (value / maxValue) * usableHeight;
-  const incomePoints = data.map((item, index) => ({
-    x: left + (data.length === 1 ? usableWidth / 2 : (index / (data.length - 1)) * usableWidth),
-    y: scaleValue(item.income),
-  }));
-  const expensePoints = data.map((item, index) => ({
-    x: left + (data.length === 1 ? usableWidth / 2 : (index / (data.length - 1)) * usableWidth),
-    y: scaleValue(item.expenses),
-  }));
-  const polyline = (points: { x: number; y: number }[]) => points.map((point) => `${point.x},${point.y}`).join(" ");
-  const axisValues = [0, 0.5, 1];
+  const xFor = (index: number) => left + (data.length === 1 ? usableWidth / 2 : (index / (data.length - 1)) * usableWidth);
+  const yFor = (value: number) => chartHeight - bottom - (value / maxValue) * usableHeight;
+  const polyline = (key: "income" | "expenses") => data.map((item, index) => `${xFor(index)},${yFor(item[key])}`).join(" ");
+  const labelEvery = Math.max(1, Math.ceil(data.length / 8));
+  const showPoints = data.length <= 24;
   return (
     <div className="chart-wrap">
-      <svg className="cashflow-chart" viewBox={`0 0 ${chartWidth} ${chartHeight}`} role="img" aria-label="Monthly income and spending chart">
-        {axisValues.map((fraction) => {
+      <svg className="cashflow-chart" viewBox={`0 0 ${chartWidth} ${chartHeight}`} role="img" aria-label={`Monthly income and spending, ${data[0].label} to ${data[data.length - 1].label}`}>
+        {[0, 0.5, 1].map((fraction) => {
           const y = top + usableHeight * (1 - fraction);
           return <g key={fraction}><line x1={left} x2={chartWidth - right} y1={y} y2={y} className="chart-gridline" /><text x={left - 9} y={y + 4} textAnchor="end" className="chart-axis-label">{formatCurrency(maxValue * fraction, currency, true)}</text></g>;
         })}
-        <polyline points={polyline(incomePoints)} className="chart-line chart-line-income" />
-        <polyline points={polyline(expensePoints)} className="chart-line chart-line-expense" />
-        {incomePoints.map((point, index) => <circle key={`i-${data[index].month}`} cx={point.x} cy={point.y} r="4" className="chart-point point-income"><title>{data[index].label} income: {formatCurrency(data[index].income, currency)}</title></circle>)}
-        {expensePoints.map((point, index) => <circle key={`e-${data[index].month}`} cx={point.x} cy={point.y} r="4" className="chart-point point-expense"><title>{data[index].label} spending: {formatCurrency(data[index].expenses, currency)}</title></circle>)}
-        {data.map((item, index) => <text key={item.month} x={left + (data.length === 1 ? usableWidth / 2 : (index / (data.length - 1)) * usableWidth)} y={chartHeight - 7} textAnchor="middle" className="chart-axis-label">{item.label}</text>)}
+        <polyline points={polyline("income")} className="chart-line chart-line-income" />
+        <polyline points={polyline("expenses")} className="chart-line chart-line-expense" />
+        {data.map((item, index) => (
+          <g key={item.month}>
+            {/* A wide invisible column makes every month hoverable even when points are hidden. */}
+            <rect x={xFor(index) - usableWidth / Math.max(data.length, 2) / 2} y={top} width={usableWidth / Math.max(data.length, 2)} height={usableHeight} className="chart-hover-column">
+              <title>{`${item.label}\nIncome: ${formatCurrency(item.income, currency)}\nSpending: ${formatCurrency(item.expenses, currency)}`}</title>
+            </rect>
+            {showPoints && <circle cx={xFor(index)} cy={yFor(item.income)} r="3.5" className="chart-point point-income" />}
+            {showPoints && <circle cx={xFor(index)} cy={yFor(item.expenses)} r="3.5" className="chart-point point-expense" />}
+            {index % labelEvery === 0 && <text x={xFor(index)} y={chartHeight - 7} textAnchor="middle" className="chart-axis-label">{item.label}</text>}
+          </g>
+        ))}
       </svg>
     </div>
   );
@@ -904,13 +1202,16 @@ function CategoryChart({
   categories,
   currency,
   large = false,
+  onSelect,
 }: {
   categories: ReturnType<typeof getCategoryTotals>;
   currency: string;
   large?: boolean;
+  onSelect?: (category: Category) => void;
 }) {
   const radius = 47;
   const circumference = 2 * Math.PI * radius;
+  const total = categories.reduce((sum, item) => sum + item.amount, 0);
   let accumulated = 0;
   return (
     <div className={`category-chart-layout ${large ? "category-chart-layout--large" : ""}`}>
@@ -918,22 +1219,22 @@ function CategoryChart({
         <svg className="donut-chart" viewBox="0 0 120 120" role="img" aria-label="Spending by category">
           <circle cx="60" cy="60" r={radius} className="donut-track" />
           {categories.map((item) => {
-            const dash = (item.share / 100) * circumference;
+            const dash = total > 0 ? (item.amount / total) * circumference : 0;
             const offset = accumulated;
             accumulated += dash;
             return <circle key={item.category} cx="60" cy="60" r={radius} className="donut-segment" stroke={categoryColors[item.category]} strokeDasharray={`${dash} ${circumference - dash}`} strokeDashoffset={-offset}><title>{item.category}: {formatCurrency(item.amount, currency)}</title></circle>;
           })}
-          <text x="60" y="56" textAnchor="middle" className="donut-center-label">TOTAL OUT</text>
-          <text x="60" y="73" textAnchor="middle" className="donut-center-value">{formatCurrency(categories.reduce((sum, item) => sum + item.amount, 0), currency, true)}</text>
+          <text x="60" y="56" textAnchor="middle" className="donut-center-label">SPENDING</text>
+          <text x="60" y="73" textAnchor="middle" className="donut-center-value">{formatCurrency(total, currency, true)}</text>
         </svg>
       </div>
       <div className="category-legend">
-        {categories.slice(0, large ? 8 : 5).map((item) => (
-          <div className="category-row" key={item.category}>
+        {categories.slice(0, large ? 10 : 6).map((item) => (
+          <button className="category-row" key={item.category} onClick={() => onSelect?.(item.category)} disabled={!onSelect} title={onSelect ? `Show ${item.category} transactions` : undefined}>
             <span className="category-name"><i className="category-swatch" style={{ backgroundColor: categoryColors[item.category] }} />{item.category}</span>
             <span className="category-amount">{formatCurrency(item.amount, currency, true)}</span>
-            <span className="category-share">{Math.round(item.share)}%</span>
-          </div>
+            <span className="category-share">{total > 0 ? Math.round((item.amount / total) * 100) : 0}%</span>
+          </button>
         ))}
         {categories.length === 0 && <div className="chart-empty"><BarChart3 size={17} />No spending in this period</div>}
       </div>
@@ -945,48 +1246,72 @@ function TransactionTable({
   transactions,
   currency,
   showSource = false,
-  onConfirmInternalTransfer,
+  onChangeCategory,
+  onToggleInternal,
+  onDelete,
 }: {
   transactions: Transaction[];
   currency: string;
   showSource?: boolean;
-  onConfirmInternalTransfer?: (transactionId: string) => void;
+  onChangeCategory?: (transactionId: string, category: Category) => void;
+  onToggleInternal?: (transactionId: string) => void;
+  onDelete?: (transactionId: string) => void;
 }) {
+  const editable = Boolean(onChangeCategory || onToggleInternal || onDelete);
   return (
     <div className="transaction-table-wrap">
       <table className="transaction-table">
-        <thead><tr><th>TRANSACTION</th><th>DATE</th>{showSource && <th>ACCOUNT</th>}<th>CATEGORY</th><th className="amount-heading">AMOUNT</th></tr></thead>
+        <thead><tr><th>TRANSACTION</th><th>DATE</th>{showSource && <th>ACCOUNT</th>}<th>CATEGORY</th><th className="amount-heading">AMOUNT</th>{editable && <th aria-label="Actions" />}</tr></thead>
         <tbody>
           {transactions.map((transaction) => {
             const isIncome = transaction.direction === "income";
             return (
-              <tr key={transaction.id}>
+              <tr key={transaction.id} className={transaction.internalTransfer ? "row-internal" : undefined}>
                 <td>
                   <div className="transaction-name-cell">
                     <div className={`transaction-icon ${isIncome ? "transaction-icon-income" : ""}`}>
-                      {isIncome ? <ArrowDownLeft size={16} /> : transaction.category === "Transfers" ? <ArrowLeftRight size={15} /> : <FileText size={15} />}
+                      {isIncome ? <ArrowDownLeft size={16} /> : transaction.category === "Transfers" ? <ArrowLeftRight size={15} /> : transaction.category === "Bank fees" ? <Receipt size={15} /> : <FileText size={15} />}
                     </div>
                     <div className="transaction-name-copy">
-                      <strong>{transaction.description}</strong>
-                      <span>{transaction.source}</span>
-                      {transaction.internalTransfer && <span className="transaction-review-label">Internal transfer · excluded from totals</span>}
-                      {transaction.ownAccountCandidate && (
+                      <strong title={transaction.description}>{transaction.description}</strong>
+                      <span>{transaction.source}{transaction.manual ? " · added by you" : ""}{transaction.note ? ` · ${transaction.note}` : ""}</span>
+                      {transaction.internalTransfer && <span className="transaction-review-label">Own money moving · excluded from totals</span>}
+                      {transaction.ownAccountCandidate && !transaction.internalTransfer && (
                         <span className="transaction-review-row">
                           <span className="transaction-review-label">Possible own-account transfer</span>
-                          {onConfirmInternalTransfer && (
-                            <button className="transaction-confirm-button" onClick={() => onConfirmInternalTransfer(transaction.id)}>
-                              Mark internal
-                            </button>
-                          )}
+                          {onToggleInternal && <button className="transaction-confirm-button" onClick={() => onToggleInternal(transaction.id)}>Mark internal</button>}
                         </span>
                       )}
                     </div>
                   </div>
                 </td>
-                <td className="transaction-date">{formatDate(transaction.date)}</td>
+                <td className="transaction-date">{formatDate(transaction.date)}{transaction.time && <small>{transaction.time.slice(0, 5)}</small>}</td>
                 {showSource && <td><span className="account-pill"><span className="account-mini">{initialLetter(transaction.source)}</span>{transaction.source}</span></td>}
-                <td><span className={`category-pill category-${transaction.category.toLowerCase().replace(/[^a-z]+/g, "-")}`}>{transaction.category}</span></td>
-                <td className={`transaction-amount ${isIncome ? "amount-income" : ""}`}>{isIncome ? "+" : "−"}{formatCurrency(transaction.amount, currency)}</td>
+                <td>
+                  {onChangeCategory ? (
+                    <select
+                      className={`category-select category-${transaction.category.toLowerCase().replace(/[^a-z]+/g, "-")}`}
+                      value={transaction.category}
+                      onChange={(event) => onChangeCategory(transaction.id, event.target.value as Category)}
+                      aria-label={`Category for ${transaction.description}`}
+                    >
+                      {categoryList.map((category) => <option key={category}>{category}</option>)}
+                    </select>
+                  ) : (
+                    <span className={`category-pill category-${transaction.category.toLowerCase().replace(/[^a-z]+/g, "-")}`}>{transaction.category}</span>
+                  )}
+                </td>
+                <td className={`transaction-amount ${isIncome ? "amount-income" : ""}`}>{isIncome ? "+" : "−"}{new Intl.NumberFormat("en-NG", { style: "currency", currency, maximumFractionDigits: 2, minimumFractionDigits: transaction.amount % 1 ? 2 : 0 }).format(transaction.amount)}</td>
+                {editable && (
+                  <td className="row-actions">
+                    {onToggleInternal && (
+                      <button className="icon-button" onClick={() => onToggleInternal(transaction.id)} title={transaction.internalTransfer ? "Count in totals again" : "Mark as my own money moving (exclude from totals)"} aria-label={transaction.internalTransfer ? "Include in totals" : "Exclude from totals"}>
+                        <ArrowLeftRight size={14} />
+                      </button>
+                    )}
+                    {onDelete && <button className="icon-button" onClick={() => onDelete(transaction.id)} title="Delete transaction" aria-label="Delete transaction"><Trash2 size={14} /></button>}
+                  </td>
+                )}
               </tr>
             );
           })}
@@ -996,34 +1321,108 @@ function TransactionTable({
   );
 }
 
+function AddTransactionModal({
+  currency,
+  sources,
+  onClose,
+  onSave,
+}: {
+  currency: string;
+  sources: string[];
+  onClose: () => void;
+  onSave: (transaction: Omit<Transaction, "id">) => void;
+}) {
+  const [date, setDate] = useState(localIsoDate());
+  const [description, setDescription] = useState("");
+  const [amount, setAmount] = useState("");
+  const [direction, setDirection] = useState<Direction>("expense");
+  const [category, setCategory] = useState<Category>("Other");
+  const [categoryTouched, setCategoryTouched] = useState(false);
+  const [source, setSource] = useState("Cash");
+  const [note, setNote] = useState("");
+
+  const guessed = description.trim() ? categorise(description, direction) : direction === "income" ? "Income" : "Other";
+  const effectiveCategory = categoryTouched ? category : guessed;
+
+  const submit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const value = Number(amount);
+    if (!date || !description.trim() || !Number.isFinite(value) || value <= 0) return;
+    onSave({
+      date,
+      description: description.trim(),
+      amount: Math.round(value * 100) / 100,
+      direction,
+      category: effectiveCategory,
+      source: source.trim() || "Cash",
+      ...(note.trim() ? { note: note.trim().slice(0, 280) } : {}),
+    });
+  };
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section className="privacy-modal savings-modal" role="dialog" aria-modal="true" aria-labelledby="add-transaction-heading">
+        <button className="icon-button modal-close" onClick={onClose} aria-label="Close"><X size={18} /></button>
+        <div className="privacy-modal-icon"><Plus size={20} /></div>
+        <div className="panel-kicker">MANUAL ENTRY</div>
+        <h2 id="add-transaction-heading">Add a transaction</h2>
+        <p className="savings-form-help">For cash spending, sales paid in cash, or anything not on a statement.</p>
+        <form className="savings-form form-two-col" onSubmit={submit}>
+          <div className="segmented form-full" role="group" aria-label="Money in or out">
+            <button type="button" className={direction === "expense" ? "active" : ""} onClick={() => setDirection("expense")}>Money out</button>
+            <button type="button" className={direction === "income" ? "active" : ""} onClick={() => setDirection("income")}>Money in</button>
+          </div>
+          <label className="form-full">Description<input autoFocus required maxLength={140} value={description} onChange={(event) => setDescription(event.target.value)} placeholder={direction === "expense" ? "e.g. Fuel for generator" : "e.g. Cash sale"} /></label>
+          <label>Amount ({currency})<input required type="number" min="0.01" step="any" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="5000" /></label>
+          <label>Date<input required type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label>
+          <label>Category
+            <select value={effectiveCategory} onChange={(event) => { setCategory(event.target.value as Category); setCategoryTouched(true); }}>
+              {categoryList.map((item) => <option key={item}>{item}</option>)}
+            </select>
+          </label>
+          <label>Account<input list="known-accounts" value={source} onChange={(event) => setSource(event.target.value)} maxLength={40} /></label>
+          <datalist id="known-accounts">{["Cash", ...sources].map((item) => <option key={item} value={item} />)}</datalist>
+          <label className="form-full">Note (optional)<input value={note} onChange={(event) => setNote(event.target.value)} maxLength={280} placeholder="Anything you want to remember" /></label>
+          <button className="button button-primary modal-done form-full" type="submit"><Check size={15} /> Save transaction</button>
+        </form>
+      </section>
+    </div>
+  );
+}
+
 function TransferReviewPanel({
   insights,
   currency,
+  pendingCount,
   onReview,
+  onConfirmAll,
 }: {
   insights: ReturnType<typeof getTransferInsights>;
   currency: string;
+  pendingCount: number;
   onReview: () => void;
+  onConfirmAll: () => void;
 }) {
   return (
     <section className="panel transfer-review-panel">
       <div className="panel-heading">
-        <div><div className="panel-kicker">TRANSFER REVIEW</div><h2>Same-name and repeat transfers</h2></div>
-        <button className="button button-secondary" onClick={onReview} disabled={insights.ownAccountCandidateCount === 0}>
-          Review likely own transfers
-        </button>
+        <div><div className="panel-kicker">TRANSFER REVIEW</div><h2>Own-account and repeat transfers</h2></div>
+        <span className="review-banner-actions">
+          <button className="button button-secondary" onClick={onReview} disabled={pendingCount === 0}>Review one by one</button>
+          <button className="button button-primary" onClick={onConfirmAll} disabled={pendingCount === 0}>Exclude all {pendingCount ? pendingCount.toLocaleString("en-NG") : ""}</button>
+        </span>
       </div>
       <div className="transfer-review-summary">
         <div>
-          <strong>{insights.ownAccountCandidateCount}</strong>
-          <span>same-name candidates · {formatCurrency(insights.ownAccountSent, currency)} sent · {formatCurrency(insights.ownAccountReceived, currency)} received</span>
+          <strong>{insights.ownAccountCandidateCount.toLocaleString("en-NG")}</strong>
+          <span>unconfirmed own-account candidates in this period · {formatCurrency(insights.ownAccountSent, currency)} sent · {formatCurrency(insights.ownAccountReceived, currency)} received</span>
         </div>
         <div>
-          <strong>{insights.confirmedInternalCount}</strong>
-          <span>confirmed internal entries excluded from cash-flow totals</span>
+          <strong>{insights.confirmedInternalCount.toLocaleString("en-NG")}</strong>
+          <span>entries excluded from totals (wallet ↔ savings pots and confirmed own transfers)</span>
         </div>
       </div>
-      <p className="transfer-review-note">Same-name matches are only candidates until you confirm them. Repeated counterparties below are grouped by name, not treated as self-transfers.</p>
+      <p className="transfer-review-note">Candidates are transfers to or from your own name, your own account number, or your own bank card. They stay in your totals until you confirm them. Repeated counterparties below are grouped by name only.</p>
       {insights.repeatedCounterparties.length > 0 ? (
         <div className="counterparty-list">
           <div className="counterparty-list-heading"><span>REPEATED COUNTERPARTY</span><span>COUNT</span><span>SENT</span><span>RECEIVED</span></div>
@@ -1047,6 +1446,7 @@ function InsightsPanel({
   count,
   topCategory,
   biggest,
+  fees,
   totals,
   currency,
   onOpen,
@@ -1054,6 +1454,7 @@ function InsightsPanel({
   count: number;
   topCategory: ReturnType<typeof getCategoryTotals>[number] | undefined;
   biggest: Transaction | undefined;
+  fees: number;
   totals: ReturnType<typeof calculateTotals>;
   currency: string;
   onOpen: () => void;
@@ -1062,32 +1463,20 @@ function InsightsPanel({
     <section className="insights-panel">
       <div className="insight-title"><span className="insight-sparkle"><Sparkles size={16} /></span><div><div className="panel-kicker">A CLOSER LOOK</div><h2>Your key takeaways</h2></div></div>
       <div className="insight-highlight">
-        <span className="insight-number">01</span><div><span className="takeaway-label">TOP SPENDING AREA</span><strong>{topCategory?.category ?? "Not enough data yet"}</strong><p>{topCategory ? `${formatCurrency(topCategory.amount, currency)} across ${topCategory.count} transactions` : "Import transactions to see what stands out."}</p></div>
+        <span className="insight-number">01</span><div><span className="takeaway-label">TOP SPENDING AREA</span><strong>{topCategory?.category ?? "Not enough data yet"}</strong><p>{topCategory ? `${formatCurrency(topCategory.amount, currency)} across ${topCategory.count.toLocaleString("en-NG")} transactions` : "Import transactions to see what stands out."}</p></div>
       </div>
       <div className="insight-highlight">
-        <span className="insight-number">02</span><div><span className="takeaway-label">LARGEST OUTGOING</span><strong>{biggest ? formatCurrency(biggest.amount, currency) : "No outgoing yet"}</strong><p>{biggest ? biggest.description : "Your largest payment will appear here."}</p></div>
+        <span className="insight-number">02</span><div><span className="takeaway-label">LARGEST SINGLE PAYMENT</span><strong>{biggest ? formatCurrency(biggest.amount, currency) : "No outgoing yet"}</strong><p>{biggest ? biggest.description : "Your largest payment will appear here."}</p></div>
       </div>
       <div className="insight-highlight">
-        <span className="insight-number">03</span><div><span className="takeaway-label">SAVINGS RATE</span><strong>{totals.income > 0 ? `${Math.round(totals.savingsRate)}%` : "—"}</strong><p>{totals.income > 0 ? "Of recorded income left after outgoing" : "Add income to see your rate."}</p></div>
+        <span className="insight-number">03</span><div><span className="takeaway-label">FEES & CHARGES</span><strong>{formatCurrency(fees, currency)}</strong><p>{totals.income > 0 ? `Savings rate this period: ${Math.round(totals.savingsRate)}%` : "Bank charges, levies, and stamp duty paid"}</p></div>
       </div>
-      <div className="insight-foot"><span>{count} transaction{count === 1 ? "" : "s"} analyzed</span><button className="subtle-link" onClick={onOpen}>Explore insights <ArrowUpRight size={14} /></button></div>
+      <div className="insight-foot"><span>{count.toLocaleString("en-NG")} transaction{count === 1 ? "" : "s"} analysed</span><button className="subtle-link" onClick={onOpen}>Explore insights <ArrowUpRight size={14} /></button></div>
     </section>
   );
 }
 
-function InsightDetail({
-  icon,
-  title,
-  value,
-  detail,
-  tone,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  value: string;
-  detail: string;
-  tone: string;
-}) {
+function InsightDetail({ icon, title, value, detail, tone }: { icon: React.ReactNode; title: string; value: string; detail: string; tone: string }) {
   return <div className="insight-detail-card"><span className={`insight-detail-icon ${tone}`}>{icon}</span><div className="insight-detail-copy"><span>{title}</span><strong>{value}</strong><p>{detail}</p></div></div>;
 }
 
@@ -1096,10 +1485,12 @@ function summarySentence(
   topCategory: ReturnType<typeof getCategoryTotals>[number] | undefined,
   currency: string,
 ): string {
-  if (totals.transactionCount === 0) return "Import statements to see a useful summary of your money.";
+  if (totals.transactionCount === 0) return "No transactions in this period yet. Pick another period or import a statement.";
   if (totals.income === 0) return `You’ve recorded ${formatCurrency(totals.expenses, currency)} in outgoing payments. Add income transactions for a complete cash-flow picture.`;
   const rate = Math.round(totals.savingsRate);
-  const start = rate >= 20 ? `You kept ${rate}% of recorded income` : rate >= 0 ? `You kept ${rate}% of recorded income` : `Recorded spending was higher than income`;
+  const start = rate >= 0
+    ? `You kept ${rate}% of the ${formatCurrency(totals.income, currency)} that came in`
+    : `You spent ${formatCurrency(totals.expenses - totals.income, currency)} more than came in`;
   return `${start}${topCategory ? `, and ${topCategory.category.toLowerCase()} was your largest spending area at ${formatCurrency(topCategory.amount, currency)}.` : "."}`;
 }
 
@@ -1110,10 +1501,10 @@ function PrivacyModal({ onClose }: { onClose: () => void }) {
         <button className="icon-button modal-close" onClick={onClose} aria-label="Close"><X size={18} /></button>
         <div className="privacy-modal-icon"><LockKeyhole size={21} /></div>
         <div className="panel-kicker">PRIVATE BY DESIGN</div>
-         <h2 id="privacy-heading">Your records stay in this browser.</h2>
-          <p>Transaction statements and saved SportyBet pages are read on your device. Transactions, savings goals, and betting records are saved in this browser’s local storage.</p>
-         <ul><li><Check size={15} /> No bank login or credentials are collected</li><li><Check size={15} /> No financial records are sent to a server</li><li><Check size={15} /> Delete transaction, bet, and goal records from their own pages</li></ul>
-        <p className="privacy-modal-note">If you clear browser data or switch devices, import your statements again. This starter does not yet connect directly to bank APIs.</p>
+        <h2 id="privacy-heading">Your records stay in this browser.</h2>
+        <p>Statements and saved SportyBet pages are read on your device. Transactions are kept in this browser’s IndexedDB storage; goals, bets, rules, and budgets in its local storage.</p>
+        <ul><li><Check size={15} /> No bank login or credentials are collected</li><li><Check size={15} /> No financial records are sent to a server</li><li><Check size={15} /> Download a full backup file any time from Data & rules</li></ul>
+        <p className="privacy-modal-note">If you clear browser data or switch devices, restore your backup file or import your statements again. This app does not connect directly to bank APIs.</p>
         <button className="button button-primary modal-done" onClick={onClose}>Got it</button>
       </section>
     </div>

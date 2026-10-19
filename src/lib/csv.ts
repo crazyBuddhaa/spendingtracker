@@ -1,4 +1,7 @@
-import type { Category, Direction, ImportResult, Transaction } from "../types.ts";
+import type { Direction, ImportResult, Transaction } from "../types.ts";
+import { categorise, isOwnAccountTransfer, isWalletProductMovement } from "./categorise.ts";
+
+export { categorise } from "./categorise.ts";
 
 type HeaderMap = {
   date: number;
@@ -7,11 +10,13 @@ type HeaderMap = {
   debit: number;
   credit: number;
   type: number;
+  time: number;
 };
 
 export interface CsvParseOptions {
   source?: string;
   accountHolderName?: string;
+  accountNumber?: string;
 }
 
 const headerAliases = {
@@ -131,6 +136,7 @@ function mapHeaders(headers: string[]): HeaderMap {
     debit: findHeader(normalized, headerAliases.debit),
     credit: findHeader(normalized, headerAliases.credit),
     type: findHeader(normalized, headerAliases.type),
+    time: normalized.findIndex((header) => /^(?:trans(?:action)?\.? ?date(?:\/time)?|date\/time|date time|timestamp|time)$/.test(header)),
   };
 }
 
@@ -214,38 +220,18 @@ function inferDirection(type: string, description: string): Direction {
   return "expense";
 }
 
-export function categorise(description: string, direction: Direction): Category {
-  const text = description.toLowerCase();
-  if (/\bowealth interest earned\b/.test(text)) return "Income";
-  if (/\b(owealth|auto-save to owealth|spend & save deposit)\b/.test(text)) return "Transfers";
-  if (/\b(betting|sportybet|sporty\s*bet|footballing|msport|one_xbet|1xbet|betano|bet9ja|betlion|betking|paripesa|bangbet|surebet|betwinner|betway|ilot)\b/.test(text)) return "Betting";
-  if (/\b(ussd charge|vat on transfer fee|transfer fee|bank charge|service charge|stamp duty)\b/.test(text)) return "Bank fees";
-  if (/\b(uber|bolt|taxi|bus|transport|fuel|petrol|diesel|parking|ride)\b/.test(text)) return "Transport";
-  if (/\b(grocery|provision store|market|food|restaurant|cafe|supermarket|shoprite|eat|chicken|mcdonald)\b/.test(text)) return "Food & groceries";
-  if (/\b(electric|electricity|power|water|internet|airtime|mobile data|data|dstv|gotv|startimes|multichoice|utility|bill)\b/.test(text)) return "Bills & utilities";
-  if (/\b(pharmacy|hospital|clinic|health|medical|doctor|lab test)\b/.test(text)) return "Health";
-  if (/\b(school|tuition|course|udemy|education|books)\b/.test(text)) return "Education";
-  if (/\b(netflix|spotify|cinema|movie|game|concert|entertainment)\b/.test(text)) return "Entertainment";
-  if (/\b(shop|store|clothing|fashion|amazon|jumia|konga|purchase)\b/.test(text)) return "Shopping";
-  if (direction === "income") return "Income";
-  if (/\b(transfer|trf|xfer|internal transfer|own account)\b/.test(text)) return "Transfers";
-  return "Other";
-}
-
-function normalisePersonName(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .split(/\s+/)
-    .filter(Boolean)
-    .sort()
-    .join(" ");
-}
-
-function isOwnAccountTransfer(description: string, accountHolderName?: string): boolean {
-  if (!accountHolderName || !/^transfer\s+(?:to|from)\b/i.test(description)) return false;
-  const counterparty = description.match(/^transfer\s+(?:to|from)\s+([^|]+)/i)?.[1];
-  return Boolean(counterparty && normalisePersonName(counterparty) === normalisePersonName(accountHolderName));
+function parseTime(value: string): string | undefined {
+  const match = value.match(/\b(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?\b/i);
+  if (!match) return undefined;
+  let hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  const seconds = match[3] === undefined ? undefined : Number(match[3]);
+  const meridiem = match[4]?.toLowerCase();
+  if (meridiem === "pm" && hours < 12) hours += 12;
+  if (meridiem === "am" && hours === 12) hours = 0;
+  if (hours > 23 || minutes > 59 || (seconds !== undefined && seconds > 59)) return undefined;
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return `${pad(hours)}:${pad(minutes)}${seconds === undefined ? "" : `:${pad(seconds)}`}`;
 }
 
 function sourceName(fileName: string): string {
@@ -355,7 +341,12 @@ export function parseTransactionsCsv(text: string, fileName: string, options: Cs
       category: categorise(description, direction),
       source,
     };
-    if (isOwnAccountTransfer(description, options.accountHolderName)) {
+    const time = parseTime(map.time >= 0 ? row[map.time] ?? "" : "") ?? parseTime(row[map.date] ?? "");
+    if (time) transaction.time = time;
+    if (isWalletProductMovement(description)) {
+      transaction.category = "Transfers";
+      transaction.internalTransfer = true;
+    } else if (isOwnAccountTransfer(description, options.accountHolderName, options.accountNumber)) {
       transaction.category = "Transfers";
       transaction.ownAccountCandidate = true;
     }
@@ -374,10 +365,11 @@ export function parseTransactionsCsv(text: string, fileName: string, options: Cs
 export function transactionsToCsv(transactions: Transaction[]): string {
   const quote = (value: string) => `"${value.replace(/"/g, '""')}"`;
   const rows = [
-    ["Date", "Description", "Direction", "Amount", "Category", "Source", "Internal transfer", "Possible own-account transfer"].join(","),
+    ["Date", "Time", "Description", "Direction", "Amount", "Category", "Source", "Internal transfer", "Possible own-account transfer", "Note"].join(","),
     ...transactions.map((transaction) =>
       [
         transaction.date,
+        transaction.time ?? "",
         quote(transaction.description),
         transaction.direction,
         transaction.amount.toFixed(2),
@@ -385,6 +377,7 @@ export function transactionsToCsv(transactions: Transaction[]): string {
         quote(transaction.source),
         transaction.internalTransfer ? "yes" : "no",
         transaction.ownAccountCandidate ? "yes" : "no",
+        quote(transaction.note ?? ""),
       ].join(","),
     ),
   ];

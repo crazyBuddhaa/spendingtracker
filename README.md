@@ -27,6 +27,31 @@ These are flexible column mappings, not certified parsers for every bank export.
 `sample-data/demo-transactions.csv` is fictional and can be used to try the import flow.
 The initial version displays amounts in NGN and assumes imported statements use the same currency; it does not perform foreign-exchange conversion.
 
+### OPay statements
+
+OPay Wallet + Savings workbooks are recognised automatically. Every movement between the wallet and OPay's own savings pots (OWealth, Auto-save, Spend & Save, Targets, Fixed) is treated as your own money moving and left out of income and spending totals. Bank charges (USSD charge, transfer VAT, Electronic Money Transfer Levy, stamp duty, SMS fees, redemption fees) are filed under **Bank fees**; refunds and reversals reduce spending instead of counting as income; football.com/SportyBet stakes and winnings are filed under **Betting**. The time of day is read from the `Trans. Date` column while the date itself comes from `Value Date`, so re-importing an older export does not create duplicates. If the statement header's totals do not match the rows (OPay sometimes prints the credit total as the debit total), the import note says so.
+
+Transfers to or from your own name (in any order, at least two name parts, including PalmPay/PiggyVest prefixes), to your own account number, or top-ups from your own card are flagged as **possible own-account transfers**. Confirm them one by one or all at once to exclude them from totals.
+
+## Working with transactions
+
+- **Edit categories** inline. When other transactions look the same, Spendwise offers to apply the change to all of them and remember it as a **rule** for future imports. Manage rules under **Data & rules**.
+- **Exclude/include** any transaction from totals, **delete** it, or **add** a manual entry (cash spending or cash sales).
+- **Periods**: last 30/90 days, this month, last month, last 12 months, this year, all time, or custom dates. When a period has no data the app shows where your history starts and ends.
+- **Re-categorise history** (Data & rules) re-runs the latest categorisation over transactions imported with an older version, without touching categories you picked by hand.
+
+## Insights, budgets and reports
+
+- Cash-flow chart that follows the selected period; spending mix (click a category to see its transactions).
+- Top payees and sources of money in, bank fees and levies, average daily spend and the heaviest weekday.
+- **Monthly report** (money in, money out after refunds, net, betting, fees, top category) with CSV export.
+- **Budgets** per category with month-by-month tracking and a projection for the month in progress; suggested limits use your average over the last three full months.
+- **Regular payments** detected from weekly or monthly payments to the same payee with similar amounts.
+
+## Backups
+
+**Data & rules → Download backup** saves transactions, goals, circles, bets, rules and budgets in one JSON file. **Restore from file** replaces what is in the browser.
+
 ## Savings and betting
 
 Savings goals store a target and a local contribution history. Contributions are manual tracker entries; the app does not move money between accounts.
@@ -39,11 +64,11 @@ Betting analytics include all-record stake and return totals, resolved net and R
 
 ## Privacy and scope
 
-CSV, Excel, text-based PDF, and saved betting-page parsing run in the browser. Transactions, savings goals, and bets are saved in that browser's `localStorage`; source files and records are not sent to a server. Clearing browser data removes the saved history. The app does not request bank logins or connect to bank APIs. Direct bank feeds require a supported open-banking provider and a separate server-side integration.
+CSV, Excel, text-based PDF, and saved betting-page parsing run in the browser. Transactions are saved in that browser's IndexedDB (multi-year statements outgrow `localStorage`; data from older versions is moved over automatically), and savings goals, bets, rules, and budgets in `localStorage`; source files and records are not sent to a server. Clearing browser data removes the saved history. The app does not request bank logins or connect to bank APIs. Direct bank feeds require a supported open-banking provider and a separate server-side integration.
 
 ## Stack
 
 - React, TypeScript, and Vite
-- Browser `localStorage` for local persistence
+- Browser IndexedDB and `localStorage` for local persistence
 - Node's built-in test runner for import and calculation tests (Node 22.13+)
 
