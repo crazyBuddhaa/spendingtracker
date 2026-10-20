@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { categoryList, type Transaction } from "./types";
 import { cloudApi, CloudError, type CloudAccount, type StoredStatement } from "./lib/cloudApi";
+import { parseStoredTransactions, serializeTransactions, TRANSACTIONS_STORAGE_KEY } from "./lib/transactionStorage";
 import { readValue, writeValue } from "./lib/persistentStore";
 import { COLLECTION_NAMES, fromSyncRow, MAX_ROWS_PER_REQUEST, sameRow, toSyncRow, type CollectionName, type SyncRow } from "./lib/syncFormat";
 
 const SYNC_STATE_KEY = "spendwise.sync.v1";
+const ACCOUNT_DATA_KEY_PREFIX = "spendwise.account-data.v1.";
 const PUSH_DELAY = 1500;
 const PULL_INTERVAL = 60_000;
 const categories = new Set<string>(categoryList);
@@ -34,6 +36,13 @@ interface PersistedSyncState {
   lastSyncedAt: number | null;
 }
 
+interface AccountSnapshot {
+  format: 1;
+  transactions: string;
+  collections: Partial<Record<CollectionName, unknown>>;
+  sync: PersistedSyncState;
+}
+
 const emptyState = (): PersistedSyncState => ({
   email: null,
   cursor: null,
@@ -43,6 +52,48 @@ const emptyState = (): PersistedSyncState => ({
   collectionStamps: {},
   lastSyncedAt: null,
 });
+
+function accountDataKey(email: string): string {
+  return `${ACCOUNT_DATA_KEY_PREFIX}${encodeURIComponent(email.trim().toLowerCase())}`;
+}
+
+function normalisePersistedState(value: unknown, email?: string | null): PersistedSyncState {
+  const stored = value && typeof value === "object" ? value as Partial<PersistedSyncState> : {};
+  const collectionStamps: Partial<Record<CollectionName, number>> = {};
+  if (stored.collectionStamps && typeof stored.collectionStamps === "object") {
+    for (const name of COLLECTION_NAMES) {
+      const stamp = stored.collectionStamps[name];
+      if (typeof stamp === "number" && Number.isFinite(stamp)) collectionStamps[name] = stamp;
+    }
+  }
+  return {
+    email: email === undefined ? (typeof stored.email === "string" ? stored.email : null) : email,
+    cursor: typeof stored.cursor === "string" ? stored.cursor : null,
+    pendingUpserts: Array.isArray(stored.pendingUpserts) ? stored.pendingUpserts.filter((id): id is string => typeof id === "string") : [],
+    pendingDeletes: Array.isArray(stored.pendingDeletes) ? stored.pendingDeletes.filter((id): id is string => typeof id === "string") : [],
+    dirtyCollections: Array.isArray(stored.dirtyCollections)
+      ? stored.dirtyCollections.filter((name): name is CollectionName => COLLECTION_NAMES.includes(name as CollectionName))
+      : [],
+    collectionStamps,
+    lastSyncedAt: typeof stored.lastSyncedAt === "number" && Number.isFinite(stored.lastSyncedAt) ? stored.lastSyncedAt : null,
+  };
+}
+
+function parseAccountSnapshot(value: string | null): AccountSnapshot | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as Partial<AccountSnapshot>;
+    if (parsed.format !== 1 || typeof parsed.transactions !== "string") return null;
+    return {
+      format: 1,
+      transactions: parsed.transactions,
+      collections: parsed.collections && typeof parsed.collections === "object" ? parsed.collections : {},
+      sync: normalisePersistedState(parsed.sync, null),
+    };
+  } catch {
+    return null;
+  }
+}
 
 export type CollectionValues = Record<CollectionName, unknown[]>;
 
@@ -315,23 +366,89 @@ export function useCloudSync({ loaded, transactions, setTransactions, collection
       update({ mode: "local", state: notConfigured ? "not-configured" : "idle", message: notConfigured ? error.message : null, progress: null });
       return;
     }
+    if (persisted.current.email && persisted.current.email !== account.email) {
+      // Preserve the previous identity's local-only work, but never merge it into the
+      // next identity's first sync. Each account gets its own browser-side snapshot.
+      window.clearTimeout(pushTimer.current);
+      window.clearTimeout(saveTimer.current);
+      const previousEmail = persisted.current.email;
+      const previousSync: PersistedSyncState = {
+        ...persisted.current,
+        pendingUpserts: [...new Set([...pendingUpserts.current, ...inFlightUpserts.current])],
+        pendingDeletes: [...new Set([...pendingDeletes.current, ...inFlightDeletes.current])],
+        dirtyCollections: [...dirtyCollections.current],
+      };
+      const previousSnapshot: AccountSnapshot = {
+        format: 1,
+        transactions: serializeTransactions(latestTransactions.current),
+        collections: latestCollections.current,
+        sync: previousSync,
+      };
+      const savedPrevious = await writeValue(accountDataKey(previousEmail), JSON.stringify(previousSnapshot));
+      if (!savedPrevious) {
+        mode.current = "local";
+        update({
+          mode: "local",
+          state: "error",
+          message: "Cloud sync is paused because this browser could not safely separate account data. Check browser storage and try again.",
+          progress: null,
+        });
+        return;
+      }
+
+      const nextSnapshot = parseAccountSnapshot(await readValue(accountDataKey(account.email)));
+      const nextSync = nextSnapshot
+        ? normalisePersistedState(nextSnapshot.sync, account.email)
+        : { ...emptyState(), email: account.email };
+      persisted.current = nextSync;
+      pendingUpserts.current.clear();
+      pendingDeletes.current.clear();
+      inFlightUpserts.current.clear();
+      inFlightDeletes.current.clear();
+      dirtyCollections.current.clear();
+      nextSync.pendingUpserts.forEach((id) => pendingUpserts.current.add(id));
+      nextSync.pendingDeletes.forEach((id) => pendingDeletes.current.add(id));
+      nextSync.dirtyCollections.forEach((name) => dirtyCollections.current.add(name));
+
+      const nextTransactions = nextSnapshot ? parseStoredTransactions(nextSnapshot.transactions) : [];
+      replaceTransactions(nextTransactions);
+      const nextCollections = {} as CollectionValues;
+      for (const name of COLLECTION_NAMES) {
+        const data = nextSnapshot?.collections[name];
+        const value = applyCollection(name, Array.isArray(data) ? data : []);
+        nextCollections[name] = value;
+        knownCollectionJson.current[name] = JSON.stringify(value);
+      }
+      latestCollections.current = nextCollections;
+
+      // Persist the new identity before starting network sync. Otherwise a reload in
+      // the debounce window could restore the previous account's global browser cache.
+      const [transactionsSaved, syncStateSaved] = await Promise.all([
+        writeValue(TRANSACTIONS_STORAGE_KEY, serializeTransactions(nextTransactions)),
+        writeValue(SYNC_STATE_KEY, JSON.stringify(persisted.current)),
+      ]);
+      if (!transactionsSaved || !syncStateSaved) {
+        mode.current = "local";
+        update({
+          mode: "local",
+          state: "error",
+          email: account.email,
+          message: "Cloud sync is paused because the new account's local cache could not be saved safely. Check browser storage and try again.",
+          progress: null,
+        });
+        return;
+      }
+    }
     if (!account.storage.database) {
       mode.current = "local";
       update({ mode: "local", state: "not-configured", email: account.email, message: "Signed in, but the D1 database is not connected to this Pages project yet." });
       return;
     }
-    if (persisted.current.email && persisted.current.email !== account.email) {
-      // A different person signed in on this browser: start a clean sync for them.
-      persisted.current = { ...emptyState(), email: account.email };
-      pendingUpserts.current.clear();
-      pendingDeletes.current.clear();
-      dirtyCollections.current.clear();
-    }
     persisted.current.email = account.email;
     mode.current = "cloud";
     update({ mode: "cloud", email: account.email, filesEnabled: account.storage.files, lastSyncedAt: persisted.current.lastSyncedAt });
     await sync();
-  }, [handleError, sync, update]);
+  }, [applyCollection, handleError, replaceTransactions, sync, update]);
 
   // Load the persisted sync bookkeeping once the local data is in memory.
   useEffect(() => {
@@ -341,7 +458,7 @@ export function useCloudSync({ loaded, transactions, setTransactions, collection
     for (const name of COLLECTION_NAMES) knownCollectionJson.current[name] = JSON.stringify(latestCollections.current[name]);
     void readValue(SYNC_STATE_KEY).then((value) => {
       try {
-        const stored = value ? { ...emptyState(), ...JSON.parse(value) as PersistedSyncState } : emptyState();
+        const stored = value ? normalisePersistedState(JSON.parse(value)) : emptyState();
         persisted.current = stored;
         stored.pendingUpserts.forEach((id) => pendingUpserts.current.add(id));
         stored.pendingDeletes.forEach((id) => pendingDeletes.current.add(id));
@@ -434,3 +551,4 @@ export function useCloudSync({ loaded, transactions, setTransactions, collection
 
   return { status, syncNow, listStatements, uploadStatement, deleteStatement, statementUrl: cloudApi.statementUrl };
 }
+

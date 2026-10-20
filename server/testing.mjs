@@ -1,12 +1,16 @@
 // Local stand-ins for Cloudflare D1, R2 and Access, used by tests and local e2e runs.
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 
-const schema = readFileSync(new URL("../migrations/0001_init.sql", import.meta.url), "utf8");
+const migrationsDirectory = new URL("../migrations/", import.meta.url);
+const migrations = readdirSync(migrationsDirectory)
+  .filter((file) => file.endsWith(".sql"))
+  .sort()
+  .map((file) => readFileSync(new URL(file, migrationsDirectory), "utf8"));
 
 export function createFakeD1(path = ":memory:") {
   const db = new DatabaseSync(path);
-  db.exec(schema);
+  for (const migration of migrations) db.exec(migration);
   const statement = (sql, values = []) => ({
     bind: (...next) => statement(sql, next),
     first: async () => db.prepare(sql).get(...values) ?? null,

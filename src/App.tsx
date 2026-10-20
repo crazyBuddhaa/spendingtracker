@@ -36,7 +36,7 @@ import {
 } from "lucide-react";
 import { transactionsToCsv } from "./lib/csv";
 import { parseStatementFile } from "./lib/statementImport";
-import { parseStoredTransactions, serializeTransactions } from "./lib/transactionStorage";
+import { parseStoredTransactions, serializeTransactions, TRANSACTIONS_STORAGE_KEY } from "./lib/transactionStorage";
 import { findNewTransactions } from "./lib/transactionDeduplication";
 import { getTransferInsights } from "./lib/transactionPatterns";
 import { readValue, writeValue } from "./lib/persistentStore";
@@ -79,7 +79,6 @@ import {
   type Transaction,
 } from "./types";
 
-const STORAGE_KEY = "spendwise.transactions.v1";
 const SAVINGS_STORAGE_KEY = "spendwise.savings-goals.v1";
 const CIRCLES_STORAGE_KEY = "spendwise.savings-circles.v1";
 const BETS_STORAGE_KEY = "spendwise.bets.v1";
@@ -261,7 +260,7 @@ function App() {
   // Transactions live in IndexedDB (statements with tens of thousands of rows outgrow localStorage).
   useEffect(() => {
     let cancelled = false;
-    void readValue(STORAGE_KEY).then((value) => {
+    void readValue(TRANSACTIONS_STORAGE_KEY).then((value) => {
       if (cancelled) return;
       setTransactions(parseStoredTransactions(value ?? "[]"));
       setLoaded(true);
@@ -278,7 +277,7 @@ function App() {
       return;
     }
     const timer = window.setTimeout(() => {
-      void writeValue(STORAGE_KEY, serializeTransactions(transactions)).then((ok) => {
+      void writeValue(TRANSACTIONS_STORAGE_KEY, serializeTransactions(transactions)).then((ok) => {
         if (!ok) notify("Could not save to this browser. Download a backup from Data & rules before closing this tab.");
       });
     }, 250);
