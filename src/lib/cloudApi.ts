@@ -26,6 +26,13 @@ export interface StoredStatement {
   uploadedAt: number;
 }
 
+export interface StoredBackup {
+  id: string;
+  size: number;
+  transactionCount: number;
+  createdAt: number;
+}
+
 export interface TransactionPage {
   rows: Array<[SyncRow, 0 | 1, number]>;
   next: string;
@@ -103,4 +110,14 @@ export const cloudApi = {
   deleteStatement: (id: string) => callJson<{ deleted: boolean }>(`/api/statements/${id}`, { method: "DELETE" }),
 
   statementUrl: (id: string) => `/api/statements/${id}`,
+
+  backups: () => callJson<{ backups: StoredBackup[] }>("/api/backups"),
+
+  createCloudBackup: () => callJson<{ backup: StoredBackup }>("/api/backups", { method: "POST" }),
+
+  deleteCloudBackup: (id: string) => callJson<{ deleted: boolean }>(`/api/backups/${id}`, { method: "DELETE" }),
+
+  backupUrl: (id: string) => `/api/backups/${id}`,
+
+  signInUrl: () => "/api/auth/start",
 };

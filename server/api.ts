@@ -1,10 +1,12 @@
 import { AuthError, authenticate } from "./auth.ts";
 import type { D1Database, Env, R2Bucket } from "./bindings.ts";
 import { COLLECTION_NAMES, isValidSyncRow, MAX_ROWS_PER_REQUEST, type SyncRow } from "../src/lib/syncFormat.ts";
+import type { Transaction } from "../src/types.ts";
 
 const MAX_JSON_BYTES = 4 * 1024 * 1024;
 const MAX_COLLECTION_BYTES = 1024 * 1024;
 const MAX_STATEMENT_BYTES = 25 * 1024 * 1024;
+const MAX_BACKUP_BYTES = 25 * 1024 * 1024;
 const DEFAULT_PAGE = 5000;
 const MAX_PAGE = 10000;
 
@@ -285,6 +287,162 @@ async function deleteStatement(db: D1Database, bucket: R2Bucket, email: string, 
   return json({ deleted: true });
 }
 
+/* --------------------------------------------------------------- backups */
+
+interface BackupRow {
+  id: string;
+  r2_key: string;
+  size: number;
+  sha256: string;
+  transaction_count: number;
+  created_at: number;
+}
+
+function backupJson(row: BackupRow) {
+  return {
+    id: row.id,
+    size: Number(row.size),
+    transactionCount: Number(row.transaction_count),
+    createdAt: Number(row.created_at),
+  };
+}
+
+function backupTransaction(row: Record<string, unknown>): Transaction {
+  const flags = Number(row.flags) || 0;
+  const transaction: Transaction = {
+    id: String(row.id),
+    date: String(row.date),
+    description: String(row.description),
+    amount: Number(row.amount),
+    direction: Number(row.direction) === 1 ? "income" : "expense",
+    category: String(row.category) as Transaction["category"],
+    source: String(row.source),
+  };
+  if (typeof row.time === "string" && row.time) transaction.time = row.time;
+  if (typeof row.note === "string" && row.note) transaction.note = row.note;
+  if (flags & 1) transaction.internalTransfer = true;
+  if (flags & 2) transaction.ownAccountCandidate = true;
+  if (flags & 4) transaction.manual = true;
+  if (flags & 8) transaction.categoryLocked = true;
+  return transaction;
+}
+
+async function readAllTransactions(db: D1Database, email: string): Promise<Transaction[]> {
+  const transactions: Transaction[] = [];
+  let afterId = "";
+  const pageSize = 5000;
+  while (true) {
+    const { results } = await db.prepare(
+      `SELECT id, date, time, description, amount, direction, category, source, flags, note
+       FROM transactions
+       WHERE user_email = ?1 AND deleted = 0 AND id > ?2
+       ORDER BY id
+       LIMIT ${pageSize}`,
+    ).bind(email, afterId).all<Record<string, unknown>>();
+    for (const row of results) transactions.push(backupTransaction(row));
+    if (results.length < pageSize) return transactions;
+    afterId = String(results[results.length - 1].id);
+  }
+}
+
+async function readAllCollections(db: D1Database, email: string): Promise<Record<string, unknown[]>> {
+  const { results } = await db.prepare(
+    "SELECT name, data FROM collections WHERE user_email = ?1",
+  ).bind(email).all<{ name: string; data: string }>();
+  const collections: Record<string, unknown[]> = {};
+  for (const name of COLLECTION_NAMES) collections[name] = [];
+  for (const row of results) {
+    if (!(COLLECTION_NAMES as readonly string[]).includes(row.name)) continue;
+    try {
+      const data: unknown = JSON.parse(row.data);
+      if (Array.isArray(data)) collections[row.name] = data;
+    } catch {
+      // Keep an unreadable collection empty rather than aborting a backup.
+    }
+  }
+  return collections;
+}
+
+async function listBackups(db: D1Database, email: string): Promise<Response> {
+  const { results } = await db.prepare(
+    "SELECT id, r2_key, size, sha256, transaction_count, created_at FROM backups WHERE user_email = ?1 ORDER BY created_at DESC",
+  ).bind(email).all<BackupRow>();
+  return json({ backups: results.map(backupJson) });
+}
+
+async function createCloudBackup(db: D1Database, bucket: R2Bucket, email: string): Promise<Response> {
+  const [transactions, collections] = await Promise.all([
+    readAllTransactions(db, email),
+    readAllCollections(db, email),
+  ]);
+  const createdAt = Date.now();
+  const backup = {
+    format: "spendwise.backup.v1",
+    exportedAt: new Date(createdAt).toISOString(),
+    transactions,
+    savingsGoals: collections.savingsGoals,
+    savingsCircles: collections.savingsCircles,
+    bets: collections.bets,
+    rules: collections.rules,
+    budgets: collections.budgets,
+  };
+  const body = JSON.stringify(backup);
+  const bytes = new TextEncoder().encode(body);
+  if (bytes.byteLength > MAX_BACKUP_BYTES) {
+    throw new HttpError(413, "This cloud backup is larger than the 25 MB limit.", "too_large");
+  }
+  const id = crypto.randomUUID();
+  const hash = await sha256Hex(body);
+  // Hash the account identifier so R2 object paths do not reveal email addresses.
+  const owner = (await sha256Hex(email)).slice(0, 24);
+  const key = `backups/${owner}/${id}.json`;
+  await bucket.put(key, body, {
+    httpMetadata: { contentType: "application/json" },
+    customMetadata: { backupId: id, sha256: hash },
+  });
+  try {
+    await db.prepare(
+      `INSERT INTO backups (user_email, id, r2_key, size, sha256, transaction_count, created_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+    ).bind(email, id, key, bytes.byteLength, hash, transactions.length, createdAt).run();
+  } catch (error) {
+    await bucket.delete(key).catch(() => undefined);
+    throw error;
+  }
+  return json({ backup: backupJson({ id, r2_key: key, size: bytes.byteLength, sha256: hash, transaction_count: transactions.length, created_at: createdAt }) }, 201);
+}
+
+async function findBackup(db: D1Database, email: string, id: string): Promise<BackupRow> {
+  const row = await db.prepare(
+    "SELECT id, r2_key, size, sha256, transaction_count, created_at FROM backups WHERE user_email = ?1 AND id = ?2",
+  ).bind(email, id).first<BackupRow>();
+  if (!row) throw new HttpError(404, "Cloud backup not found.", "not_found");
+  return row;
+}
+
+async function downloadCloudBackup(db: D1Database, bucket: R2Bucket, email: string, id: string): Promise<Response> {
+  const row = await findBackup(db, email, id);
+  const object = await bucket.get(row.r2_key);
+  if (!object) throw new HttpError(404, "The cloud backup is missing from R2.", "not_found");
+  const date = new Date(Number(row.created_at)).toISOString().slice(0, 10);
+  return new Response(object.body, {
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Content-Length": String(object.size),
+      "Content-Disposition": `attachment; filename="spendwise-cloud-backup-${date}.json"`,
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+}
+
+async function deleteCloudBackup(db: D1Database, bucket: R2Bucket, email: string, id: string): Promise<Response> {
+  const row = await findBackup(db, email, id);
+  await bucket.delete(row.r2_key);
+  await db.prepare("DELETE FROM backups WHERE user_email = ?1 AND id = ?2").bind(email, id).run();
+  return json({ deleted: true });
+}
+
 /* ------------------------------------------------------------------ router */
 
 async function route(request: Request, env: Env, email: string): Promise<Response> {
@@ -300,6 +458,10 @@ async function route(request: Request, env: Env, email: string): Promise<Respons
               (SELECT COUNT(*) FROM statements WHERE user_email = ?1) AS statements`,
     ).bind(email).first<{ transactions: number; statements: number }>();
     return json({ email, storage, transactions: Number(counts?.transactions ?? 0), statements: Number(counts?.statements ?? 0) });
+  }
+
+  if (path === "/api/auth/start" && method === "GET") {
+    return Response.redirect(new URL("/", request.url).toString(), 303);
   }
 
   if (path === "/api/transactions") {
@@ -323,6 +485,18 @@ async function route(request: Request, env: Env, email: string): Promise<Respons
     const db = requireDb(env);
     if (method === "GET") return downloadStatement(db, requireBucket(env), email, statement[1]);
     if (method === "DELETE") return deleteStatement(db, requireBucket(env), email, statement[1]);
+  }
+
+  if (path === "/api/backups") {
+    const db = requireDb(env);
+    if (method === "GET") return listBackups(db, email);
+    if (method === "POST") return createCloudBackup(db, requireBucket(env), email);
+  }
+  const backup = path.match(/^\/api\/backups\/([0-9a-f-]{36})$/);
+  if (backup) {
+    const db = requireDb(env);
+    if (method === "GET") return downloadCloudBackup(db, requireBucket(env), email, backup[1]);
+    if (method === "DELETE") return deleteCloudBackup(db, requireBucket(env), email, backup[1]);
   }
 
   throw new HttpError(404, "Not found.", "not_found");

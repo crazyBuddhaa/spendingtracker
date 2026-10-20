@@ -65,6 +65,12 @@ describe("Cloudflare API", () => {
       assert.equal(response.status, 503);
       assert.equal((await response.json()).code, "not_configured");
     });
+
+    it("sends an authenticated API login back to the public website", async () => {
+      const response = await call("/api/auth/start");
+      assert.equal(response.status, 303);
+      assert.equal(response.headers.get("Location"), "https://spend.example.com/");
+    });
   });
 
   describe("transactions", () => {
@@ -187,6 +193,55 @@ describe("Cloudflare API", () => {
     it("only accepts statement file types", async () => {
       assert.equal((await upload("evil.html", "<script>")).status, 415);
       assert.equal((await upload("empty.csv", "")).status, 400);
+    });
+  });
+
+  describe("account backups in R2", () => {
+    it("creates downloadable Spendwise backups and isolates them by account", async () => {
+      await call("/api/transactions", {
+        method: "POST",
+        body: JSON.stringify({ upserts: [row("kept"), row("deleted")] }),
+        headers: { "Content-Type": "application/json" },
+      });
+      await call("/api/transactions", {
+        method: "POST",
+        body: JSON.stringify({ deletes: ["deleted"] }),
+        headers: { "Content-Type": "application/json" },
+      });
+      await call("/api/collections/budgets", {
+        method: "PUT",
+        body: JSON.stringify({ data: [{ category: "Shopping", monthlyLimit: 5000 }] }),
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const created = await call("/api/backups", { method: "POST" });
+      assert.equal(created.status, 201);
+      const { backup } = await created.json();
+      assert.equal(backup.transactionCount, 1);
+      assert.ok(backup.size > 0);
+      const [key] = [...env.STATEMENTS.objects.keys()];
+      assert.match(key, /^backups\/[0-9a-f]{24}\/[0-9a-f-]{36}\.json$/);
+      assert.ok(!key.includes("owner"));
+
+      const list = await (await call("/api/backups")).json();
+      assert.deepEqual(list.backups, [backup]);
+
+      const download = await call(`/api/backups/${backup.id}`);
+      assert.equal(download.status, 200);
+      assert.match(download.headers.get("Content-Disposition"), /spendwise-cloud-backup-\d{4}-\d{2}-\d{2}\.json/);
+      const body = await download.json();
+      assert.equal(body.format, "spendwise.backup.v1");
+      assert.equal(body.transactions.length, 1);
+      assert.equal(body.transactions[0].id, "kept");
+      assert.equal(body.budgets[0].monthlyLimit, 5000);
+
+      const otherToken = await access.sign({ email: "someone@else.com" });
+      assert.deepEqual((await (await call("/api/backups", {}, { "Cf-Access-Jwt-Assertion": otherToken })).json()).backups, []);
+      assert.equal((await call(`/api/backups/${backup.id}`, {}, { "Cf-Access-Jwt-Assertion": otherToken })).status, 404);
+
+      assert.equal((await call(`/api/backups/${backup.id}`, { method: "DELETE" })).status, 200);
+      assert.equal(env.STATEMENTS.objects.size, 0);
+      assert.deepEqual((await (await call("/api/backups")).json()).backups, []);
     });
   });
 });

@@ -747,7 +747,7 @@ function App() {
           <NavButton page="data" active={activePage} onClick={goTo} icon={<DatabaseBackup size={18} />} count={rules.length || undefined} />
         </nav>
         <div className="sidebar-bottom">
-          <SyncCard status={cloud.status} onSync={() => void cloud.syncNow()} onDetails={() => setShowPrivacy(true)} />
+          <SyncCard status={cloud.status} onSync={() => void cloud.syncNow()} onSignIn={cloud.signIn} onDetails={() => setShowPrivacy(true)} />
         </div>
       </aside>
       {sidebarOpen && <div className="sidebar-scrim" onClick={() => setSidebarOpen(false)} aria-hidden="true" />}
@@ -1037,9 +1037,14 @@ function App() {
               cloud={{
                 status: cloud.status,
                 onSync: () => void cloud.syncNow(),
+                onSignIn: cloud.signIn,
                 listStatements: cloud.listStatements,
                 deleteStatement: cloud.deleteStatement,
                 statementUrl: cloud.statementUrl,
+                listBackups: cloud.listBackups,
+                createCloudBackup: cloud.createCloudBackup,
+                deleteCloudBackup: cloud.deleteCloudBackup,
+                backupUrl: cloud.backupUrl,
               }}
             />
           )}
@@ -1601,6 +1606,7 @@ function syncSummary(status: SyncStatus): { title: string; detail: string; tone:
   if (status.mode === "checking") return { title: "Checking cloud sync…", detail: "Your data is loaded from this browser.", tone: "busy" };
   if (status.mode === "local") {
     if (status.state === "not-configured") return { title: "Cloud not set up", detail: status.message ?? "Connect D1 to this Pages project to sync.", tone: "warn" };
+    if (status.state === "signed-out") return { title: "Guest mode", detail: "Your data stays in this browser until you sign in to sync.", tone: "local" };
     return { title: "Stored in this browser", detail: "Imports and records stay on this device. Download a backup from Data & rules.", tone: "local" };
   }
   const pending = status.pending ? ` · ${status.pending.toLocaleString("en-NG")} change${status.pending === 1 ? "" : "s"} waiting` : "";
@@ -1616,7 +1622,7 @@ function syncSummary(status: SyncStatus): { title: string; detail: string; tone:
     case "offline":
       return { title: "Offline", detail: `Changes are kept on this device${pending}.`, tone: "warn" };
     case "signed-out":
-      return { title: "Sign-in expired", detail: "Reload the page to sign in with Cloudflare Access.", tone: "warn" };
+      return { title: "Sign-in expired", detail: "Sign in again to resume syncing this account.", tone: "warn" };
     case "not-configured":
       return { title: "Cloud not set up", detail: status.message ?? "Connect D1 to this Pages project.", tone: "warn" };
     case "error":
@@ -1626,7 +1632,7 @@ function syncSummary(status: SyncStatus): { title: string; detail: string; tone:
   }
 }
 
-function SyncCard({ status, onSync, onDetails }: { status: SyncStatus; onSync: () => void; onDetails: () => void }) {
+function SyncCard({ status, onSync, onSignIn, onDetails }: { status: SyncStatus; onSync: () => void; onSignIn: () => void; onDetails: () => void }) {
   const summary = syncSummary(status);
   const Icon = summary.tone === "local" ? LockKeyhole : summary.tone === "warn" ? CloudOff : Cloud;
   return (
@@ -1635,11 +1641,9 @@ function SyncCard({ status, onSync, onDetails }: { status: SyncStatus; onSync: (
       <strong>{summary.title}</strong>
       <p title={summary.detail}>{summary.detail}</p>
       <div className="sync-card-actions">
-        {status.mode === "cloud" && status.state !== "syncing" && (
-          status.state === "signed-out"
-            ? <button onClick={() => window.location.reload()}><RefreshCw size={12} /> Reload to sign in</button>
-            : <button onClick={onSync}><RefreshCw size={12} /> Sync now</button>
-        )}
+        {status.mode === "local" && status.state === "signed-out" && <button onClick={onSignIn}><Cloud size={12} /> Sign in to sync</button>}
+        {status.mode === "cloud" && status.state === "signed-out" && <button onClick={onSignIn}><Cloud size={12} /> Sign in again</button>}
+        {status.mode === "cloud" && status.state !== "syncing" && status.state !== "signed-out" && <button onClick={onSync}><RefreshCw size={12} /> Sync now</button>}
         <button onClick={onDetails}>How it works <ArrowUpRight size={13} /></button>
       </div>
     </div>
