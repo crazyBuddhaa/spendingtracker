@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { categoryList, type Transaction } from "./types";
-import { cloudApi, CloudError, type CloudAccount, type StoredStatement } from "./lib/cloudApi";
+import { cloudApi, CloudError, type CloudAccount, type StoredBackup, type StoredStatement } from "./lib/cloudApi";
 import { parseStoredTransactions, serializeTransactions, TRANSACTIONS_STORAGE_KEY } from "./lib/transactionStorage";
 import { readValue, writeValue } from "./lib/persistentStore";
 import { COLLECTION_NAMES, fromSyncRow, MAX_ROWS_PER_REQUEST, sameRow, toSyncRow, type CollectionName, type SyncRow } from "./lib/syncFormat";
@@ -363,7 +363,17 @@ export function useCloudSync({ loaded, transactions, setTransactions, collection
       // Never connected (or the cloud is not set up): keep working from this browser.
       mode.current = "local";
       const notConfigured = error instanceof CloudError && error.kind === "not-configured";
-      update({ mode: "local", state: notConfigured ? "not-configured" : "idle", message: notConfigured ? error.message : null, progress: null });
+      const signedOut = error instanceof CloudError && error.kind === "signed-out";
+      update({
+        mode: "local",
+        state: notConfigured ? "not-configured" : signedOut ? "signed-out" : "idle",
+        message: notConfigured
+          ? error.message
+          : signedOut
+            ? "Your data stays in this browser until you sign in to sync."
+            : null,
+        progress: null,
+      });
       return;
     }
     if (persisted.current.email && persisted.current.email !== account.email) {
@@ -544,11 +554,33 @@ export function useCloudSync({ loaded, transactions, setTransactions, collection
     await cloudApi.deleteStatement(id);
   }, []);
 
+  const listBackups = useCallback(async (): Promise<StoredBackup[]> => (await cloudApi.backups()).backups, []);
+  const createCloudBackup = useCallback(async (): Promise<StoredBackup> => (await cloudApi.createCloudBackup()).backup, []);
+  const deleteCloudBackup = useCallback(async (id: string) => {
+    await cloudApi.deleteCloudBackup(id);
+  }, []);
+
+  const signIn = useCallback(() => {
+    window.location.assign(cloudApi.signInUrl());
+  }, []);
+
   const syncNow = useCallback(async () => {
     if (mode.current === "cloud" && status.state !== "signed-out") await sync();
     else await connect();
   }, [connect, status.state, sync]);
 
-  return { status, syncNow, listStatements, uploadStatement, deleteStatement, statementUrl: cloudApi.statementUrl };
+  return {
+    status,
+    syncNow,
+    signIn,
+    listStatements,
+    uploadStatement,
+    deleteStatement,
+    statementUrl: cloudApi.statementUrl,
+    listBackups,
+    createCloudBackup,
+    deleteCloudBackup,
+    backupUrl: cloudApi.backupUrl,
+  };
 }
 

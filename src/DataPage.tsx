@@ -3,14 +3,19 @@ import { Cloud, DatabaseBackup, Download, FileSpreadsheet, ListChecks, Plus, Ref
 import { categoryList, type Category, type CategoryRule, type Direction } from "./types";
 import { formatDate, localIsoDate } from "./lib/format";
 import type { SyncStatus } from "./useCloudSync";
-import type { StoredStatement } from "./lib/cloudApi";
+import type { StoredBackup, StoredStatement } from "./lib/cloudApi";
 
 interface CloudProps {
   status: SyncStatus;
   onSync: () => void;
+  onSignIn: () => void;
   listStatements: () => Promise<StoredStatement[]>;
   deleteStatement: (id: string) => Promise<void>;
   statementUrl: (id: string) => string;
+  listBackups: () => Promise<StoredBackup[]>;
+  createCloudBackup: () => Promise<StoredBackup>;
+  deleteCloudBackup: (id: string) => Promise<void>;
+  backupUrl: (id: string) => string;
 }
 
 interface DataPageProps {
@@ -153,7 +158,9 @@ function formatBytes(size: number): string {
 function CloudPanel({ cloud }: { cloud: CloudProps }) {
   const { status } = cloud;
   const [statements, setStatements] = useState<StoredStatement[] | null>(null);
+  const [backups, setBackups] = useState<StoredBackup[] | null>(null);
   const [error, setError] = useState("");
+  const [creatingBackup, setCreatingBackup] = useState(false);
   const active = status.mode === "cloud";
   const canListFiles = active && status.filesEnabled && status.state !== "signed-out" && status.state !== "offline";
 
@@ -161,11 +168,13 @@ function CloudPanel({ cloud }: { cloud: CloudProps }) {
     if (!canListFiles) return;
     try {
       setError("");
-      setStatements(await cloud.listStatements());
+      const [nextStatements, nextBackups] = await Promise.all([cloud.listStatements(), cloud.listBackups()]);
+      setStatements(nextStatements);
+      setBackups(nextBackups);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not load stored statements.");
+      setError(cause instanceof Error ? cause.message : "Could not load cloud files.");
     }
-  }, [canListFiles, cloud]);
+  }, [canListFiles, cloud.listStatements, cloud.listBackups]);
 
   useEffect(() => {
     void load();
@@ -181,15 +190,41 @@ function CloudPanel({ cloud }: { cloud: CloudProps }) {
     }
   };
 
+  const createBackup = async () => {
+    try {
+      setCreatingBackup(true);
+      setError("");
+      const backup = await cloud.createCloudBackup();
+      setBackups((current) => [backup, ...(current ?? []).filter((item) => item.id !== backup.id)]);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not create a cloud backup.");
+    } finally {
+      setCreatingBackup(false);
+    }
+  };
+
+  const removeBackup = async (backup: StoredBackup) => {
+    if (!window.confirm("Delete this cloud backup from R2? This cannot be undone.")) return;
+    try {
+      await cloud.deleteCloudBackup(backup.id);
+      setBackups((current) => current?.filter((item) => item.id !== backup.id) ?? null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not delete the cloud backup.");
+    }
+  };
+
   if (!active) {
     return (
       <section className="panel cloud-panel cloud-panel--local">
         <div className="data-card-icon"><Cloud size={18} /></div>
         <div>
-          <h2>Cloud sync is off</h2>
+          <h2>{status.state === "signed-out" ? "Guest mode — data stays here" : "Cloud sync is off"}</h2>
           <p>{status.state === "not-configured" && status.message
             ? status.message
-            : "This copy of the app is not connected to Cloudflare, so everything stays in this browser. When it runs on Cloudflare Pages with the D1 database, R2 bucket, and Cloudflare Access set up (see the README), your data syncs automatically across devices."}</p>
+            : status.state === "signed-out"
+              ? "Your data stays in this browser. Sign in with your email code to sync it across devices and create cloud backups."
+              : "This copy of the app is not connected to Cloudflare, so everything stays in this browser. When it runs on Cloudflare Pages with D1, R2, and Cloudflare Access set up, signed-in users can sync across devices."}</p>
+          {status.state === "signed-out" && <button className="button button-primary" onClick={cloud.onSignIn}>Sign in to sync</button>}
         </div>
       </section>
     );
@@ -200,9 +235,11 @@ function CloudPanel({ cloud }: { cloud: CloudProps }) {
       <div className="panel-heading">
         <div>
           <div className="panel-kicker">CLOUDFLARE</div>
-          <h2>Cloud sync and statement files</h2>
+          <h2>Cloud sync and storage</h2>
         </div>
-        <button className="button button-secondary" onClick={cloud.onSync} disabled={status.state === "syncing"}><RefreshCw size={14} /> Sync now</button>
+        {status.state === "signed-out"
+          ? <button className="button button-primary" onClick={cloud.onSignIn}>Sign in again</button>
+          : <button className="button button-secondary" onClick={cloud.onSync} disabled={status.state === "syncing"}><RefreshCw size={14} /> Sync now</button>}
       </div>
       <div className="cloud-facts">
         <div><span>SIGNED IN AS</span><strong>{status.email ?? "—"}</strong></div>
@@ -210,6 +247,42 @@ function CloudPanel({ cloud }: { cloud: CloudProps }) {
         <div><span>WAITING TO SYNC</span><strong>{status.pending.toLocaleString("en-NG")}</strong></div>
       </div>
       {status.message && <p className="panel-note">{status.message}</p>}
+
+      <h3 className="cloud-subheading"><DatabaseBackup size={14} /> On-demand account backups (R2)</h3>
+      <p className="panel-note">Snapshots include this account’s cloud transactions and synced collections. Download one to restore it with “Restore from file”; original statement files are stored separately below.</p>
+      <div className="data-actions">
+        <button className="button button-secondary" onClick={() => void createBackup()} disabled={!canListFiles || creatingBackup}>
+          <DatabaseBackup size={14} /> {creatingBackup ? "Creating backup…" : "Create cloud backup"}
+        </button>
+      </div>
+      {!status.filesEnabled ? (
+        <div className="counterparty-empty">R2 storage is not connected. Add an R2 binding named STATEMENTS to store backups.</div>
+      ) : error ? (
+        <div className="counterparty-empty">{error}</div>
+      ) : backups === null ? (
+        <div className="counterparty-empty">{canListFiles ? "Loading…" : "Sign in and connect to view cloud backups."}</div>
+      ) : backups.length === 0 ? (
+        <div className="counterparty-empty">No cloud backups yet. Create one before changing devices or restoring data.</div>
+      ) : (
+        <div className="simple-table-wrap">
+          <table className="simple-table">
+            <thead><tr><th>CREATED</th><th>TRANSACTIONS</th><th>SIZE</th><th /></tr></thead>
+            <tbody>
+              {backups.map((backup) => (
+                <tr key={backup.id}>
+                  <td>{formatDate(localIsoDate(new Date(backup.createdAt)))}</td>
+                  <td>{backup.transactionCount.toLocaleString("en-NG")}</td>
+                  <td>{formatBytes(backup.size)}</td>
+                  <td className="row-actions">
+                    <a className="icon-button" href={cloud.backupUrl(backup.id)} download title="Download backup" aria-label="Download cloud backup"><Download size={14} /></a>
+                    <button className="icon-button" onClick={() => void removeBackup(backup)} title="Delete backup" aria-label="Delete cloud backup"><Trash2 size={14} /></button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <h3 className="cloud-subheading"><FileSpreadsheet size={14} /> Original statement files (R2)</h3>
       {!status.filesEnabled ? (
