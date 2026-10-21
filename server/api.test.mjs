@@ -66,10 +66,23 @@ describe("Cloudflare API", () => {
       assert.equal((await response.json()).code, "not_configured");
     });
 
-    it("sends an authenticated API login back to the public website", async () => {
-      const response = await call("/api/auth/start");
-      assert.equal(response.status, 303);
-      assert.equal(response.headers.get("Location"), "https://spend.example.com/");
+    it("starts Cloudflare Access login without requiring an existing token", async () => {
+      const response = await call("/api/auth/start", {}, {});
+      assert.equal(response.status, 302);
+      const location = new URL(response.headers.get("Location"));
+      assert.equal(location.origin, access.team);
+      assert.equal(location.pathname, "/cdn-cgi/access/login/spend.example.com");
+      assert.equal(location.searchParams.get("kid"), access.aud);
+      assert.equal(location.searchParams.get("redirect_url"), "/");
+    });
+
+    it("does not start Access login when its required settings are missing", async () => {
+      const response = await handleApi(
+        new Request("https://spend.example.com/api/auth/start"),
+        { DB: env.DB, STATEMENTS: env.STATEMENTS },
+      );
+      assert.equal(response.status, 503);
+      assert.equal((await response.json()).code, "not_configured");
     });
   });
 
