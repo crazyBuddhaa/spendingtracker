@@ -502,8 +502,36 @@ async function route(request: Request, env: Env, email: string): Promise<Respons
   throw new HttpError(404, "Not found.", "not_found");
 }
 
+function startAccessLogin(request: Request, env: Env): Response {
+  const rawDomain = (env.ACCESS_TEAM_DOMAIN ?? "").trim().replace(/\/+$/, "");
+  const audience = (env.ACCESS_AUD ?? "").trim();
+  if (!rawDomain || !audience) {
+    return json(
+      { error: "Cloudflare Access is not configured for this API. Set ACCESS_TEAM_DOMAIN and ACCESS_AUD.", code: "not_configured" },
+      503,
+    );
+  }
+
+  const domain = /^https?:\/\//i.test(rawDomain) ? rawDomain : `https://${rawDomain}`;
+  const returnUrl = new URL("/", request.url);
+  const loginUrl = new URL(`/cdn-cgi/access/login/${returnUrl.hostname}`, domain);
+  loginUrl.searchParams.set("kid", audience);
+  loginUrl.searchParams.set("redirect_url", returnUrl.pathname + returnUrl.search);
+  return new Response(null, {
+    status: 302,
+    headers: { Location: loginUrl.toString(), "Cache-Control": "no-store" },
+  });
+}
+
 /** Entry point for every /api/* request. */
 export async function handleApi(request: Request, env: Env, fetcher?: (input: string) => Promise<Response>): Promise<Response> {
+  const url = new URL(request.url);
+  if (request.method.toUpperCase() === "GET" && url.pathname.replace(/\/+$/, "") === "/api/auth/start") {
+    // This one endpoint must be reachable before Access has issued a JWT so it can
+    // send the browser to Access' login flow. All data routes still authenticate below.
+    return startAccessLogin(request, env);
+  }
+
   try {
     const email = await authenticate(request, env, fetcher);
     return await route(request, env, email);
