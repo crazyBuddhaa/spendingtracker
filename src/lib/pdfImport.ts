@@ -5,7 +5,7 @@ import { parsePdfPages, type PositionedPdfTextItem } from "./pdfText.ts";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
-export async function parsePdfStatement(data: ArrayBuffer, fileName: string): Promise<ImportResult> {
+export async function readPdfPages(data: ArrayBuffer): Promise<PositionedPdfTextItem[][]> {
   const document = await pdfjs.getDocument({ data: new Uint8Array(data) }).promise;
   const pages: PositionedPdfTextItem[][] = [];
 
@@ -21,5 +21,9 @@ export async function parsePdfStatement(data: ArrayBuffer, fileName: string): Pr
     );
   }
 
-  return parsePdfPages(pages, fileName);
+  return pages;
+}
+
+export async function parsePdfStatement(data: ArrayBuffer, fileName: string): Promise<ImportResult> {
+  return parsePdfPages(await readPdfPages(data), fileName);
 }

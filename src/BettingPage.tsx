@@ -130,11 +130,11 @@ export default function BettingPage({
         <div>
           <div className="eyebrow"><span className="eyebrow-dot" /> BETTING ACTIVITY</div>
           <h1>Keep bets in their own ledger.</h1>
-          <p className="page-subtitle">Track stakes, returns, outcomes, and sport categories separately from everyday spending.</p>
+          <p className="page-subtitle">Track stakes, returns, outcomes, and sport categories separately from everyday spending. Import HTML/MHTML, CSV, Excel, or a text-based PDF history.</p>
         </div>
         <div className="heading-actions">
           <button className="button button-secondary" onClick={() => setShowAddForm(true)}><Plus size={15} /> Add bet</button>
-          <button className="button button-primary" onClick={onImport}><Upload size={15} /> Import SportyBet page</button>
+          <button className="button button-primary" onClick={onImport}><Upload size={15} /> Import betting history</button>
         </div>
       </div>
 
@@ -204,7 +204,7 @@ export default function BettingPage({
             </div>
           </>
         ) : (
-          <div className="bet-empty-chart"><Ticket size={18} />Import a saved SportyBet page or add your first bet to see outcomes here.</div>
+          <div className="bet-empty-chart"><Ticket size={18} />Import a betting history file or add your first bet to see outcomes here.</div>
         )}
       </section>
 
@@ -312,8 +312,8 @@ export default function BettingPage({
           <div className="bet-empty-state">
             <div className="bet-empty-icon"><CircleHelp size={21} /></div>
             <strong>{bets.length ? "No bets match those filters." : "No betting records yet."}</strong>
-            <p>{bets.length ? "Change the category, outcome, or search." : "Import your saved page or add a bet manually. Imported records stay in this browser."}</p>
-            {!bets.length && <button className="button button-primary" onClick={onImport}><Upload size={14} /> Import SportyBet page</button>}
+            <p>{bets.length ? "Change the category, outcome, or search." : "Import a betting history file or add a bet manually. Files are read in this browser."}</p>
+            {!bets.length && <button className="button button-primary" onClick={onImport}><Upload size={14} /> Import betting history</button>}
           </div>
         )}
       </section>

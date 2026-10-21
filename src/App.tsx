@@ -53,7 +53,8 @@ import { useCloudSync, type SyncStatus } from "./useCloudSync";
 import type { CollectionName } from "./lib/syncFormat";
 import { normaliseSavingsGoals } from "./lib/savings";
 import { normaliseSavingsCircles } from "./lib/savingsCircles";
-import { normaliseBets, parseSportyBetPage } from "./lib/sportyBetImport";
+import { normaliseBets } from "./lib/sportyBetImport";
+import { parseBettingFile } from "./lib/bettingFileImport";
 import {
   calculateTotals,
   filterByRange,
@@ -469,15 +470,17 @@ function App() {
   };
 
   const importBetPage = async (files: FileList | File[]) => {
-    const file = Array.from(files).find((item) => /\.(mhtml|mht|html|htm)$/i.test(item.name));
+    const file = Array.from(files).find((item) => /\.(mhtml|mht|html|htm|csv|xls|xlsx|pdf)$/i.test(item.name));
     if (!file) {
-      notify("Choose a saved SportyBet page (.mhtml, .mht, or .html).");
+      notify("Choose an HTML/MHTML page, CSV, Excel (.xls/.xlsx), or text-based PDF betting history file.");
       return;
     }
     setActivePage("betting");
     setImporting(true);
+    setImportWarnings([]);
     try {
-      const result = parseSportyBetPage(await file.text());
+      const result = await parseBettingFile(file);
+      setImportWarnings(result.warnings.map((warning) => `${file.name}: ${warning}`));
       const existingIds = new Set(bets.map((bet) => bet.id));
       const newBets = result.bets.filter((bet) => {
         if (existingIds.has(bet.id)) return false;
@@ -486,14 +489,14 @@ function App() {
       });
       if (newBets.length) {
         updateBets([...bets, ...newBets]);
-        notify(`${newBets.length} bet${newBets.length === 1 ? "" : "s"} imported${result.warnings.length ? ` · ${result.warnings[0]}` : ""}.`);
+        notify(`${newBets.length} bet${newBets.length === 1 ? "" : "s"} imported${result.warnings.length ? " · see the import notes" : ""}.`);
       } else if (result.bets.length) {
         notify("Those betting records are already in your ledger.");
       } else {
         notify(result.warnings[0] ?? "No bet records could be extracted from this page.");
       }
     } catch {
-      notify("This saved page could not be read. Try saving SportyBet as a complete web page (.mhtml).");
+      notify("This betting file could not be read. PDFs must contain selectable text; for scanned PDFs, export the history as CSV or Excel.");
     } finally {
       setImporting(false);
       if (betFileInput.current) betFileInput.current.value = "";
@@ -764,7 +767,7 @@ function App() {
               <button className="button button-primary top-import" disabled={!loaded} onClick={() => fileInput.current?.click()}><Plus size={16} /> Import statement</button>
             )}
             <input ref={fileInput} className="visually-hidden" type="file" accept=".csv,.xls,.xlsx,.pdf,text/csv,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple onChange={(event) => event.target.files && void importFiles(event.target.files)} />
-            <input ref={betFileInput} className="visually-hidden" type="file" accept=".mhtml,.mht,.html,.htm,application/x-mimearchive,text/html" onChange={(event) => event.target.files && void importBetPage(event.target.files)} />
+            <input ref={betFileInput} className="visually-hidden" type="file" accept=".mhtml,.mht,.html,.htm,.csv,.xls,.xlsx,.pdf,application/x-mimearchive,text/html,text/csv,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => event.target.files && void importBetPage(event.target.files)} />
           </div>
         </header>
 
@@ -1124,7 +1127,7 @@ function App() {
         </div>
       </main>
 
-      {importing && <div className="import-overlay"><div className="import-message"><LoaderCircle className="spin" size={22} /><strong>Reading your {activePage === "betting" ? "betting page" : "statement"}…</strong><span>Everything stays in this browser.</span></div></div>}
+      {importing && <div className="import-overlay"><div className="import-message"><LoaderCircle className="spin" size={22} /><strong>Reading your {activePage === "betting" ? "betting file" : "statement"}…</strong><span>Files are processed in this browser.</span></div></div>}
       {toast && <div className="toast" role="status"><Check size={16} />{toast}</div>}
       {showPrivacy && <PrivacyModal cloud={cloudActive ? cloud.status.email : null} onClose={() => setShowPrivacy(false)} />}
       {showAddTransaction && <AddTransactionModal currency={currency} sources={sources} onClose={() => setShowAddTransaction(false)} onSave={addManualTransaction} />}
