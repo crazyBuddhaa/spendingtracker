@@ -62,7 +62,7 @@ The website is public. Guests use browser storage only; signing in with an email
 - **R2** keeps the original statement files you import (CSV, Excel, PDF; up to 25 MB each, de-duplicated) and on-demand account backup snapshots. Download or delete them under **Data & rules**.
 - **Cloudflare Access** protects only `/api/*`, not the public website. The API verifies the Access token (signature, audience, issuer, expiry) on every request and refuses cloud access until Access is configured.
 - The browser keeps a copy, so the app opens instantly and works offline; changes made offline are queued (even across reloads) and sync when you reconnect. Other devices pick up changes on focus and every minute.
-- Guests stay local until they choose **Sign in to sync**. On first sign-in, history already saved in that browser is uploaded to that email's cloud account.
+- Guests stay local until they choose **Sign in to sync**. The button starts the Cloudflare Access login flow and returns to the public website; on first sign-in, history already saved in that browser is uploaded to that email's cloud account.
 
 Without these bindings (or with `npm run dev`), the app works exactly as before, storing everything in the browser.
 
