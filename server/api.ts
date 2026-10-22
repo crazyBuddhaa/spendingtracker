@@ -1,5 +1,15 @@
 import { AuthError, authenticate } from "./auth.ts";
 import type { D1Database, Env, R2Bucket } from "./bindings.ts";
+import {
+  loadMonthlyOverrides,
+  loadMonthlySummary,
+  loadMonthlyTransactions,
+  MonthlyStorageError,
+  saveMonthlyOverrides,
+  saveMonthlySummary,
+  saveMonthlyTransactions,
+  type TransactionOverride,
+} from "./monthlyStorage.ts";
 import { COLLECTION_NAMES, isValidSyncRow, MAX_ROWS_PER_REQUEST, type SyncRow } from "../src/lib/syncFormat.ts";
 import type { Transaction } from "../src/types.ts";
 
@@ -443,6 +453,56 @@ async function deleteCloudBackup(db: D1Database, bucket: R2Bucket, email: string
   return json({ deleted: true });
 }
 
+/* ------------------------------------------------------- monthly R2 datasets */
+
+async function monthlyStorageRequest(
+  bucket: R2Bucket,
+  email: string,
+  request: Request,
+  url: URL,
+  accountId: string,
+  year: number,
+  month: number,
+  kind: "transactions" | "summary" | "overrides",
+): Promise<Response> {
+  const scope = { userEmail: email, accountId, year, month };
+  const method = request.method.toUpperCase();
+  if (method === "GET") {
+    const generation = url.searchParams.get("generation") ?? "";
+    if (kind === "transactions") {
+      const records = await loadMonthlyTransactions(bucket, scope, generation);
+      return records === null ? json({ error: "Monthly dataset not found.", code: "not_found" }, 404) : json({ generation, records });
+    }
+    if (kind === "summary") {
+      const summary = await loadMonthlySummary(bucket, scope, generation);
+      return summary === null ? json({ error: "Monthly summary not found.", code: "not_found" }, 404) : json({ generation, summary });
+    }
+    const records = await loadMonthlyOverrides(bucket, scope, generation);
+    return records === null ? json({ error: "Monthly overrides not found.", code: "not_found" }, 404) : json({ generation, records });
+  }
+
+  if (method === "PUT") {
+    const body = await readJson<{ records?: unknown; summary?: unknown }>(request);
+    const generation = crypto.randomUUID();
+    if (kind === "transactions") {
+      if (!Array.isArray(body.records)) throw new HttpError(400, "Transaction records must be a list.");
+      const saved = await saveMonthlyTransactions(bucket, scope, generation, body.records as Transaction[]);
+      return json({ generation, count: saved.count, bytes: saved.bytes }, 201);
+    }
+    if (kind === "summary") {
+      if (!body.summary || typeof body.summary !== "object" || Array.isArray(body.summary)) {
+        throw new HttpError(400, "A monthly summary must be a JSON object.");
+      }
+      const saved = await saveMonthlySummary(bucket, scope, generation, body.summary as Record<string, unknown>);
+      return json({ generation, bytes: saved.bytes }, 201);
+    }
+    if (!Array.isArray(body.records)) throw new HttpError(400, "Transaction overrides must be a list.");
+    const saved = await saveMonthlyOverrides(bucket, scope, generation, body.records as TransactionOverride[]);
+    return json({ generation, count: saved.count, bytes: saved.bytes }, 201);
+  }
+  throw new HttpError(405, "Method not allowed.", "method_not_allowed");
+}
+
 /* ------------------------------------------------------------------ router */
 
 async function route(request: Request, env: Env, email: string): Promise<Response> {
@@ -499,6 +559,21 @@ async function route(request: Request, env: Env, email: string): Promise<Respons
     if (method === "DELETE") return deleteCloudBackup(db, requireBucket(env), email, backup[1]);
   }
 
+  const monthlyStorage = path.match(/^\/api\/monthly-storage\/([A-Za-z0-9_-]{1,80})\/(\d{4})\/(\d{2})\/(transactions|summary|overrides)$/);
+  if (monthlyStorage) {
+    const [, accountId, year, month, kind] = monthlyStorage;
+    return monthlyStorageRequest(
+      requireBucket(env),
+      email,
+      request,
+      url,
+      accountId,
+      Number(year),
+      Number(month),
+      kind as "transactions" | "summary" | "overrides",
+    );
+  }
+
   throw new HttpError(404, "Not found.", "not_found");
 }
 
@@ -540,6 +615,7 @@ export async function handleApi(request: Request, env: Env, fetcher?: (input: st
       return json({ error: error.message, code: error.status === 503 ? "not_configured" : "unauthorized" }, error.status);
     }
     if (error instanceof HttpError) return json({ error: error.message, code: error.code }, error.status);
+    if (error instanceof MonthlyStorageError) return json({ error: error.message, code: error.code }, error.status);
     console.error("Spendwise API error", error);
     return json({ error: "Something went wrong on the server.", code: "server_error" }, 500);
   }
