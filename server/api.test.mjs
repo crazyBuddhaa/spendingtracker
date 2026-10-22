@@ -3,6 +3,7 @@ import { beforeEach, describe, it } from "node:test";
 import { handleApi } from "./api.ts";
 import { clearKeyCache } from "./auth.ts";
 import { createFakeAccess, createFakeD1, createFakeR2 } from "./testing.mjs";
+import { isStorageProviderAvailable, STORAGE_PROVIDER_STATUS } from "../src/lib/storagePreferences.ts";
 
 const row = (id, overrides = {}) => {
   const base = [id, "2026-09-01", "10:00:00", `Payment ${id}`, 100, 0, "Shopping", "OPay Wallet", 0, ""];
@@ -83,6 +84,148 @@ describe("Cloudflare API", () => {
       );
       assert.equal(response.status, 503);
       assert.equal((await response.json()).code, "not_configured");
+    });
+  });
+
+  describe("storage preferences", () => {
+    const defaultPreference = {
+      schemaVersion: 1,
+      provider: "spendwise-managed",
+      automaticBackupsEnabled: false,
+    };
+    const putPreference = (preference, headers) => call(
+      "/api/storage-preferences",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: typeof preference === "string" ? preference : JSON.stringify(preference),
+      },
+      headers,
+    );
+
+    it("requires authentication for reads and updates", async () => {
+      const get = await call("/api/storage-preferences", {}, {});
+      const put = await putPreference(defaultPreference, {});
+      assert.equal(get.status, 401);
+      assert.equal(put.status, 401);
+    });
+
+    it("returns the managed default without writing a row when none exists", async () => {
+      const response = await call("/api/storage-preferences");
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), { preference: defaultPreference });
+      assert.equal(env.DB.raw.prepare("SELECT COUNT(*) AS count FROM storage_preferences").get().count, 0);
+      assert.equal(defaultPreference.automaticBackupsEnabled, false);
+      assert.equal(STORAGE_PROVIDER_STATUS["google-sheets"], "not-connected");
+      assert.equal(isStorageProviderAvailable("google-sheets"), false);
+    });
+
+    it("saves and retrieves validated preferences for each authenticated user", async () => {
+      const savedForOwner = {
+        schemaVersion: 1,
+        provider: "google-sheets",
+        automaticBackupsEnabled: true,
+      };
+      const put = await putPreference(savedForOwner);
+      assert.equal(put.status, 200);
+      assert.deepEqual(await put.json(), { preference: savedForOwner });
+
+      const ownerRow = env.DB.raw.prepare(
+        "SELECT user_email, schema_version, provider, automatic_backups_enabled, created_at, updated_at FROM storage_preferences",
+      ).get();
+      assert.equal(ownerRow.user_email, "owner@example.com");
+      assert.equal(ownerRow.schema_version, 1);
+      assert.equal(ownerRow.provider, "google-sheets");
+      assert.equal(ownerRow.automatic_backups_enabled, 1);
+      assert.equal(ownerRow.created_at, ownerRow.updated_at);
+
+      const otherToken = await access.sign({ email: "someone@else.com" });
+      const otherHeaders = { "Cf-Access-Jwt-Assertion": otherToken };
+      const otherDefault = await call("/api/storage-preferences", {}, otherHeaders);
+      assert.deepEqual(await otherDefault.json(), { preference: defaultPreference });
+
+      const savedForOther = {
+        schemaVersion: 1,
+        provider: "spendwise-managed",
+        automaticBackupsEnabled: true,
+      };
+      assert.equal((await putPreference(savedForOther, otherHeaders)).status, 200);
+      assert.deepEqual(
+        await (await call("/api/storage-preferences", {}, otherHeaders)).json(),
+        { preference: savedForOther },
+      );
+      assert.deepEqual(
+        await (await call("/api/storage-preferences")).json(),
+        { preference: savedForOwner },
+      );
+      assert.equal(env.DB.raw.prepare("SELECT COUNT(*) AS count FROM storage_preferences").get().count, 2);
+    });
+
+    it("does not allow a client-supplied identity in the query or preference body", async () => {
+      const otherToken = await access.sign({ email: "someone@else.com" });
+      const otherPreference = {
+        schemaVersion: 1,
+        provider: "spendwise-managed",
+        automaticBackupsEnabled: true,
+      };
+      const otherHeaders = { "Cf-Access-Jwt-Assertion": otherToken };
+      assert.equal((await putPreference(otherPreference, otherHeaders)).status, 200);
+
+      const readOther = await call("/api/storage-preferences?userId=someone-else");
+      assert.equal(readOther.status, 400);
+      const overwriteOther = await putPreference({ ...otherPreference, userId: "someone-else" });
+      assert.equal(overwriteOther.status, 400);
+      const overwriteByEmail = await putPreference({ ...otherPreference, userEmail: "someone@else.com" });
+      assert.equal(overwriteByEmail.status, 400);
+      assert.deepEqual(
+        await (await call("/api/storage-preferences", {}, otherHeaders)).json(),
+        { preference: otherPreference },
+      );
+      assert.deepEqual(
+        await (await call("/api/storage-preferences")).json(),
+        { preference: defaultPreference },
+      );
+    });
+
+    it("rejects unsupported providers, versions, and unexpected fields", async () => {
+      const invalid = [
+        { ...defaultPreference, provider: "direct-r2" },
+        { ...defaultPreference, schemaVersion: 2 },
+        { ...defaultPreference, accessToken: "not-a-real-token" },
+      ];
+      for (const preference of invalid) {
+        const response = await putPreference(preference);
+        assert.equal(response.status, 400);
+        assert.equal((await response.json()).code, "invalid_storage_preference");
+      }
+      assert.equal(env.DB.raw.prepare("SELECT COUNT(*) AS count FROM storage_preferences").get().count, 0);
+    });
+
+    it("handles malformed and oversized JSON without saving", async () => {
+      const malformed = await putPreference("{not-json");
+      assert.equal(malformed.status, 400);
+      const oversized = await putPreference(" ".repeat(1025));
+      assert.equal(oversized.status, 413);
+      assert.equal(env.DB.raw.prepare("SELECT COUNT(*) AS count FROM storage_preferences").get().count, 0);
+    });
+
+    it("returns a generic error when D1 fails", async () => {
+      env.DB = {
+        prepare() {
+          throw new Error("Internal SQL schema details");
+        },
+      };
+      const response = await call("/api/storage-preferences");
+      assert.equal(response.status, 500);
+      assert.deepEqual(await response.json(), {
+        error: "Storage preferences are unavailable.",
+        code: "storage_unavailable",
+      });
+    });
+
+    it("rejects methods other than GET and PUT", async () => {
+      const response = await call("/api/storage-preferences", { method: "DELETE" });
+      assert.equal(response.status, 405);
     });
   });
 

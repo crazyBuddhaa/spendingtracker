@@ -10,10 +10,13 @@ import {
   saveMonthlyTransactions,
   type TransactionOverride,
 } from "./monthlyStorage.ts";
+import { loadStoragePreference, saveStoragePreference } from "./storagePreferences.ts";
+import { validateStoragePreference } from "../src/lib/storagePreferences.ts";
 import { COLLECTION_NAMES, isValidSyncRow, MAX_ROWS_PER_REQUEST, type SyncRow } from "../src/lib/syncFormat.ts";
 import type { Transaction } from "../src/types.ts";
 
 const MAX_JSON_BYTES = 4 * 1024 * 1024;
+const MAX_STORAGE_PREFERENCE_BYTES = 1024;
 const MAX_COLLECTION_BYTES = 1024 * 1024;
 const MAX_STATEMENT_BYTES = 25 * 1024 * 1024;
 const MAX_BACKUP_BYTES = 25 * 1024 * 1024;
@@ -58,7 +61,9 @@ async function readJson<T>(request: Request, limit = MAX_JSON_BYTES): Promise<T>
   const declared = Number(request.headers.get("Content-Length") ?? 0);
   if (declared > limit) throw new HttpError(413, "Request is too large.", "too_large");
   const text = await request.text();
-  if (text.length > limit) throw new HttpError(413, "Request is too large.", "too_large");
+  if (new TextEncoder().encode(text).byteLength > limit) {
+    throw new HttpError(413, "Request is too large.", "too_large");
+  }
   try {
     return JSON.parse(text) as T;
   } catch {
@@ -522,6 +527,35 @@ async function route(request: Request, env: Env, email: string): Promise<Respons
 
   if (path === "/api/auth/start" && method === "GET") {
     return Response.redirect(new URL("/", request.url).toString(), 303);
+  }
+
+  if (path === "/api/storage-preferences") {
+    if (method !== "GET" && method !== "PUT") {
+      throw new HttpError(405, "Method not allowed.", "method_not_allowed");
+    }
+    if (url.search) {
+      throw new HttpError(400, "Storage preference requests do not accept query parameters.");
+    }
+    const db = requireDb(env);
+    if (method === "GET") {
+      try {
+        return json({ preference: await loadStoragePreference(db, email) });
+      } catch {
+        return json({ error: "Storage preferences are unavailable.", code: "storage_unavailable" }, 500);
+      }
+    }
+
+    const body = await readJson<unknown>(request, MAX_STORAGE_PREFERENCE_BYTES);
+    const preference = validateStoragePreference(body, { strict: true });
+    if (!preference) {
+      throw new HttpError(400, "Storage preference is invalid.", "invalid_storage_preference");
+    }
+    try {
+      await saveStoragePreference(db, email, preference);
+      return json({ preference });
+    } catch {
+      return json({ error: "Storage preferences are unavailable.", code: "storage_unavailable" }, 500);
+    }
   }
 
   if (path === "/api/transactions") {

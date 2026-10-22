@@ -32,12 +32,22 @@ function isStorageProvider(value: unknown): value is StorageProvider {
 }
 
 /**
- * Validates an object or serialized preference without retaining unknown fields.
+ * Validates a preference without retaining unknown fields.
  * Returns null for malformed, unsupported, or future-version configurations.
+ * Strict callers can reject unexpected fields instead of ignoring them.
  */
-export function validateStoragePreference(value: unknown): StoragePreference | null {
+export function validateStoragePreference(
+  value: unknown,
+  options: { strict?: boolean } = {},
+): StoragePreference | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const candidate = value as Record<string, unknown>;
+  if (
+    options.strict &&
+    Object.keys(candidate).some((key) => !Object.prototype.hasOwnProperty.call(DEFAULT_STORAGE_PREFERENCE, key))
+  ) {
+    return null;
+  }
   if (
     candidate.schemaVersion !== STORAGE_PREFERENCE_SCHEMA_VERSION ||
     !isStorageProvider(candidate.provider) ||
