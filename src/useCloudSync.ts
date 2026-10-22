@@ -4,6 +4,8 @@ import { cloudApi, CloudError, type CloudAccount, type StoredBackup, type Stored
 import { parseStoredTransactions, serializeTransactions, TRANSACTIONS_STORAGE_KEY } from "./lib/transactionStorage";
 import { readValue, writeValue } from "./lib/persistentStore";
 import { COLLECTION_NAMES, fromSyncRow, MAX_ROWS_PER_REQUEST, sameRow, toSyncRow, type CollectionName, type SyncRow } from "./lib/syncFormat";
+import { DEFAULT_STORAGE_PREFERENCE } from "./lib/storagePreferences";
+import { createTransactionPersistenceAdapter } from "./lib/transactionPersistence";
 
 const SYNC_STATE_KEY = "spendwise.sync.v1";
 const ACCOUNT_DATA_KEY_PREFIX = "spendwise.account-data.v1.";
@@ -11,6 +13,7 @@ const PUSH_DELAY = 1500;
 const PULL_INTERVAL = 60_000;
 const categories = new Set<string>(categoryList);
 const isCategory = (value: string) => categories.has(value);
+const transactionStorage = createTransactionPersistenceAdapter(DEFAULT_STORAGE_PREFERENCE.provider);
 
 export type SyncMode = "checking" | "local" | "cloud";
 export type SyncState = "idle" | "syncing" | "offline" | "signed-out" | "not-configured" | "error";
@@ -166,7 +169,7 @@ export function useCloudSync({ loaded, transactions, setTransactions, collection
     const rows: Array<[SyncRow, 0 | 1, number]> = [];
     let cursor = after;
     for (;;) {
-      const page = await cloudApi.transactionsPage(cursor);
+      const page = await transactionStorage.loadPage(cursor);
       rows.push(...page.rows);
       cursor = page.next;
       onPage?.(rows.length);
@@ -227,7 +230,7 @@ export function useCloudSync({ loaded, transactions, setTransactions, collection
           return transaction ? [toSyncRow(transaction)] : [];
         });
         const deletes = chunk.filter((item) => item.kind === "delete" || !current.has(item.id)).map((item) => item.id);
-        await cloudApi.writeTransactions(rows, deletes);
+        await transactionStorage.applyChanges(rows, deletes);
         queue.splice(0, chunk.length);
         for (const item of chunk) (item.kind === "upsert" ? inFlightUpserts : inFlightDeletes).current.delete(item.id);
         done += chunk.length;

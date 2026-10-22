@@ -66,6 +66,10 @@ The website is public. Guests use browser storage only; signing in with an email
 
 Without these bindings (or with `npm run dev`), the app works exactly as before, storing everything in the browser.
 
+### Storage preference foundation
+
+The versioned storage-preference model defaults existing users to **Spendwise-managed** storage: browser-local data for guests, with the existing authenticated Cloudflare sync for signed-in users. **Google Sheets is not connected** and cannot be selected for persistence. Storage preferences are validated in code but are not yet stored per account; no settings control suggests otherwise. The automatic-backup preference defaults off and does not change the existing manual download or on-demand R2 backup features.
+
 ### One-time setup
 
 Run these from the project folder (log in with `npx wrangler login` first):
