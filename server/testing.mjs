@@ -46,7 +46,10 @@ export function createFakeR2() {
   return {
     objects,
     put: async (key, value, options = {}) => {
-      const bytes = value instanceof ArrayBuffer ? new Uint8Array(value) : new TextEncoder().encode(String(value));
+      let bytes;
+      if (value instanceof ArrayBuffer) bytes = new Uint8Array(value);
+      else if (typeof value === "string") bytes = new TextEncoder().encode(value);
+      else bytes = new Uint8Array(await new Response(value).arrayBuffer());
       objects.set(key, { bytes, httpMetadata: options.httpMetadata, customMetadata: options.customMetadata });
     },
     get: async (key) => {
