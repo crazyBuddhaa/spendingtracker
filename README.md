@@ -68,7 +68,13 @@ Without these bindings (or with `npm run dev`), the app works exactly as before,
 
 ### Storage preference foundation
 
-The versioned storage-preference model defaults existing users to **Spendwise-managed** storage: browser-local data for guests, with the existing authenticated Cloudflare sync for signed-in users. **Google Sheets is not connected** and cannot be selected for persistence. Storage preferences are validated in code but are not yet stored per account; no settings control suggests otherwise. The automatic-backup preference defaults off and does not change the existing manual download or on-demand R2 backup features.
+The versioned preference model defaults existing users to **Spendwise-managed** storage and automatic backups disabled. Signed-in preference records are stored in D1's `storage_preferences` table, keyed by the lower-cased email returned by server-side Cloudflare Access JWT verification. The API derives that key from the authenticated request; it does not accept an account identifier from the client. A missing record returns the default without writing a row, and a record is created only when the user saves a preference. **Google Sheets remains not connected**: this API does not authorize it or change the existing transaction sync path. No tokens or provider credentials are stored. There is no storage-settings UI in this stage, and the backup preference does not activate automatic backups or change manual/on-demand R2 backup behavior.
+
+Stage 6A adds only the D1 preference foundation. It does not add a UI, Google Sheets integration, R2 transaction migration, or deployment. Apply the migration with the same D1 workflow as the other migrations:
+
+```sh
+npx wrangler d1 execute spendwise --remote --file=migrations/0004_storage_preferences.sql
+```
 
 ### One-time setup
 
@@ -79,6 +85,7 @@ npx wrangler d1 create spendwise
 npx wrangler d1 execute spendwise --remote --file=migrations/0001_init.sql
 npx wrangler d1 execute spendwise --remote --file=migrations/0002_scrub_transaction_tombstones.sql
 npx wrangler d1 execute spendwise --remote --file=migrations/0003_cloud_backups.sql
+npx wrangler d1 execute spendwise --remote --file=migrations/0004_storage_preferences.sql
 npx wrangler r2 bucket create spendwise-statements
 ```
 

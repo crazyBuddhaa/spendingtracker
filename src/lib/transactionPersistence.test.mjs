@@ -67,6 +67,21 @@ describe("storage preferences", () => {
     assert.deepEqual(parseStoragePreference("{malformed"), DEFAULT_STORAGE_PREFERENCE);
     assert.deepEqual(parseStoragePreference({ schemaVersion: 1, provider: "unknown" }), DEFAULT_STORAGE_PREFERENCE);
   });
+
+  it("can reject unexpected fields for strict server requests", () => {
+    const value = {
+      schemaVersion: 1,
+      provider: "spendwise-managed",
+      automaticBackupsEnabled: false,
+      userId: "another-user",
+    };
+    assert.equal(validateStoragePreference(value, { strict: true }), null);
+    assert.deepEqual(validateStoragePreference(value), {
+      schemaVersion: 1,
+      provider: "spendwise-managed",
+      automaticBackupsEnabled: false,
+    });
+  });
 });
 
 describe("managed transaction persistence adapter", () => {
