@@ -1,4 +1,4 @@
-import type { ImportResult, Transaction } from "../types.ts";
+import type { ImportDiagnostics, ImportResult, Transaction } from "../types.ts";
 import { isWalletProductMovement } from "./categorise.ts";
 import { parseTransactionsCsv } from "./csv.ts";
 
@@ -119,13 +119,22 @@ export function parseStatementSheets(sheets: StatementSheet[], fileName: string)
       source,
       result: parseTransactionsCsv(sheet.csv, fileName, { source, accountHolderName, accountNumber }),
     };
-  }).filter(({ result }) => result.transactions.length > 0);
+  }).filter(({ result }) => result.transactions.length > 0 || result.diagnostics?.headerDetected);
 
   if (imports.length === 0) {
     return {
       transactions: [],
       skipped: 0,
       warnings: ["No readable transaction table was found in this workbook. Include date, description, and amount, debit, or credit columns."],
+      diagnostics: {
+        scannedRows: 0,
+        validRows: 0,
+        invalidRows: 0,
+        missingDateRows: 0,
+        invalidDateRows: 0,
+        ambiguousDateRows: 0,
+        headerDetected: false,
+      },
     };
   }
 
@@ -145,9 +154,30 @@ export function parseStatementSheets(sheets: StatementSheet[], fileName: string)
     }
   }
 
+  const diagnostics = imports.reduce<ImportDiagnostics>((total, { result }) => {
+    const current = result.diagnostics;
+    if (!current) return total;
+    total.scannedRows += current.scannedRows;
+    total.validRows += current.validRows;
+    total.invalidRows += current.invalidRows;
+    total.missingDateRows += current.missingDateRows;
+    total.invalidDateRows += current.invalidDateRows;
+    total.ambiguousDateRows += current.ambiguousDateRows;
+    total.headerDetected ||= current.headerDetected;
+    return total;
+  }, {
+    scannedRows: 0,
+    validRows: 0,
+    invalidRows: 0,
+    missingDateRows: 0,
+    invalidDateRows: 0,
+    ambiguousDateRows: 0,
+    headerDetected: false,
+  });
   return {
     transactions,
     skipped: imports.reduce((total, { result }) => total + result.skipped, 0),
     warnings,
+    diagnostics,
   };
 }

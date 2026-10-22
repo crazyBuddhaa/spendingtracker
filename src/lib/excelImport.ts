@@ -34,6 +34,15 @@ export function parseExcelStatement(data: ArrayBuffer | Uint8Array, fileName: st
       transactions: [],
       skipped: 0,
       warnings: ["This Excel file could not be opened. Try exporting the statement as .xls, .xlsx, or CSV."],
+      diagnostics: {
+        scannedRows: 0,
+        validRows: 0,
+        invalidRows: 0,
+        missingDateRows: 0,
+        invalidDateRows: 0,
+        ambiguousDateRows: 0,
+        headerDetected: false,
+      },
     };
   }
   return parseStatementSheets(sheets, fileName);

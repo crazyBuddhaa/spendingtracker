@@ -22,5 +22,14 @@ export async function parseStatementFile(file: File): Promise<ImportResult> {
     transactions: [],
     skipped: 0,
     warnings: ["Unsupported file. Choose a CSV, Excel (.xls/.xlsx), or text-based PDF statement."],
+    diagnostics: {
+      scannedRows: 0,
+      validRows: 0,
+      invalidRows: 0,
+      missingDateRows: 0,
+      invalidDateRows: 0,
+      ambiguousDateRows: 0,
+      headerDetected: false,
+    },
   };
 }
