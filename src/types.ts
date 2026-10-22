@@ -63,6 +63,18 @@ export interface ImportResult {
   transactions: Transaction[];
   skipped: number;
   warnings: string[];
+  diagnostics?: ImportDiagnostics;
+}
+
+export interface ImportDiagnostics {
+  /** Non-empty data rows the parser attempted after locating a statement header. */
+  scannedRows: number;
+  validRows: number;
+  invalidRows: number;
+  missingDateRows: number;
+  invalidDateRows: number;
+  ambiguousDateRows: number;
+  headerDetected: boolean;
 }
 
 export interface SavingsContribution {

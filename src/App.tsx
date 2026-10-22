@@ -38,6 +38,7 @@ import { transactionsToCsv } from "./lib/csv";
 import { parseStatementFile } from "./lib/statementImport";
 import { parseStoredTransactions, serializeTransactions, TRANSACTIONS_STORAGE_KEY } from "./lib/transactionStorage";
 import { findNewTransactions } from "./lib/transactionDeduplication";
+import { buildImportPreview, type ImportDateRange, type ImportMode, type ImportPreview } from "./lib/importPreview";
 import { getTransferInsights } from "./lib/transactionPatterns";
 import { readValue, writeValue } from "./lib/persistentStore";
 import { applyCategoryRules, categorise, refreshCategories, ruleMatches, similarityKey } from "./lib/categorise";
@@ -74,6 +75,7 @@ import {
   type Category,
   type CategoryRule,
   type Direction,
+  type ImportDiagnostics,
   type SavingsCircle,
   type SavingsContribution,
   type SavingsGoal,
@@ -89,6 +91,16 @@ const PERIOD_STORAGE_KEY = "spendwise.period.v1";
 const currency = "NGN";
 
 type Page = "overview" | "transactions" | "insights" | "budgets" | "savings" | "betting" | "data";
+
+interface PendingStatementImport {
+  transactions: Transaction[];
+  skipped: number;
+  diagnostics: ImportDiagnostics;
+  diagnosticsAvailable: boolean;
+  warnings: string[];
+  files: File[];
+  filesWithTransactions: Array<{ file: File; rows: number }>;
+}
 
 const pageTitles: Record<Page, string> = {
   overview: "Overview",
@@ -242,6 +254,10 @@ function App() {
   const [toast, setToast] = useState("");
   const [importWarnings, setImportWarnings] = useState<string[]>([]);
   const [importing, setImporting] = useState(false);
+  const [pendingImport, setPendingImport] = useState<PendingStatementImport | null>(null);
+  const [importMode, setImportMode] = useState<ImportMode>("full-history");
+  const [importMonth, setImportMonth] = useState("");
+  const [importCustomRange, setImportCustomRange] = useState<ImportDateRange>({ start: null, end: null });
   const [transactionLimit, setTransactionLimit] = useState(100);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showPrivacy, setShowPrivacy] = useState(false);
@@ -418,43 +434,109 @@ function App() {
     setImporting(true);
     setImportWarnings([]);
     const imported: Transaction[] = [];
-    const readFiles: Array<{ file: File; rows: number }> = [];
+    const filesWithTransactions: Array<{ file: File; rows: number }> = [];
     let skipped = 0;
     const messages: string[] = [];
+    let diagnosticsAvailable = true;
+    const diagnostics: ImportDiagnostics = {
+      scannedRows: 0,
+      validRows: 0,
+      invalidRows: 0,
+      missingDateRows: 0,
+      invalidDateRows: 0,
+      ambiguousDateRows: 0,
+      headerDetected: false,
+    };
 
     try {
       for (const file of statementFiles) {
         try {
           const result = await parseStatementFile(file);
           imported.push(...result.transactions);
-          if (result.transactions.length) readFiles.push({ file, rows: result.transactions.length });
+          if (result.transactions.length) filesWithTransactions.push({ file, rows: result.transactions.length });
           skipped += result.skipped;
+          if (!result.diagnostics) {
+            diagnosticsAvailable = false;
+          } else {
+            diagnostics.scannedRows += result.diagnostics.scannedRows;
+            diagnostics.validRows += result.diagnostics.validRows;
+            diagnostics.invalidRows += result.diagnostics.invalidRows;
+            diagnostics.missingDateRows += result.diagnostics.missingDateRows;
+            diagnostics.invalidDateRows += result.diagnostics.invalidDateRows;
+            diagnostics.ambiguousDateRows += result.diagnostics.ambiguousDateRows;
+            diagnostics.headerDetected ||= result.diagnostics.headerDetected;
+          }
           messages.push(...result.warnings.map((warning) => `${file.name}: ${warning}`));
         } catch {
+          diagnosticsAvailable = false;
           messages.push(`${file.name} could not be read. Scanned or password-protected PDFs may need to be exported as CSV or Excel.`);
         }
       }
 
-      const newTransactions = findNewTransactions(transactions, applyCategoryRules(imported, rules));
-      const duplicates = imported.length - newTransactions.length;
-      if (duplicates > 0 && newTransactions.length) messages.push(`${duplicates.toLocaleString("en-NG")} rows were already in your history and were skipped.`);
-      setImportWarnings(messages);
-
-      if (newTransactions.length) {
-        setTransactions((current) => [...current, ...newTransactions]);
-        if (!newTransactions.some((transaction) => filterByRange([transaction], range).length)) setPeriod("all");
-        notify(`${newTransactions.length.toLocaleString("en-NG")} transaction${newTransactions.length === 1 ? "" : "s"} imported${skipped ? ` · ${skipped} skipped` : ""}${messages.length ? " · see the import notes" : ""}.`);
-        setActivePage("overview");
-      } else if (imported.length) {
-        notify("Those transactions are already in your history.");
-      } else {
-        notify(messages[0] ?? "No transactions could be imported. Check the statement columns and try again.");
-      }
-      if (cloudActive && cloud.status.filesEnabled && readFiles.length) void storeStatementFiles(readFiles);
+      const dates = imported.map((transaction) => transaction.date).filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)).sort();
+      setImportMode("full-history");
+      setImportMonth(dates[0]?.slice(0, 7) ?? "");
+      setImportCustomRange({ start: dates[0] ?? null, end: dates.at(-1) ?? null });
+      setPendingImport({
+        transactions: imported,
+        skipped,
+        diagnostics,
+        diagnosticsAvailable,
+        warnings: messages,
+        files: statementFiles,
+        filesWithTransactions,
+      });
     } finally {
       setImporting(false);
       if (fileInput.current) fileInput.current.value = "";
     }
+  };
+
+  const comparisonAvailable = loaded && (
+    cloud.status.mode === "local"
+    || (cloud.status.mode === "cloud" && cloud.status.state === "idle")
+  );
+  const importPreview: ImportPreview | null = useMemo(() => pendingImport
+    ? buildImportPreview({
+      imported: applyCategoryRules(pendingImport.transactions, rules),
+      existing: transactions,
+      diagnostics: pendingImport.diagnosticsAvailable ? pendingImport.diagnostics : undefined,
+      skipped: pendingImport.skipped,
+      mode: importMode,
+      month: importMonth,
+      customRange: importCustomRange,
+      comparisonAvailable,
+    })
+    : null, [pendingImport, transactions, rules, importMode, importMonth, importCustomRange, comparisonAvailable]);
+
+  const confirmImport = () => {
+    if (!pendingImport || !importPreview?.rangeValid) return;
+    const imported = importPreview.transactionsInRange;
+    const newTransactions = findNewTransactions(transactions, applyCategoryRules(importPreview.transactionsForConfirmation, rules));
+    const duplicates = imported.length - newTransactions.length;
+    const messages = [...pendingImport.warnings];
+    if (importPreview.transactionsOutsideRange > 0) {
+      messages.push(
+        `${importPreview.transactionsOutsideRange.toLocaleString("en-NG")} valid transaction row${importPreview.transactionsOutsideRange === 1 ? "" : "s"} outside the selected period were not imported.`,
+      );
+    }
+    if (duplicates > 0 && newTransactions.length) messages.push(`${duplicates.toLocaleString("en-NG")} rows were already in your history and were skipped.`);
+    setImportWarnings(messages);
+
+    if (newTransactions.length) {
+      setTransactions((current) => [...current, ...newTransactions]);
+      if (!newTransactions.some((transaction) => filterByRange([transaction], range).length)) setPeriod("all");
+      notify(`${newTransactions.length.toLocaleString("en-NG")} transaction${newTransactions.length === 1 ? "" : "s"} imported${pendingImport.skipped ? ` · ${pendingImport.skipped} skipped` : ""}${messages.length ? " · see the import notes" : ""}.`);
+      setActivePage("overview");
+    } else if (imported.length) {
+      notify("Those transactions are already in your history.");
+    } else {
+      notify(messages[0] ?? "No transactions could be imported. Check the statement columns and try again.");
+    }
+    if (cloudActive && cloud.status.filesEnabled && pendingImport.filesWithTransactions.length) {
+      void storeStatementFiles(pendingImport.filesWithTransactions);
+    }
+    setPendingImport(null);
   };
 
   /** Keeps a copy of each imported statement file in R2. Runs in the background. */
@@ -1128,9 +1210,171 @@ function App() {
       </main>
 
       {importing && <div className="import-overlay"><div className="import-message"><LoaderCircle className="spin" size={22} /><strong>Reading your {activePage === "betting" ? "betting file" : "statement"}…</strong><span>Files are processed in this browser.</span></div></div>}
+      {pendingImport && importPreview && (
+        <ImportPreviewModal
+          preview={importPreview}
+          mode={importMode}
+          month={importMonth}
+          customRange={importCustomRange}
+          files={pendingImport.files}
+          warnings={pendingImport.warnings}
+          diagnosticsAvailable={pendingImport.diagnosticsAvailable}
+          comparisonNote={!comparisonAvailable
+            ? cloud.status.mode === "cloud"
+              ? "Comparison is incomplete while cloud sync is loading or unavailable; counts are withheld rather than estimated."
+              : "Comparison is incomplete until the transaction history has finished loading."
+            : cloud.status.mode === "local"
+              ? "Comparison uses the transaction history available in this browser only; no connected cloud history is included."
+              : "Comparison uses the currently loaded transaction history."}
+          pdfExtraction={pendingImport.files.some((file) => file.name.toLowerCase().endsWith(".pdf"))}
+          onModeChange={setImportMode}
+          onMonthChange={setImportMonth}
+          onCustomRangeChange={setImportCustomRange}
+          onCancel={() => setPendingImport(null)}
+          onConfirm={confirmImport}
+          canConfirm={importPreview.rangeValid && importPreview.transactionsInRange.length > 0}
+        />
+      )}
       {toast && <div className="toast" role="status"><Check size={16} />{toast}</div>}
       {showPrivacy && <PrivacyModal cloud={cloudActive ? cloud.status.email : null} onClose={() => setShowPrivacy(false)} />}
       {showAddTransaction && <AddTransactionModal currency={currency} sources={sources} onClose={() => setShowAddTransaction(false)} onSave={addManualTransaction} />}
+    </div>
+  );
+}
+
+function ImportPreviewModal({
+  preview,
+  mode,
+  month,
+  customRange,
+  files,
+  warnings,
+  diagnosticsAvailable,
+  comparisonNote,
+  pdfExtraction,
+  onModeChange,
+  onMonthChange,
+  onCustomRangeChange,
+  onCancel,
+  onConfirm,
+  canConfirm,
+}: {
+  preview: ImportPreview;
+  mode: ImportMode;
+  month: string;
+  customRange: ImportDateRange;
+  files: File[];
+  warnings: string[];
+  diagnosticsAvailable: boolean;
+  comparisonNote: string;
+  pdfExtraction: boolean;
+  onModeChange: (mode: ImportMode) => void;
+  onMonthChange: (month: string) => void;
+  onCustomRangeChange: (range: ImportDateRange) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+  canConfirm: boolean;
+}) {
+  const dateLabel = (date: string | null) => date ? formatDate(date) : "Not detected";
+  const rangeLabel = preview.range
+    ? `${preview.range.start ? dateLabel(preview.range.start) : "No start boundary"} – ${preview.range.end ? dateLabel(preview.range.end) : "No end boundary"}`
+    : "Choose a valid period";
+  const modeDescriptions: Record<ImportMode, string> = {
+    "full-history": "Review all valid transactions in these files. The existing exact duplicate check will still skip rows already in your history.",
+    "specific-month": "Include only transactions in one calendar month. Valid rows outside that month stay out of the import and are counted below.",
+    "custom-range": "Include only transactions between the selected dates, inclusive. Valid rows outside that range stay out and are counted below.",
+    "new-transactions-only": "Filter confirmed exact duplicates out of the batch before confirmation. Similar-looking rows are only flagged; the other modes still skip exact duplicates through the existing importer.",
+  };
+  const totalRowsLabel = diagnosticsAvailable ? preview.scannedRows.toLocaleString("en-NG") : `${preview.scannedRows.toLocaleString("en-NG")} known`;
+
+  return (
+    <div className="modal-backdrop import-preview-backdrop">
+      <section className="privacy-modal import-preview-modal" role="dialog" aria-modal="true" aria-labelledby="import-preview-title">
+        <button className="icon-button modal-close" onClick={onCancel} aria-label="Cancel import preview"><X size={17} /></button>
+        <div className="privacy-modal-icon"><FileText size={19} /></div>
+        <h2 id="import-preview-title">Review statement import</h2>
+        <p className="import-preview-files">{files.map((file) => file.name).join(" · ")}</p>
+
+        <label className="import-mode-label">
+          Import mode
+          <select value={mode} onChange={(event) => onModeChange(event.target.value as ImportMode)}>
+            <option value="full-history">Full history</option>
+            <option value="specific-month">Specific month</option>
+            <option value="custom-range">Custom date range</option>
+            <option value="new-transactions-only">New transactions only</option>
+          </select>
+        </label>
+        <p className="import-mode-description">{modeDescriptions[mode]}</p>
+
+        {mode === "specific-month" && (
+          <label className="import-range-control">
+            Month
+            <input type="month" value={month} onChange={(event) => onMonthChange(event.target.value)} />
+          </label>
+        )}
+        {mode === "custom-range" && (
+          <div className="import-range-fields">
+            <label>From<input type="date" value={customRange.start ?? ""} max={customRange.end ?? undefined} onChange={(event) => onCustomRangeChange({ ...customRange, start: event.target.value || null })} /></label>
+            <label>To<input type="date" value={customRange.end ?? ""} min={customRange.start ?? undefined} onChange={(event) => onCustomRangeChange({ ...customRange, end: event.target.value || null })} /></label>
+          </div>
+        )}
+
+        <div className="import-preview-range">
+          <strong>Selected date boundaries</strong>
+          <span>{rangeLabel}</span>
+          {!preview.rangeValid && <span className="import-preview-error">Choose a valid month or both custom dates with the start on or before the end.</span>}
+        </div>
+
+        <div className="import-preview-grid">
+          <div><span>Detected earliest date</span><strong>{dateLabel(preview.timeline.earliest)}</strong></div>
+          <div><span>Detected latest date</span><strong>{dateLabel(preview.timeline.latest)}</strong></div>
+          <div><span>Rows scanned</span><strong>{totalRowsLabel}</strong></div>
+          <div><span>Valid transaction rows</span><strong>{preview.validRows.toLocaleString("en-NG")}</strong></div>
+          <div><span>Invalid or incomplete rows</span><strong>{preview.invalidRows.toLocaleString("en-NG")}</strong></div>
+          <div><span>Valid rows in selected period</span><strong>{preview.transactionsInRange.length.toLocaleString("en-NG")}</strong></div>
+          <div><span>Rows sent to the confirmation path</span><strong>{preview.transactionsForConfirmation.length.toLocaleString("en-NG")}</strong></div>
+          <div><span>Valid rows outside selected period</span><strong>{preview.transactionsOutsideRange.toLocaleString("en-NG")}</strong></div>
+          <div><span>Confirmed exact duplicates</span><strong>{preview.confirmedDuplicates === null ? "Unavailable" : preview.confirmedDuplicates.toLocaleString("en-NG")}</strong></div>
+          <div><span>Potential duplicates</span><strong>{preview.potentialDuplicates === null ? "Unavailable" : preview.potentialDuplicates.toLocaleString("en-NG")}</strong></div>
+          <div><span>Potential changes to existing rows</span><strong>{preview.potentialChanges === null ? "Unavailable" : preview.potentialChanges.toLocaleString("en-NG")}</strong></div>
+          <div><span>Expected additions</span><strong>{preview.expectedAdds === null ? "Unavailable" : preview.expectedAdds.toLocaleString("en-NG")}</strong></div>
+          <div><span>Known existing imported rows within detected dates</span><strong>{preview.existingRowsInDetectedPeriod === null ? "Unavailable" : preview.existingRowsInDetectedPeriod.toLocaleString("en-NG")}</strong></div>
+        </div>
+
+        <div className="import-preview-samples">
+          <strong>Timeline sampling</strong>
+          <span>First {preview.timeline.firstSample.count} valid rows: {dateLabel(preview.timeline.firstSample.earliest)} – {dateLabel(preview.timeline.firstSample.latest)}</span>
+          <span>Last {preview.timeline.lastSample.count} valid rows: {dateLabel(preview.timeline.lastSample.earliest)} – {dateLabel(preview.timeline.lastSample.latest)}</span>
+          <span>The actual detected bounds scan all {preview.timeline.validRows.toLocaleString("en-NG")} valid rows, regardless of file order.</span>
+        </div>
+
+        <div className="import-preview-notes">
+          <strong>Comparison limits</strong>
+          <p>{comparisonNote}</p>
+          <p>Statement-period metadata is not stored. The overlap check uses existing imported transaction dates within the detected range; it cannot confirm which original statement files covered those dates.</p>
+          <p>Potential duplicates are date, amount, and description matches that did not meet the exact duplicate rule; they are not skipped. Existing import logic does not update existing transaction records.</p>
+          <p>Nothing is committed during preview. Confirm uses the existing transaction import path and may sync transactions to D1. Source statement files may be saved separately to R2 when enabled; transactions are not stored in R2.</p>
+          {preview.missingDateRows > 0 && <p>{preview.missingDateRows.toLocaleString("en-NG")} row(s) had no date; {preview.invalidDateRows.toLocaleString("en-NG")} row(s) had an invalid date.</p>}
+          {preview.ambiguousDateRows > 0 && <p>{preview.ambiguousDateRows.toLocaleString("en-NG")} ambiguous numeric date(s) use the existing day-first interpretation. Check these against the statement if it uses month-first dates.</p>}
+          {preview.timeline.invalidTransactionDates > 0 && <p>{preview.timeline.invalidTransactionDates} parsed transaction(s) had an invalid normalized date and were excluded from timeline bounds.</p>}
+          {!diagnosticsAvailable && <p>Some selected files did not provide row diagnostics; scanned and invalid-row totals may be incomplete.</p>}
+          {pdfExtraction && <p>PDF counts reflect the existing selectable-text table parser; wrapped or missing-date PDF lines can be merged into neighboring descriptions.</p>}
+          {preview.overlapSources.length > 0 && (
+            <p>Existing dates in the detected range: {preview.overlapSources.map((item) => `${item.source} (${item.count}, ${dateLabel(item.earliest)}–${dateLabel(item.latest)})`).join("; ")}.</p>
+          )}
+        </div>
+
+        {warnings.length > 0 && (
+          <div className="import-preview-warnings">
+            <strong>Parser notes</strong>
+            {warnings.map((warning, index) => <p key={`${index}-${warning}`}>{warning}</p>)}
+          </div>
+        )}
+        <div className="import-preview-actions">
+          <button className="button button-secondary" onClick={onCancel}>Cancel</button>
+          <button className="button button-primary" onClick={onConfirm} disabled={!canConfirm}>Confirm import</button>
+        </div>
+      </section>
     </div>
   );
 }

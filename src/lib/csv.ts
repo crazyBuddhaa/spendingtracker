@@ -1,4 +1,4 @@
-import type { Direction, ImportResult, Transaction } from "../types.ts";
+import type { Direction, ImportDiagnostics, ImportResult, Transaction } from "../types.ts";
 import { categorise, isOwnAccountTransfer, isWalletProductMovement } from "./categorise.ts";
 
 export { categorise } from "./categorise.ts";
@@ -183,6 +183,11 @@ function parseDate(value: string): string | null {
   return null;
 }
 
+function isAmbiguousNumericDate(value: string): boolean {
+  const match = value.trim().match(/^(\d{1,2})[/. -](\d{1,2})[/. -](\d{2,4})/);
+  return Boolean(match && Number(match[1]) <= 12 && Number(match[2]) <= 12);
+}
+
 function validDate(year: number, month: number, day: number): string | null {
   const date = new Date(Date.UTC(year, month - 1, day));
   if (
@@ -256,7 +261,20 @@ function stableId(date: string, description: string, amount: number, source: str
 export function parseTransactionsCsv(text: string, fileName: string, options: CsvParseOptions = {}): ImportResult {
   const rows = readCsvRecords(text);
   if (rows.length < 2) {
-    return { transactions: [], skipped: 0, warnings: ["The CSV needs a header row and at least one transaction."] };
+    return {
+      transactions: [],
+      skipped: 0,
+      warnings: ["The CSV needs a header row and at least one transaction."],
+      diagnostics: {
+        scannedRows: 0,
+        validRows: 0,
+        invalidRows: 0,
+        missingDateRows: 0,
+        invalidDateRows: 0,
+        ambiguousDateRows: 0,
+        headerDetected: rows.length > 0,
+      },
+    };
   }
 
   const headerIndex = rows
@@ -270,12 +288,22 @@ export function parseTransactionsCsv(text: string, fileName: string, options: Cs
       );
     });
   if (headerIndex < 0) {
+    const scannedRows = Math.max(0, rows.length - 1);
     return {
       transactions: [],
-      skipped: rows.length - 1,
+      skipped: scannedRows,
       warnings: [
         "Couldn't identify the required columns. Include a date, description, and amount, debit, or credit column.",
       ],
+      diagnostics: {
+        scannedRows,
+        validRows: 0,
+        invalidRows: scannedRows,
+        missingDateRows: 0,
+        invalidDateRows: 0,
+        ambiguousDateRows: 0,
+        headerDetected: false,
+      },
     };
   }
 
@@ -284,12 +312,17 @@ export function parseTransactionsCsv(text: string, fileName: string, options: Cs
   const warnings: string[] = [];
   const transactions: Transaction[] = [];
   let skipped = 0;
+  let scannedRows = 0;
+  let missingDateRows = 0;
+  let invalidDateRows = 0;
+  let ambiguousDateRows = 0;
   const hasSignedAmount = map.amount >= 0;
   let ambiguousPositiveRows = 0;
 
   for (let rowIndex = headerIndex + 1; rowIndex < rows.length; rowIndex += 1) {
     const row = rows[rowIndex];
-    const date = parseDate(row[map.date] ?? "");
+    const dateText = row[map.date] ?? "";
+    const date = parseDate(dateText);
     const description = (row[map.description] ?? "").trim();
     const debitText = map.debit >= 0 ? row[map.debit] ?? "" : "";
     const creditText = map.credit >= 0 ? row[map.credit] ?? "" : "";
@@ -298,6 +331,10 @@ export function parseTransactionsCsv(text: string, fileName: string, options: Cs
     const credit = parseAmount(creditText);
     const rawAmount = map.amount >= 0 ? parseAmount(amountText) : null;
     const type = map.type >= 0 ? row[map.type] ?? "" : "";
+    scannedRows += 1;
+    if (!dateText.trim()) missingDateRows += 1;
+    else if (!date) invalidDateRows += 1;
+    if (date && isAmbiguousNumericDate(dateText)) ambiguousDateRows += 1;
 
     if (!date || !description) {
       skipped += 1;
@@ -359,7 +396,21 @@ export function parseTransactionsCsv(text: string, fileName: string, options: Cs
     );
   }
   if (skipped > 0) warnings.push(`${skipped} row${skipped === 1 ? "" : "s"} skipped because date, description, or amount was missing or invalid.`);
-  return { transactions, skipped, warnings };
+  if (ambiguousDateRows > 0) {
+    warnings.push(
+      `${ambiguousDateRows} numeric date${ambiguousDateRows === 1 ? "" : "s"} could also be read month-first; they were interpreted day-first using SpendWise's existing date convention.`,
+    );
+  }
+  const diagnostics: ImportDiagnostics = {
+    scannedRows,
+    validRows: transactions.length,
+    invalidRows: skipped,
+    missingDateRows,
+    invalidDateRows,
+    ambiguousDateRows,
+    headerDetected: true,
+  };
+  return { transactions, skipped, warnings, diagnostics };
 }
 
 export function transactionsToCsv(transactions: Transaction[]): string {

@@ -179,6 +179,15 @@ export function parsePdfPages(
           ? "Couldn't identify a transaction table in this PDF. It needs selectable text and columns for date, description, and amount, debit, or credit."
           : "This PDF has no selectable text. Scanned/image-only statements need OCR; try exporting the statement as CSV or Excel.",
       ],
+      diagnostics: {
+        scannedRows: 0,
+        validRows: 0,
+        invalidRows: 0,
+        missingDateRows: 0,
+        invalidDateRows: 0,
+        ambiguousDateRows: 0,
+        headerDetected: false,
+      },
     };
   }
 
