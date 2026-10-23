@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { CalendarClock, Car, CircleHelp, Clock3, Pencil, Route, Search, Tag, Trash2, Users, X } from "lucide-react";
-import { findRecurringPayments } from "./lib/analytics";
+import { findRecurringPayments, findRecurringTransportPayments } from "./lib/analytics";
 import { formatCurrency, formatDate } from "./lib/format";
 import {
   detectMultiRecipientJourneys,
@@ -40,6 +40,7 @@ export default function RecipientProfilesPage({
   const [editing, setEditing] = useState<RecipientSummary | null>(null);
   const [displayName, setDisplayName] = useState("");
   const [aliases, setAliases] = useState("");
+  const [relationship, setRelationship] = useState("");
   const [category, setCategory] = useState("");
   const [note, setNote] = useState("");
 
@@ -49,9 +50,11 @@ export default function RecipientProfilesPage({
   const timePatterns = useMemo(() => detectTimeBasedRecipientPatterns(transactions, profiles), [transactions, profiles]);
   const journeyPairs = useMemo(() => detectPossibleJourneyPairs(transactions, profiles), [transactions, profiles]);
   const multiRecipientJourneys = useMemo(() => detectMultiRecipientJourneys(transactions, profiles), [transactions, profiles]);
+  const recurringTransportPayments = useMemo(() => findRecurringTransportPayments(transactions, profiles), [transactions, profiles]);
+  const monthlyTransportEstimate = recurringTransportPayments.reduce((sum, item) => sum + item.monthlyCost, 0);
   const filtered = directory.filter((item) =>
     (kindFilter === "all" || item.kind === kindFilter) &&
-    (!query.trim() || `${item.name} ${item.aliases.join(" ")} ${item.note ?? ""}`.toLowerCase().includes(query.trim().toLowerCase())));
+    (!query.trim() || `${item.name} ${item.aliases.join(" ")} ${item.relationship ?? ""} ${item.note ?? ""}`.toLowerCase().includes(query.trim().toLowerCase())));
   const profileCount = profiles.length;
   const transportFareCount = fareRanges.length;
 
@@ -60,6 +63,7 @@ export default function RecipientProfilesPage({
     setEditing(summary);
     setDisplayName(stored?.name ?? summary.name);
     setAliases((stored?.aliases ?? summary.aliases).join("\n"));
+    setRelationship(stored?.relationship ?? "");
     setCategory(stored?.category ?? "");
     setNote(stored?.note ?? "");
   };
@@ -75,6 +79,7 @@ export default function RecipientProfilesPage({
         ...aliases.split(/[\n,;]+/).map((alias) => alias.trim()).filter(Boolean),
         ...(editing.name.trim().toLowerCase() !== displayName.trim().toLowerCase() ? [editing.name] : []),
       ],
+      relationship: relationship.trim() || undefined,
       category: category || undefined,
       note: note.trim() || undefined,
     }])[0];
@@ -98,6 +103,7 @@ export default function RecipientProfilesPage({
         <div><span>MANAGED PROFILES</span><strong>{profileCount.toLocaleString("en-NG")}</strong></div>
         <div><span>REGULAR PAYMENTS</span><strong>{recurringPayments.length.toLocaleString("en-NG")}</strong></div>
         <div><span>TRANSPORT FARE BANDS</span><strong>{transportFareCount.toLocaleString("en-NG")}</strong></div>
+        <div><span>RECURRING TRANSPORT / MONTH</span><strong>{formatCurrency(monthlyTransportEstimate, currency, true)}</strong></div>
       </div>
 
       <section className="panel recipient-directory">
@@ -123,6 +129,7 @@ export default function RecipientProfilesPage({
                         <strong>{configured?.name ?? item.name}</strong>
                         <small title={configured?.note}>
                           {[
+                            configured?.relationship ? `Relationship · ${configured.relationship}` : null,
                             configured?.aliases.length ? `Also: ${configured.aliases.join(", ")}` : null,
                             configured?.note ? `Note: ${configured.note}` : null,
                             configured?.category ? `Profile category · ${configured.category}` : !configured && item.category ? `Common category · ${item.category}` : null,
@@ -192,6 +199,34 @@ export default function RecipientProfilesPage({
         ) : (
           <div className="counterparty-empty"><CircleHelp size={15} /> No payee has three identified Transport payments yet. Categorise ride payments as Transport to include them.</div>
         )}
+      </section>
+
+      <section className="panel recipient-insight-panel">
+        <div className="panel-heading">
+          <div><div className="panel-kicker">RECURRING TRANSPORT COST</div><h2>Estimated monthly transport</h2></div>
+          <span className="heading-note"><Car size={14} /> {recurringTransportPayments.length} repeat payees</span>
+        </div>
+        <div className="fee-total">
+          <strong>{formatCurrency(monthlyTransportEstimate, currency)}</strong>
+          <span>Estimated per month from steady Transport payments</span>
+        </div>
+        <p className="panel-note">Only payees with at least three dated Transport payments on a weekly or monthly rhythm and reasonably similar amounts are included. This is a historical estimate, not a forecast.</p>
+        {recurringTransportPayments.length ? (
+          <div className="simple-table-wrap">
+            <table className="simple-table">
+              <thead><tr><th>PAYEE</th><th>CADENCE</th><th>PAYMENTS</th><th>USUAL FARE</th><th>MONTHLY ESTIMATE</th></tr></thead>
+              <tbody>{recurringTransportPayments.map((item) => (
+                <tr key={item.key}>
+                  <td><strong>{item.name}</strong></td>
+                  <td>{item.cadence === "weekly" ? "Weekly" : "Monthly"}</td>
+                  <td>{item.occurrences}</td>
+                  <td>{formatCurrency(item.typicalAmount, currency)}</td>
+                  <td>{formatCurrency(item.monthlyCost, currency)}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        ) : <div className="counterparty-empty"><CircleHelp size={15} /> No recurring Transport cost qualifies yet. Categorise payments as Transport and build at least three dates with a steady cadence and similar amounts.</div>}
       </section>
 
       <section className="panel recipient-insight-panel">
@@ -275,6 +310,7 @@ export default function RecipientProfilesPage({
             <form className="savings-form" onSubmit={save}>
               <label>Preferred name<input autoFocus required maxLength={100} value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
               <label>Other names from statements<textarea rows={3} maxLength={1200} value={aliases} onChange={(event) => setAliases(event.target.value)} placeholder={"One per line, e.g.\nJANE A DOE\nJANE DOE - PALMPAY"} /></label>
+              <label>Relationship or group<input list="recipient-relationship-options" maxLength={60} value={relationship} onChange={(event) => setRelationship(event.target.value)} placeholder="Family, landlord, work…" /><datalist id="recipient-relationship-options"><option value="Family" /><option value="Friend" /><option value="Household" /><option value="Landlord" /><option value="Employer" /><option value="Business" /><option value="Service provider" /></datalist></label>
               <label>Automatic category<select value={category} onChange={(event) => setCategory(event.target.value)}><option value="">Use existing rules and history</option>{categoryList.map((item) => <option key={item}>{item}</option>)}</select></label>
               <label>Private note<textarea rows={2} maxLength={280} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Optional reminder about this profile" /></label>
               <div className="recipient-profile-actions">

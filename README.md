@@ -36,7 +36,7 @@ Transfers to or from your own name (in any order, at least two name parts, inclu
 ## Working with transactions
 
 - **Edit categories** inline. When other transactions look the same, Spendwise offers to apply the change to all of them and remember it as a **rule** for future imports. Manage rules under **Data & rules**.
-- **Recipient profiles** join variations in names from bank statements. Add aliases, a preferred display name, a private note, and an automatic category; locked manual categories are never overwritten.
+- **Recipient profiles** join variations in names from bank statements. Add aliases, a preferred display name, a relationship/group label, a private note, and an automatic category; locked manual categories are never overwritten.
 - **Exclude/include** any transaction from totals, **delete** it, or **add** a manual entry (cash spending or cash sales).
 - **Periods**: last 30/90 days, this month, last month, last 12 months, this year, all time, or custom dates. When a period has no data the app shows where your history starts and ends.
 - **Re-categorise history** (Data & rules) re-runs the latest categorisation over transactions imported with an older version, without touching categories you picked by hand.
@@ -49,7 +49,9 @@ Transfers to or from your own name (in any order, at least two name parts, inclu
 - **Budgets** per category with month-by-month tracking and a projection for the month in progress; suggested limits use your average over the last three full months.
 - **Regular payments** detected from weekly or monthly payments to the same payee with similar amounts.
 - **Typical fare ranges** show the 20th–80th percentile of identified Transport payments per payee after three transactions. Statements do not include trip routes, so this is a personal historical range rather than a route-price estimate.
+- **Recurring Transport estimates** project a monthly amount only for named payees with at least three similar Transport payments on a steady weekly or monthly cadence.
 - **Recipient timing patterns** show repeated outgoing transfers around a similar time of day. Possible recipient pairs and multi-recipient sequences are shown only when the same ordered pattern recurs on at least two dates; these are timing clues, not evidence of a journey or location.
+- **Hourly spending, weekday/hour heatmaps, and a spending timeline** use timed expense rows in the selected period. Rows without a valid statement time are excluded from the hour charts and shown as missing coverage; confirmed internal transfers are excluded.
 
 ## Backups
 

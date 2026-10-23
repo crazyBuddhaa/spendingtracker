@@ -53,6 +53,7 @@ export interface RecipientProfile {
   kind: TransactionPartyKind;
   name: string;
   aliases: string[];
+  relationship?: string;
   category?: Category;
   note?: string;
 }

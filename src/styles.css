@@ -799,6 +799,40 @@ button.category-row:disabled { cursor: default; }
 .weekday-chart small { color: #929d95; font-size: 9px; }
 .report-table td:not(:first-child),.report-table th:not(:first-child) { text-align: right; }
 @media (max-width: 1150px) { .extras-grid { grid-template-columns: minmax(0,1fr); } }
+.spending-time-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; margin: 14px 0; }
+.hourly-chart { display: grid; grid-template-columns: repeat(24,minmax(0,1fr)); align-items: end; gap: 3px; height: 132px; margin: 14px 2px 8px; }
+.hourly-chart-bar { display: grid; grid-template-rows: 1fr 12px; align-items: end; justify-items: center; gap: 4px; height: 100%; min-width: 0; }
+.hourly-chart-bar span { width: 100%; max-width: 13px; align-self: end; border-radius: 4px 4px 2px 2px; background: #6eaa82; }
+.hourly-chart-bar small { color: #98a29b; font-size: 7px; }
+.time-coverage-note { padding-top: 9px; border-top: 1px solid #eef0ed; color: #849087; font-size: 9px; line-height: 1.55; }
+.time-coverage-note strong { color: #425449; }
+.heatmap-scroll { overflow-x: auto; padding: 4px 0; }
+.spending-heatmap { display: grid; grid-template-columns: 1fr; gap: 4px; min-width: 510px; }
+.heatmap-header,.heatmap-row { display: grid; grid-template-columns: 34px repeat(24,minmax(13px,1fr)); align-items: center; gap: 3px; }
+.heatmap-header small { color: #9aa49d; font-size: 7px; text-align: center; }
+.heatmap-row strong { color: #7e8a81; font-size: 8px; font-weight: 600; }
+.heatmap-row span { height: 13px; border-radius: 3px; }
+.heatmap-legend { display: flex; align-items: center; justify-content: flex-end; gap: 4px; margin-top: 10px; color: #929d95; font-size: 8px; }
+.heatmap-legend i { width: 12px; height: 9px; border-radius: 2px; background: #cfe2d4; }
+.heatmap-legend i:nth-of-type(2) { background: #91bd9c; }
+.heatmap-legend i:nth-of-type(3) { background: #5f9a70; }
+.heatmap-legend i:nth-of-type(4) { background: #2f7a45; }
+.spending-timeline-panel { margin-bottom: 14px; }
+.spending-timeline { position: relative; display: grid; gap: 2px; margin: 4px 0 0; padding: 0; list-style: none; }
+.spending-timeline li { min-width: 0; }
+.spending-timeline-entry { display: grid; grid-template-columns: 9px minmax(0,1fr) minmax(92px,auto) minmax(88px,auto); align-items: center; gap: 10px; width: 100%; padding: 9px 5px; border: 0; border-bottom: 1px solid #f0f2ef; border-radius: 5px; background: transparent; text-align: left; cursor: pointer; }
+.spending-timeline-entry:hover { background: #f7faf7; }
+.spending-timeline-marker { width: 7px; height: 7px; border: 2px solid #6c9b79; border-radius: 50%; }
+.spending-timeline-copy { display: grid; min-width: 0; gap: 3px; }
+.spending-timeline-copy strong { overflow: hidden; color: #3b4a41; font-size: 10px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.spending-timeline-copy small,.spending-timeline-date { color: #929d95; font-size: 8px; }
+.spending-timeline-date { white-space: nowrap; }
+.spending-timeline-amount { color: #506056; font-size: 9px; font-weight: 600; text-align: right; white-space: nowrap; }
+@media (max-width: 1150px) { .spending-time-grid { grid-template-columns: minmax(0,1fr); } }
+@media (max-width: 520px) {
+  .spending-timeline-entry { grid-template-columns: 9px minmax(0,1fr) auto; gap: 7px; }
+  .spending-timeline-date { display: none; }
+}
 
 /* Access identity, separate from local financial data */
 .access-card-actions { display: flex; flex-wrap: wrap; gap: 10px; }
@@ -877,7 +911,7 @@ a.icon-button { text-decoration: none; }
 /* Recipient identity, local aliases, and payee-level payment insights */
 .recipient-page { display: grid; gap: 14px; }
 .recipient-page .page-heading { margin-bottom: 4px; }
-.recipient-summary { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; }
+.recipient-summary { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 10px; }
 .recipient-summary > div { display: grid; gap: 7px; padding: 14px 16px; border: 1px solid #e9ece7; border-radius: 10px; background: #fff; }
 .recipient-summary span { color: #9aa39d; font-size: 8px; font-weight: 700; letter-spacing: .8px; }
 .recipient-summary strong { color: #2c3a32; font: 700 19px "Manrope", sans-serif; }
@@ -916,4 +950,5 @@ a.icon-button { text-decoration: none; }
   .recipient-fare-card { grid-template-columns: minmax(0,1fr); }
   .recipient-fare-amount { text-align: left; }
 }
+@media (max-width: 1050px) and (min-width: 761px) { .recipient-summary { grid-template-columns: repeat(3,minmax(0,1fr)); } }
 @media (max-width: 420px) { .recipient-summary { grid-template-columns: minmax(0,1fr); } }

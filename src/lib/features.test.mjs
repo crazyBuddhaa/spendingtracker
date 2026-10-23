@@ -11,6 +11,7 @@ import {
   getMonthlyReport,
   getSpendingRhythm,
   getTopCounterparties,
+  findRecurringTransportPayments,
   suggestBudget,
 } from "./analytics.ts";
 import { parseStoredTransactions, serializeTransactions } from "./transactionStorage.ts";
@@ -344,6 +345,13 @@ describe("recipient profiles and transport fare ranges", () => {
     assert.equal(directory[0].sent, 5000);
   });
 
+  it("normalises relationship labels and keeps them visible in the recipient directory", () => {
+    const profiles = normaliseRecipientProfiles([{ ...profile, relationship: "  Landlord  " }]);
+    assert.equal(profiles[0].relationship, "Landlord");
+    const [summary] = getRecipientDirectory([], profiles);
+    assert.equal(summary.relationship, "Landlord");
+  });
+
   it("uses a saved recipient category for aliases, without overriding hand-picked categories or explicit rules", () => {
     const aliasTransaction = tx({ id: "alias", description: "Transfer to JANE A DOE | GTBank | 1", category: "Transfers" });
     const locked = tx({ id: "locked-profile", description: "Transfer to JANE A DOE | GTBank | 2", category: "Health", categoryLocked: true });
@@ -396,6 +404,22 @@ describe("recipient profiles and transport fare ranges", () => {
     assert.equal(ranges[0].count, 3);
     assert.equal(ranges[0].medianAmount, 3000);
     assert.ok(ranges[0].upperAmount < 40000);
+  });
+
+  it("estimates recurring transport costs from transport rows only", () => {
+    const history = [
+      tx({ id: "t1", date: "2026-06-01", description: "Transfer to ADA DRIVER | Bank | 1", category: "Transport", amount: 1000 }),
+      tx({ id: "t2", date: "2026-07-01", description: "Transfer to ADA DRIVER | Bank | 2", category: "Transport", amount: 1200 }),
+      tx({ id: "t3", date: "2026-08-01", description: "Transfer to ADA DRIVER | Bank | 3", category: "Transport", amount: 1100 }),
+      tx({ id: "other-category", date: "2026-09-01", description: "Transfer to ADA DRIVER | Bank | 4", category: "Shopping", amount: 50000 }),
+      tx({ id: "internal", date: "2026-09-01", description: "Transfer to ADA DRIVER | Bank | 5", category: "Transport", amount: 50000, internalTransfer: true }),
+    ];
+    const [estimate] = findRecurringTransportPayments(history);
+    assert.equal(estimate.name, "Ada Driver");
+    assert.equal(estimate.occurrences, 3);
+    assert.equal(estimate.typicalAmount, 1100);
+    assert.equal(estimate.monthlyCost, 1100);
+    assert.equal(estimate.category, "Transport");
   });
 });
 
@@ -505,7 +529,7 @@ describe("storage and backups", () => {
       bets: [],
       rules: [{ id: "r", pattern: "abc", category: "Business", createdAt: "2026-10-19" }],
       budgets: [{ category: "Betting", monthlyLimit: 5000 }],
-      recipientProfiles: [{ id: "recipient:a", kind: "recipient", name: "Ada", aliases: ["ADA O."], category: "Rent & housing", note: "Landlord" }],
+      recipientProfiles: [{ id: "recipient:a", kind: "recipient", name: "Ada", aliases: ["ADA O."], relationship: "Family", category: "Rent & housing", note: "Landlord" }],
     };
     const restored = readBackup(createBackup(data));
     assert.deepEqual(restored.transactions, data.transactions);
