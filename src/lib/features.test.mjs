@@ -15,7 +15,7 @@ import {
 } from "./analytics.ts";
 import { parseStoredTransactions, serializeTransactions } from "./transactionStorage.ts";
 import { buildImportPreview } from "./importPreview.ts";
-import { classifyTransaction, getSimilarTransactionCounts } from "./transactionIntelligence.ts";
+import { buildClassificationHistory, classifyTransaction, classifyTransactions, getSimilarTransactionCounts } from "./transactionIntelligence.ts";
 import { createBackup, normaliseBudgets, normaliseRules, readBackup } from "./backup.ts";
 
 const tx = (overrides) => ({
@@ -187,8 +187,8 @@ describe("transaction intelligence", () => {
     const second = tx({ id: "two", description: "Card payment at SHOPRITE | REF 98765432109" });
     const classification = classifyTransaction(first, rules);
     assert.equal(classification.category, "Food & groceries");
-    assert.equal(classification.source, "personal-rule");
-    assert.equal(classification.confidence, 0.98);
+    assert.equal(classification.source, "custom-rule");
+    assert.equal(classification.confidence, 0.99);
     const counts = getSimilarTransactionCounts([first, second]);
     assert.equal(counts.get("one"), 2);
     assert.equal(counts.get("two"), 2);
@@ -212,6 +212,44 @@ describe("transaction intelligence", () => {
     });
     assert.equal(result.confirmedDuplicates, 0);
     assert.equal(result.potentialDuplicates, 1);
+  });
+});
+
+describe("custom classification rules and confidence scoring", () => {
+  it("supports exact, starts-with, merchant, and counterparty rule matches", () => {
+    assert.equal(ruleMatches({ pattern: "Transfer to Jane Doe", matchType: "exact" }, tx({ description: "Transfer to Jane Doe | UBA | 123456789" })), true);
+    assert.equal(ruleMatches({ pattern: "transfer to jane", matchType: "startsWith" }, tx({ description: "Transfer to Jane Doe | UBA | 123456789" })), true);
+    assert.equal(ruleMatches({ pattern: "Shoprite", matchType: "merchant" }, tx({ description: "POS purchase at Shoprite | REF 123456789" })), true);
+    assert.equal(ruleMatches({ pattern: "Jane", matchType: "counterparty" }, tx({ description: "Transfer from Jane Doe | UBA | 123456789", direction: "income" })), true);
+  });
+
+  it("scores classifications by evidence and learns from repeated hand-categorized history", () => {
+    const rule = { id: "merchant-rule", pattern: "Shoprite", matchType: "merchant", category: "Food & groceries", createdAt: "2026-10-23" };
+    const current = tx({ id: "current", description: "POS purchase at Shoprite | REF 7654321" });
+    const ruled = classifyTransaction(current, [rule]);
+    assert.equal(ruled.category, "Food & groceries");
+    assert.equal(ruled.source, "custom-rule");
+    assert.equal(ruled.confidence, 0.99);
+
+    const history = buildClassificationHistory([
+      tx({ id: "old-1", description: "POS purchase at Shoprite | REF 1111111", category: "Food & groceries", categoryLocked: true }),
+      tx({ id: "old-2", description: "Card payment at Shoprite | REF 2222222", category: "Food & groceries", categoryLocked: true }),
+    ]);
+    const learned = classifyTransaction(current, [], history);
+    assert.equal(learned.category, "Food & groceries");
+    assert.equal(learned.source, "merchant-history");
+    assert.ok(learned.confidence > 0.9);
+    assert.match(learned.reason, /2 of 2/);
+  });
+
+  it("applies custom rules to future imports and preserves legacy rules in backups", () => {
+    const custom = { id: "m1", pattern: "Shoprite", matchType: "merchant", category: "Food & groceries", createdAt: "2026-10-23" };
+    const [classified] = classifyTransactions([tx({ description: "POS purchase at Shoprite | REF 1234567" })], [custom]);
+    assert.equal(classified.category, "Food & groceries");
+    const [legacy] = normaliseRules([{ id: "legacy", pattern: "shoprite", category: "Shopping", createdAt: "2026-10-19" }]);
+    assert.equal(legacy.matchType, undefined);
+    const [restored] = normaliseRules([custom]);
+    assert.equal(restored.matchType, "merchant");
   });
 });
 

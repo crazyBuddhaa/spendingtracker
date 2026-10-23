@@ -758,9 +758,9 @@ button.category-row:disabled { cursor: default; }
 .data-card p,.danger-panel p { margin: 0; color: #7f8a83; font-size: 11px; line-height: 1.55; }
 .data-card-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 9px; color: #2f7556; background: #edf5f0; }
 .data-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
-.rule-form { display: grid; grid-template-columns: minmax(180px,1.6fr) minmax(130px,1fr) minmax(130px,1fr); align-items: end; gap: 10px; margin-bottom: 14px; }
+.rule-form { display: grid; grid-template-columns: minmax(145px,1fr) minmax(160px,1.4fr) minmax(130px,1fr) minmax(130px,1fr); align-items: end; gap: 10px; margin-bottom: 14px; }
 .rule-form label { display: grid; gap: 5px; color: #67736b; font-size: 10px; font-weight: 600; }
-.rule-form .rule-check { display: flex; align-items: center; gap: 7px; grid-column: 1 / 3; font-weight: 500; }
+.rule-form .rule-check { display: flex; align-items: center; gap: 7px; grid-column: 1 / 4; font-weight: 500; }
 .rule-form button { justify-self: end; }
 .danger-panel { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 18px; border-color: #f0dcd8; }
 @media (max-width: 760px) {
@@ -813,3 +813,8 @@ a.icon-button { text-decoration: none; }
 
 /* Transaction intelligence is derived locally; the original bank narration stays visible. */
 .transaction-intelligence-label { color: #6f7d73 !important; font-size: 8px !important; }
+
+.classification-confidence { width: fit-content; border-radius: 999px; padding: 2px 6px; font-size: 9px !important; font-weight: 600; white-space: nowrap; }
+.classification-confidence--high { color: #32724d !important; background: #edf6ef; }
+.classification-confidence--medium { color: #8b6b2d !important; background: #fbf5e8; }
+.classification-confidence--low { color: #97564c !important; background: #fbefed; }

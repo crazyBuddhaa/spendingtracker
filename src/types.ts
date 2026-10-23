@@ -22,6 +22,8 @@ export const categoryList = [
 
 export type Category = typeof categoryList[number];
 
+export type CategoryRuleMatchType = "contains" | "startsWith" | "exact" | "merchant" | "counterparty";
+
 export interface Transaction {
   id: string;
   date: string;
@@ -49,6 +51,8 @@ export interface CategoryRule {
   category: Category;
   /** Restrict the rule to money in or money out. */
   direction?: Direction;
+  /** How to compare the pattern with transaction descriptions or recognized parties. Omitted means legacy contains matching. */
+  matchType?: CategoryRuleMatchType;
   /** Also exclude matching transactions from income/spending totals. */
   markInternal?: boolean;
   createdAt: string;

@@ -30,6 +30,9 @@ export function normaliseRules(value: unknown): CategoryRule[] {
       category: rule.category as Category,
       direction: rule.direction === "income" || rule.direction === "expense" ? rule.direction : undefined,
       markInternal: rule.markInternal === true || undefined,
+      ...(rule.matchType === "contains" || rule.matchType === "startsWith" || rule.matchType === "exact" || rule.matchType === "merchant" || rule.matchType === "counterparty"
+        ? { matchType: rule.matchType }
+        : {}),
       createdAt: typeof rule.createdAt === "string" ? rule.createdAt : "",
     }];
   });
