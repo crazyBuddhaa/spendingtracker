@@ -16,6 +16,7 @@ import {
 import { parseStoredTransactions, serializeTransactions } from "./transactionStorage.ts";
 import { buildImportPreview } from "./importPreview.ts";
 import { buildClassificationHistory, classifyTransaction, classifyTransactions, getSimilarTransactionCounts } from "./transactionIntelligence.ts";
+import { detectRecurringRecipients, getClassificationReviewQueue, reclassifyHistoricalTransactions } from "./transactionReview.ts";
 import { createBackup, normaliseBudgets, normaliseRules, readBackup } from "./backup.ts";
 
 const tx = (overrides) => ({
@@ -200,6 +201,65 @@ describe("transaction intelligence", () => {
     assert.equal(result.confidence < 0.5, true);
   });
 
+  it("queues weak suggestions and leaves hand-picked transactions out of the queue", () => {
+    const weak = tx({ id: "weak", description: "Unrecognised statement narration" });
+    const locked = tx({ id: "locked", description: "Unrecognised statement narration", categoryLocked: true });
+    const queue = getClassificationReviewQueue([weak, locked]);
+    assert.deepEqual(queue.map(({ transaction }) => transaction.id), ["weak"]);
+    assert.equal(queue[0].classification.confidence < 0.6, true);
+  });
+
+  it("learns from a rejected suggestion for later transactions to the same payee", () => {
+    const rejected = tx({
+      id: "corrected",
+      description: "Mobile Data | 8140000000 | MTN",
+      category: "Shopping",
+      categoryLocked: true,
+      rejectedSuggestion: "Airtime & data",
+    });
+    const history = buildClassificationHistory([rejected]);
+    const learned = classifyTransaction(tx({
+      id: "future",
+      description: "Mobile Data | 8140000000 | MTN",
+      category: "Airtime & data",
+    }), [], history);
+    assert.equal(learned.category, "Shopping");
+    assert.equal(learned.source, "merchant-history");
+    assert.match(learned.reason, /rejected Airtime & data/);
+  });
+
+  it("reclassifies a historical date window while protecting locked categories", () => {
+    const inWindow = tx({ id: "in", date: "2026-02-01", description: "Mobile Data | 8140000000 | MTN", category: "Other" });
+    const outOfWindow = tx({ id: "out", date: "2026-03-01", description: "Mobile Data | 8140000000 | MTN", category: "Other" });
+    const locked = tx({ id: "locked", date: "2026-02-10", description: "Mobile Data | 8140000000 | MTN", category: "Shopping", categoryLocked: true });
+    const result = reclassifyHistoricalTransactions([inWindow, outOfWindow, locked], [], buildClassificationHistory([]), {
+      start: "2026-02-01",
+      end: "2026-02-28",
+    });
+    assert.equal(result.eligible, 1);
+    assert.equal(result.changed, 1);
+    assert.equal(result.transactions[0].category, "Airtime & data");
+    assert.equal(result.transactions[1].category, "Other");
+    assert.equal(result.transactions[2].category, "Shopping");
+  });
+
+  it("detects regularly spaced transfer recipients without treating merchants or own transfers as recipients", () => {
+    const recurring = [
+      tx({ id: "r1", date: "2026-01-01", description: "Transfer to JANE DOE | GTBank | REF 111111", amount: 12000 }),
+      tx({ id: "r2", date: "2026-02-01", description: "Transfer to Jane Doe | GTBank | REF 222222", amount: 15000 }),
+      tx({ id: "r3", date: "2026-03-04", description: "Transfer to JANE DOE | GTBank | REF 333333", amount: 9000 }),
+      tx({ id: "invalid-date", date: "2026-02-31", description: "Transfer to Jane Doe | GTBank | REF 353535", amount: 20000 }),
+      tx({ id: "merchant", date: "2026-01-01", description: "Purchase at Netflix | REF 111111" }),
+      tx({ id: "internal", date: "2026-04-04", description: "Transfer to Jane Doe | GTBank | REF 444444", internalTransfer: true }),
+    ];
+    const results = detectRecurringRecipients(recurring);
+    assert.equal(results.length, 1);
+    assert.equal(results[0].name.toLowerCase(), "jane doe");
+    assert.equal(results[0].frequencyLabel, "Monthly");
+    assert.equal(results[0].count, 3);
+    assert.equal(results[0].nextExpectedDate, "2026-04-04");
+  });
+
   it("matches potential duplicates using normalized merchant identity, not account references", () => {
     const result = buildImportPreview({
       imported: [tx({ id: "new", date: "2026-10-16", description: "Card payment at SHOPRITE | REF 98765432109", amount: 2500, source: "OPay" })],
@@ -332,8 +392,8 @@ describe("analytics", () => {
 });
 
 describe("storage and backups", () => {
-  it("round-trips time, notes, manual and locked flags in compact storage", () => {
-    const original = [tx({ id: "m1", time: "09:15:00", note: "Shop generator", manual: true, categoryLocked: true, category: "Business" }), tx({ id: "p" })];
+  it("round-trips time, notes, manual and locked flags, and rejected suggestions in compact storage", () => {
+    const original = [tx({ id: "m1", time: "09:15:00", note: "Shop generator", manual: true, categoryLocked: true, category: "Business", rejectedSuggestion: "Shopping" }), tx({ id: "p" })];
     const restored = parseStoredTransactions(serializeTransactions(original));
     assert.deepEqual(restored[0], original[0]);
     assert.deepEqual(restored[1], original[1]);

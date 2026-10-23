@@ -9,7 +9,12 @@ export interface TransactionClassification {
   reason: string;
 }
 
-export type ClassificationHistory = ReadonlyMap<string, ReadonlyMap<Category, number>>;
+export interface ClassificationHistoryEntry {
+  votes: ReadonlyMap<Category, number>;
+  rejectedCategories: ReadonlySet<Category>;
+}
+
+export type ClassificationHistory = ReadonlyMap<string, ClassificationHistoryEntry>;
 
 function classificationIdentity(transaction: Pick<Transaction, "description" | "direction">): string | null {
   const party = recogniseTransactionParty(transaction.description);
@@ -18,15 +23,17 @@ function classificationIdentity(transaction: Pick<Transaction, "description" | "
 }
 
 /** Build a local feedback index from categories the user deliberately chose. */
-export function buildClassificationHistory(transactions: Transaction[]): Map<string, Map<Category, number>> {
-  const history = new Map<string, Map<Category, number>>();
+export function buildClassificationHistory(transactions: Transaction[]): Map<string, ClassificationHistoryEntry> {
+  const history = new Map<string, { votes: Map<Category, number>; rejectedCategories: Set<Category> }>();
   for (const transaction of transactions) {
-    if (!transaction.categoryLocked && !transaction.manual) continue;
     const key = classificationIdentity(transaction);
     if (!key) continue;
-    const votes = history.get(key) ?? new Map<Category, number>();
-    votes.set(transaction.category, (votes.get(transaction.category) ?? 0) + 1);
-    history.set(key, votes);
+    const entry = history.get(key) ?? { votes: new Map<Category, number>(), rejectedCategories: new Set<Category>() };
+    if (transaction.categoryLocked || transaction.manual) {
+      entry.votes.set(transaction.category, (entry.votes.get(transaction.category) ?? 0) + 1);
+    }
+    if (transaction.rejectedSuggestion) entry.rejectedCategories.add(transaction.rejectedSuggestion);
+    if (entry.votes.size || entry.rejectedCategories.size) history.set(key, entry);
   }
   return history;
 }
@@ -54,8 +61,9 @@ export function classifyTransaction(
     return { category: "Transfers", confidence: 0.98, source: "transfer", reason: "The narration matches an internal or own-account transfer pattern." };
   }
 
-  const votes = history?.get(classificationIdentity(transaction) ?? "");
-  if (votes) {
+  const historyEntry = history?.get(classificationIdentity(transaction) ?? "");
+  const votes = historyEntry?.votes;
+  if (historyEntry && votes?.size) {
     let total = 0;
     let winningCategory: Category | undefined;
     let winningCount = 0;
@@ -66,7 +74,16 @@ export function classifyTransaction(
         winningCount = count;
       }
     }
-    if (total >= 2 && winningCategory) {
+    if (winningCategory && historyEntry.rejectedCategories.size && !historyEntry.rejectedCategories.has(winningCategory) && winningCount / total >= 0.67) {
+      const rejected = [...historyEntry.rejectedCategories].join(", ");
+      return {
+        category: winningCategory,
+        confidence: Math.min(0.96, 0.84 + 0.12 * (winningCount / total)),
+        source: "merchant-history",
+        reason: `You kept ${winningCategory} and rejected ${rejected} for this payee; future matches use that correction.`,
+      };
+    }
+    if (total >= 2 && winningCategory && !historyEntry.rejectedCategories.has(winningCategory)) {
       const agreement = winningCount / total;
       if (agreement >= 0.67) {
         const support = Math.min(1, Math.log2(total + 1) / 2);
@@ -78,8 +95,11 @@ export function classifyTransaction(
           reason: winningCount + " of " + total + " previous hand-categorized transactions for this payee agree.",
         };
       }
+      const fallback = categorise(transaction.description, transaction.direction);
       return {
-        category: categorise(transaction.description, transaction.direction),
+        category: historyEntry.rejectedCategories.has(fallback)
+          ? winningNonRejectedCategory(historyEntry) ?? transaction.category
+          : fallback,
         confidence: 0.52,
         source: "conflicting-history",
         reason: "Previous hand-categorized transactions for this payee disagree; review the category.",
@@ -88,6 +108,14 @@ export function classifyTransaction(
   }
 
   const category = categorise(transaction.description, transaction.direction);
+  if (historyEntry?.rejectedCategories.has(category)) {
+    return {
+      category: winningNonRejectedCategory(historyEntry) ?? transaction.category,
+      confidence: 0.35,
+      source: "conflicting-history",
+      reason: `A previous suggestion of ${category} was rejected for this payee, so it will not be suggested again without stronger evidence.`,
+    };
+  }
   if (category === "Other") {
     return { category, confidence: 0.25, source: "fallback", reason: "No custom rule, reliable history, or specific category signal matched." };
   }
@@ -95,6 +123,18 @@ export function classifyTransaction(
     return { category, confidence: 0.62, source: "fallback", reason: "The category is based on a broad direction or transfer fallback." };
   }
   return { category, confidence: 0.86, source: "heuristic", reason: "A built-in transaction keyword pattern matched." };
+}
+
+function winningNonRejectedCategory(entry: ClassificationHistoryEntry): Category | undefined {
+  let best: Category | undefined;
+  let count = 0;
+  for (const [category, votes] of entry.votes) {
+    if (!entry.rejectedCategories.has(category) && votes > count) {
+      best = category;
+      count = votes;
+    }
+  }
+  return best;
 }
 
 /** Apply matching rules and high-agreement user feedback to imported, unlocked transactions. */

@@ -4,9 +4,10 @@ const categories: readonly Category[] = categoryList;
 export const TRANSACTIONS_STORAGE_KEY = "spendwise.transactions.v1";
 const FORMAT_V1 = "spendwise.transactions.compact.v1";
 const FORMAT_V2 = "spendwise.transactions.compact.v2";
+const FORMAT_V3 = "spendwise.transactions.compact.v3";
 
-/** [id, date, description, amount, direction, category, source, flags?, time?, note?] */
-type CompactRecord = [string, string, string, number, 0 | 1, number, number, number?, string?, string?];
+/** [id, date, description, amount, direction, category, source, flags?, time?, note?, rejectedCategory?] */
+type CompactRecord = [string, string, string, number, 0 | 1, number, number, number?, string?, string?, number?];
 
 const FLAG_INTERNAL = 1;
 const FLAG_OWN_ACCOUNT = 2;
@@ -47,12 +48,13 @@ export function serializeTransactions(transactions: Transaction[]): string {
       sourceIndexes.get(transaction.source) ?? 0,
       flags,
     ];
-    if (transaction.time || transaction.note) record.push(transaction.time ?? "");
-    if (transaction.note) record.push(transaction.note);
-    if (!transaction.time && !transaction.note && !flags) record.pop();
+    if (transaction.time || transaction.note || transaction.rejectedSuggestion) record.push(transaction.time ?? "");
+    if (transaction.note || transaction.rejectedSuggestion) record.push(transaction.note ?? "");
+    if (transaction.rejectedSuggestion) record.push(categoryIndexes.get(transaction.rejectedSuggestion) ?? categoryIndexes.get("Other")!);
+    if (!transaction.time && !transaction.note && !transaction.rejectedSuggestion && !flags) record.pop();
     return record;
   });
-  return JSON.stringify({ format: FORMAT_V2, sources, categories, records });
+  return JSON.stringify({ format: FORMAT_V3, sources, categories, records });
 }
 
 export function parseStoredTransactions(serialized: string): Transaction[] {
@@ -67,7 +69,7 @@ export function parseStoredTransactions(serialized: string): Transaction[] {
       records?: unknown;
     };
     if (
-      (compact.format !== FORMAT_V1 && compact.format !== FORMAT_V2) ||
+      (compact.format !== FORMAT_V1 && compact.format !== FORMAT_V2 && compact.format !== FORMAT_V3) ||
       !Array.isArray(compact.sources) ||
       !Array.isArray(compact.categories) ||
       !Array.isArray(compact.records)
@@ -76,10 +78,10 @@ export function parseStoredTransactions(serialized: string): Transaction[] {
     }
     const sources = compact.sources as string[];
     const storedCategories = compact.categories as string[];
-    const validCategories = new Set(categories);
+    const validCategories = new Set<string>(categories);
     return compact.records.flatMap((record): Transaction[] => {
       if (!Array.isArray(record) || record.length < 7) return [];
-      const [id, date, description, amount, direction, category, source, flags = 0, time, note] = record as CompactRecord;
+      const [id, date, description, amount, direction, category, source, flags = 0, time, note, rejectedSuggestion] = record as CompactRecord;
       const categoryName = storedCategories[category];
       const sourceName = sources[source];
       if (
@@ -111,6 +113,8 @@ export function parseStoredTransactions(serialized: string): Transaction[] {
       }
       if (typeof time === "string" && /^\d{2}:\d{2}(?::\d{2})?$/.test(time)) transaction.time = time;
       if (typeof note === "string" && note.trim()) transaction.note = note.slice(0, 280);
+      const rejectedCategory = typeof rejectedSuggestion === "number" ? storedCategories[rejectedSuggestion] : undefined;
+      if (typeof rejectedCategory === "string" && validCategories.has(rejectedCategory)) transaction.rejectedSuggestion = rejectedCategory as Category;
       return [transaction];
     });
   } catch {

@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { DatabaseBackup, Download, ListChecks, LockKeyhole, Plus, ShieldCheck, Trash2, Upload, Wand2 } from "lucide-react";
-import { categoryList, type Category, type CategoryRule, type CategoryRuleMatchType, type Direction } from "./types";
+import { categoryList, type Category, type CategoryRule, type CategoryRuleMatchType, type Direction, type Transaction } from "./types";
 import { formatDate } from "./lib/format";
 import type { AccessStatus } from "./useAccessAuth";
 
@@ -14,11 +14,12 @@ const ruleMatchTypeLabels: Record<CategoryRuleMatchType, string> = {
 
 interface DataPageProps {
   rules: CategoryRule[];
+  transactions: Transaction[];
   counts: { transactions: number; goals: number; circles: number; bets: number; budgets: number };
   matchCount: (rule: Pick<CategoryRule, "pattern" | "direction" | "matchType">) => number;
   onAddRule: (rule: Omit<CategoryRule, "id" | "createdAt">) => void;
   onDeleteRule: (ruleId: string) => void;
-  onRefreshCategories: () => void;
+  onRefreshCategories: (startDate?: string, endDate?: string) => void;
   onExportBackup: () => void;
   onRestoreBackup: (file: File) => void;
   onClearTransactions: () => void;
@@ -28,6 +29,7 @@ interface DataPageProps {
 
 export default function DataPage({
   rules,
+  transactions,
   counts,
   matchCount,
   onAddRule,
@@ -45,7 +47,14 @@ export default function DataPage({
   const [category, setCategory] = useState<Category>("Business");
   const [direction, setDirection] = useState<"" | Direction>("");
   const [markInternal, setMarkInternal] = useState(false);
+  const [historyStart, setHistoryStart] = useState("");
+  const [historyEnd, setHistoryEnd] = useState("");
   const preview = pattern.trim().length >= 2 ? matchCount({ pattern: pattern.trim().toLowerCase(), direction: direction || undefined, matchType }) : null;
+  const historyRangeValid = !historyStart || !historyEnd || historyStart <= historyEnd;
+  const historyEligibleCount = historyRangeValid ? transactions.filter((transaction) =>
+    !transaction.manual && !transaction.categoryLocked &&
+    (!historyStart || transaction.date >= historyStart) &&
+    (!historyEnd || transaction.date <= historyEnd)).length : 0;
 
   const submitRule = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -91,10 +100,19 @@ export default function DataPage({
 
         <section className="panel data-card">
           <div className="data-card-icon"><Wand2 size={18} /></div>
-          <h2>Re-check categories</h2>
-          <p>Runs the latest automatic categorisation and your rules over everything already imported. Categories you picked by hand and manual entries are left alone.</p>
+          <h2>Reclassify transaction history</h2>
+          <p>Re-run current rules and learned payee choices over imported history. Choose an inclusive date window, or leave both dates blank for all history. Categories picked by hand and manual entries are protected.</p>
+          <div className="history-reclassification-range">
+            <label>From<input type="date" value={historyStart} onChange={(event) => setHistoryStart(event.target.value)} /></label>
+            <label>Through<input type="date" value={historyEnd} onChange={(event) => setHistoryEnd(event.target.value)} /></label>
+          </div>
+          <div className="history-reclassification-count" aria-live="polite">
+            {historyRangeValid
+              ? `${historyEligibleCount.toLocaleString("en-NG")} unlocked transaction${historyEligibleCount === 1 ? "" : "s"} in range`
+              : "Choose a start date on or before the end date."}
+          </div>
           <div className="data-actions">
-            <button className="button button-secondary" onClick={onRefreshCategories} disabled={!counts.transactions}><Wand2 size={14} /> Re-categorise history</button>
+            <button className="button button-secondary" onClick={() => onRefreshCategories(historyStart || undefined, historyEnd || undefined)} disabled={!historyRangeValid || historyEligibleCount === 0}><Wand2 size={14} /> Re-categorise history</button>
           </div>
         </section>
       </div>
