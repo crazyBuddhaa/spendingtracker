@@ -213,6 +213,17 @@ export function findRecurringPayments(transactions: Transaction[], profiles: Rec
   return results.sort((a, b) => b.lastDate.localeCompare(a.lastDate) || b.monthlyCost - a.monthlyCost);
 }
 
+/** Estimate only steady Transport payments, so other categories for the same payee cannot skew the fare. */
+export function findRecurringTransportPayments(
+  transactions: Transaction[],
+  profiles: RecipientProfile[] = [],
+): RecurringPayment[] {
+  return findRecurringPayments(
+    transactions.filter((transaction) => transaction.category === "Transport"),
+    profiles,
+  );
+}
+
 /* ----------------------------------------------------- monthly report */
 
 export interface MonthReportRow {

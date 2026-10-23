@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
-import { CalendarDays, Download, Receipt, Users } from "lucide-react";
+import { CalendarDays, CalendarRange, Clock3, Download, ListOrdered, Receipt, Users } from "lucide-react";
 import type { Transaction } from "./types";
 import { getFeeSummary, getMonthlyReport, getSpendingRhythm, getTopCounterparties, monthlyReportToCsv } from "./lib/analytics";
 import type { DateRange } from "./lib/insights";
 import { downloadFile, formatCurrency, formatDate, formatMonth } from "./lib/format";
+import { formatHour, formatMinuteOfDay, getSpendingTimeAnalytics, getSpendingTimeline } from "./lib/spendingTimeAnalytics";
 
 interface InsightsExtrasProps {
   transactions: Transaction[];
@@ -19,8 +20,12 @@ export default function InsightsExtras({ transactions, allTransactions, range, c
   const counterparties = useMemo(() => getTopCounterparties(transactions, direction, 10), [transactions, direction]);
   const rhythm = useMemo(() => getSpendingRhythm(transactions, range.start, range.end), [transactions, range.start, range.end]);
   const report = useMemo(() => getMonthlyReport(allTransactions), [allTransactions]);
+  const timeAnalytics = useMemo(() => getSpendingTimeAnalytics(transactions), [transactions]);
+  const timeline = useMemo(() => getSpendingTimeline(transactions, 20), [transactions]);
   const maxWeekday = Math.max(1, ...rhythm.byWeekday.map((day) => day.average));
   const maxCounterparty = Math.max(1, ...counterparties.map((item) => item.amount));
+  const maxHourlySpend = Math.max(1, ...timeAnalytics.byHour.map((hour) => hour.amount));
+  const maxHeatmapSpend = Math.max(1, ...timeAnalytics.heatmap.flatMap((day) => day.cells.map((cell) => cell.amount)));
 
   return (
     <>
@@ -73,6 +78,84 @@ export default function InsightsExtras({ transactions, allTransactions, range, c
           </section>
         </div>
       </div>
+
+      <div className="spending-time-grid">
+        <section className="panel extras-panel">
+          <div className="panel-heading">
+            <div><div className="panel-kicker">HOURLY SPENDING</div><h2>When spending happens</h2></div>
+            <Clock3 size={16} className="muted-icon" />
+          </div>
+          {timeAnalytics.timedTransactions ? (
+            <>
+              <div className="hourly-chart" role="img" aria-label={`Hourly spending totals for ${timeAnalytics.timedTransactions} timed transactions`}>
+                {timeAnalytics.byHour.map((hour) => (
+                  <div className="hourly-chart-bar" key={hour.hour} title={`${formatHour(hour.hour)}: ${formatCurrency(hour.amount, currency)} across ${hour.count} transaction${hour.count === 1 ? "" : "s"}`}>
+                    <span style={{ height: `${Math.max((hour.amount / maxHourlySpend) * 100, hour.amount > 0 ? 3 : 0)}%` }} />
+                    <small>{hour.hour % 3 === 0 ? String(hour.hour).padStart(2, "0") : ""}</small>
+                  </div>
+                ))}
+              </div>
+              <div className="time-coverage-note">
+                <strong>{formatCurrency(timeAnalytics.totalTimedSpending, currency)}</strong> across {timeAnalytics.timedTransactions.toLocaleString("en-NG")} timed expenses.
+                {timeAnalytics.untimedTransactions > 0 && ` ${timeAnalytics.untimedTransactions.toLocaleString("en-NG")} expenses have no usable time.`}
+                {" "}{Math.round(timeAnalytics.timeCoverageByAmount * 100)}% of recorded spending is represented.
+              </div>
+            </>
+          ) : <div className="counterparty-empty"><Clock3 size={14} /> No timed expense transactions in this period. Bank statements that include time of day unlock hourly patterns.</div>}
+        </section>
+
+        <section className="panel extras-panel">
+          <div className="panel-heading">
+            <div><div className="panel-kicker">SPENDING HEATMAP</div><h2>Weekday by hour</h2></div>
+            <CalendarRange size={16} className="muted-icon" />
+          </div>
+          {timeAnalytics.timedTransactions ? (
+            <>
+              <div className="heatmap-scroll">
+                <div className="spending-heatmap" role="img" aria-label="Expense totals grouped by weekday and hour">
+                  <div className="heatmap-header"><span />{Array.from({ length: 24 }, (_, hour) => <small key={hour}>{hour % 3 === 0 ? String(hour).padStart(2, "0") : ""}</small>)}</div>
+                  {timeAnalytics.heatmap.map((day) => (
+                    <div className="heatmap-row" key={day.day}>
+                      <strong>{day.day}</strong>
+                      {day.cells.map((cell) => {
+                        const opacity = cell.amount > 0 ? 0.1 + (cell.amount / maxHeatmapSpend) * 0.75 : 0;
+                        const label = `${day.day} ${formatHour(cell.hour)}: ${formatCurrency(cell.amount, currency)} across ${cell.count} transaction${cell.count === 1 ? "" : "s"}`;
+                        return <span key={cell.hour} title={label} aria-label={label} style={{ backgroundColor: opacity ? `rgba(47, 122, 85, ${opacity})` : "#f0f3f0" }} />;
+                      })}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="heatmap-legend"><span>Lower spend</span><i /><i /><i /><i /><span>Higher spend</span></div>
+            </>
+          ) : <div className="counterparty-empty"><CalendarRange size={14} /> The heatmap appears when at least one expense has a recorded time.</div>}
+        </section>
+      </div>
+
+      <section className="panel extras-panel spending-timeline-panel">
+        <div className="panel-heading">
+          <div><div className="panel-kicker">SPENDING TIMELINE</div><h2>Recent transactions in this period</h2></div>
+          <span className="heading-note"><ListOrdered size={14} /> {timeline.length} shown</span>
+        </div>
+        <p className="panel-note">Latest expenses first. Transactions without a statement time appear after timed entries on the same date; select an item to find it in Transactions.</p>
+        {timeline.length ? (
+          <ol className="spending-timeline">
+            {timeline.map(({ transaction, name, minuteOfDay }) => (
+              <li key={transaction.id}>
+                <button className="spending-timeline-entry" onClick={() => onSearch(transaction.description)} title={transaction.description}>
+                  <span className="spending-timeline-marker" aria-hidden="true" />
+                  <span className="spending-timeline-copy">
+                    <strong>{name}</strong>
+                    <small>{transaction.category} · {minuteOfDay === null ? "Time not recorded" : formatMinuteOfDay(minuteOfDay)} · {transaction.source}</small>
+                  </span>
+                  <span className="spending-timeline-date">{formatDate(transaction.date)}</span>
+                  <strong className="spending-timeline-amount">−{formatCurrency(transaction.amount, currency, true)}</strong>
+                </button>
+              </li>
+            ))}
+          </ol>
+        ) : <div className="counterparty-empty"><ListOrdered size={14} /> No spending transactions in this period.</div>}
+      </section>
 
       <section className="panel report-panel">
         <div className="panel-heading">

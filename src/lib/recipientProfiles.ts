@@ -7,6 +7,7 @@ export interface RecipientSummary {
   key: string;
   name: string;
   aliases: string[];
+  relationship?: string;
   category?: Category;
   note?: string;
   transactions: number;
@@ -45,12 +46,14 @@ export function normaliseRecipientProfiles(value: unknown): RecipientProfile[] {
     const category = typeof profile.category === "string" && validCategories.has(profile.category)
       ? profile.category as Category
       : undefined;
+    const relationship = cleanText(profile.relationship, 60);
     const note = cleanText(profile.note, 280);
     profiles.push({
       id,
       kind: profile.kind as TransactionPartyKind,
       name,
       aliases,
+      ...(relationship ? { relationship } : {}),
       ...(category ? { category } : {}),
       ...(note ? { note } : {}),
     });
@@ -87,6 +90,7 @@ export function getRecipientDirectory(transactions: Transaction[], profiles: Rec
       key: `profile:${profile.id}`,
       name: profile.name,
       aliases: [...profile.aliases],
+      ...(profile.relationship ? { relationship: profile.relationship } : {}),
       ...(profile.category ? { category: profile.category } : {}),
       ...(profile.note ? { note: profile.note } : {}),
       transactions: 0,
