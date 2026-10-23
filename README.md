@@ -52,25 +52,25 @@ Transfers to or from your own name (in any order, at least two name parts, inclu
 
 **Data & rules → Download backup** saves transactions, goals, circles, bets, rules and budgets in one JSON file. **Restore from file** replaces what is in the browser.
 
-Signed-in users can also create an on-demand cloud backup under **Data & rules → Cloud sync and storage**. The snapshot is saved in R2 and can be downloaded in the same JSON format for **Restore from file**. Cloud backups include D1 transactions and synced collections; original statement files remain separate R2 objects.
+Signed-in users can also create an on-demand cloud backup under **Data & rules → Cloud sync and storage**. The snapshot is saved in R2 and can be downloaded in the same JSON format for **Restore from file**. Cloud backups include active transactions from the managed transaction store and synced collections; original statement files remain separate R2 objects.
 
 ## Cloud sync with Cloudflare (D1 + R2 + Access)
 
 The website is public. Guests use browser storage only; signing in with an email code enables per-email cloud sync:
 
-- **D1** stores transactions, savings goals, circles, bets, rules, and budgets, scoped to the signed-in email.
-- **R2** keeps the original statement files you import (CSV, Excel, PDF; up to 25 MB each, de-duplicated) and on-demand account backup snapshots. Download or delete them under **Data & rules**.
+- **R2** stores managed transaction payloads as immutable, versioned change segments, alongside the original statement files you import (CSV, Excel, PDF; up to 25 MB each, de-duplicated) and on-demand account backup snapshots.
+- **D1** stores synced collections, storage preferences, and the minimal per-user/per-transaction sequence and object-pointer metadata needed for incremental sync. Existing transaction rows remain readable as legacy data until the separately planned Phase 2 migration; this phase does not copy or delete them.
 - **Cloudflare Access** protects only `/api/*`, not the public website. The API verifies the Access token (signature, audience, issuer, expiry) on every request and refuses cloud access until Access is configured.
 - The browser keeps a copy, so the app opens instantly and works offline; changes made offline are queued (even across reloads) and sync when you reconnect. Other devices pick up changes on focus and every minute.
 - Guests stay local until they choose **Sign in to sync**. The button starts the Cloudflare Access login flow and returns to the public website; on first sign-in, history already saved in that browser is uploaded to that email's cloud account.
 
 Without these bindings (or with `npm run dev`), the app works exactly as before, storing everything in the browser.
 
-### Storage preference foundation
+### Storage preferences and managed transaction storage
 
-The versioned preference model defaults existing users to **Spendwise-managed** storage and automatic backups disabled. Signed-in preference records are stored in D1's `storage_preferences` table, keyed by the lower-cased email returned by server-side Cloudflare Access JWT verification. The API derives that key from the authenticated request; it does not accept an account identifier from the client. A missing record returns the default without writing a row, and a record is created only when the user saves a preference. **Google Sheets remains not connected**: this API does not authorize it or change the existing transaction sync path. No tokens or provider credentials are stored. There is no storage-settings UI in this stage, and the backup preference does not activate automatic backups or change manual/on-demand R2 backup behavior.
+The versioned preference model defaults existing users to **Spendwise-managed** storage and automatic backups disabled. Signed-in preference records are stored in D1's `storage_preferences` table, keyed by the lower-cased email returned by server-side Cloudflare Access JWT verification. The API derives that key from the authenticated request; it does not accept an account identifier from the client. A missing record returns the default without writing a row, and a record is created only when the user saves a preference. **Google Sheets remains not connected**. No tokens or provider credentials are stored, and automatic backups remain disabled.
 
-Stage 6A adds only the D1 preference foundation. It does not add a UI, Google Sheets integration, R2 transaction migration, or deployment. Apply the migration with the same D1 workflow as the other migrations:
+Stage 6B Phase 1 writes new managed transaction changes to versioned R2 segments. D1 holds the manifest, idempotency records, per-ID pointers and clear marker used for synchronization; the transaction payload itself is in R2. Legacy D1 transaction rows are retained and read until Phase 2 performs the controlled backfill. This phase does not migrate production rows, delete legacy data, or deploy/cut over production. **Google Sheets remains unavailable**, and automatic backups remain off. Apply migrations only as part of a separately approved deployment plan:
 
 ```sh
 npx wrangler d1 execute spendwise --remote --file=migrations/0004_storage_preferences.sql
@@ -86,6 +86,7 @@ npx wrangler d1 execute spendwise --remote --file=migrations/0001_init.sql
 npx wrangler d1 execute spendwise --remote --file=migrations/0002_scrub_transaction_tombstones.sql
 npx wrangler d1 execute spendwise --remote --file=migrations/0003_cloud_backups.sql
 npx wrangler d1 execute spendwise --remote --file=migrations/0004_storage_preferences.sql
+npx wrangler d1 execute spendwise --remote --file=migrations/0005_r2_transaction_storage.sql
 npx wrangler r2 bucket create spendwise-statements
 ```
 

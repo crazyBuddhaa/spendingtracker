@@ -230,11 +230,21 @@ describe("Cloudflare API", () => {
   });
 
   describe("transactions", () => {
-    const post = (body) => call("/api/transactions", { method: "POST", body: JSON.stringify(body), headers: { "Content-Type": "application/json" } });
+    const post = (body, batchId, headers = {}) => call("/api/transactions", {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: {
+        "Content-Type": "application/json",
+        ...(batchId ? { "Idempotency-Key": batchId } : {}),
+        ...headers,
+      },
+    });
 
     it("upserts, pages by cursor, updates, and tombstones deletes", async () => {
       const rows = Array.from({ length: 25 }, (_, index) => row(`t${String(index).padStart(2, "0")}`));
       assert.equal((await post({ upserts: rows })).status, 200);
+      assert.equal(env.DB.raw.prepare("SELECT COUNT(*) AS count FROM transactions").get().count, 0, "new transaction payloads are not stored in D1");
+      assert.equal(env.STATEMENTS.objects.size, 1, "one batched write creates one R2 segment");
 
       const first = await (await call("/api/transactions?limit=10")).json();
       assert.equal(first.rows.length, 10);
@@ -260,6 +270,60 @@ describe("Cloudflare API", () => {
       assert.equal(me.transactions, 24);
     });
 
+    it("serves unmigrated D1 rows until an R2 head supersedes them", async () => {
+      env.DB.raw.prepare(
+        `INSERT INTO transactions
+           (user_email, id, date, time, description, amount, direction, category, source, flags, note, deleted, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+      ).run("owner@example.com", "legacy-row", "2026-09-01", "10:00:00", "Legacy purchase", 100, 0, "Shopping", "OPay", 2, "legacy note", 10);
+
+      const before = await (await call("/api/transactions")).json();
+      assert.equal(before.rows.length, 1);
+      assert.equal(before.rows[0][0][3], "Legacy purchase");
+
+      const edited = await post({ upserts: [row("legacy-row", { 3: "R2 edit", 9: "new note" })] });
+      assert.equal(edited.status, 200);
+      const legacyRecord = env.DB.raw.prepare(
+        "SELECT description, note FROM transactions WHERE user_email = ? AND id = ?",
+      ).get("owner@example.com", "legacy-row");
+      assert.deepEqual({ ...legacyRecord }, { description: "Legacy purchase", note: "legacy note" });
+
+      const after = await (await call("/api/transactions")).json();
+      assert.equal(after.rows.length, 1);
+      assert.equal(after.rows[0][0][3], "R2 edit");
+      assert.equal(after.rows[0][0][9], "new note");
+      assert.equal((await (await call("/api/me")).json()).transactions, 1);
+    });
+
+    it("authenticates before transaction reads or writes", async () => {
+      const read = await call("/api/transactions", {}, {});
+      const write = await call("/api/transactions", {
+        method: "POST",
+        body: JSON.stringify({ upserts: [row("unauthorized")] }),
+        headers: { "Content-Type": "application/json" },
+      }, {});
+      assert.equal(read.status, 401);
+      assert.equal(write.status, 401);
+      assert.equal(env.STATEMENTS.objects.size, 0);
+    });
+
+    it("keeps legacy D1 reads available but refuses new writes without the R2 binding", async () => {
+      env.DB.raw.prepare(
+        `INSERT INTO transactions
+           (user_email, id, date, time, description, amount, direction, category, source, flags, note, deleted, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+      ).run("owner@example.com", "legacy-only", "2026-09-01", "", "Legacy", 100, 0, "Shopping", "OPay", 0, "", 10);
+      env.STATEMENTS = undefined;
+
+      const read = await call("/api/transactions");
+      assert.equal(read.status, 200);
+      assert.equal((await read.json()).rows[0][0][0], "legacy-only");
+      const write = await post({ upserts: [row("needs-r2")] });
+      assert.equal(write.status, 503);
+      assert.equal((await write.json()).code, "not_configured");
+      assert.equal(env.DB.raw.prepare("SELECT COUNT(*) AS count FROM transactions").get().count, 1);
+    });
+
     it("does not skip lower-sorting IDs written in the same millisecond", async () => {
       const realNow = Date.now;
       const fixedNow = realNow();
@@ -278,17 +342,34 @@ describe("Cloudflare API", () => {
     it("keeps each user's data separate", async () => {
       await post({ upserts: [row("shared-id")] });
       const otherToken = await access.sign({ email: "someone@else.com" });
-      const other = await (await call("/api/transactions", {}, { "Cf-Access-Jwt-Assertion": otherToken })).json();
-      assert.equal(other.rows.length, 0);
+      const otherHeaders = { "Cf-Access-Jwt-Assertion": otherToken };
+      const otherBefore = await (await call("/api/transactions", {}, otherHeaders)).json();
+      assert.equal(otherBefore.rows.length, 0);
+      const otherWrite = await call("/api/transactions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": "00000000-0000-4000-8000-000000000011" },
+        body: JSON.stringify({ userId: "owner@example.com", upserts: [row("shared-id", { 3: "Other user's payment" })] }),
+      }, otherHeaders);
+      assert.equal(otherWrite.status, 200);
+      const ownerRows = await (await call("/api/transactions")).json();
+      const otherRows = await (await call("/api/transactions", {}, otherHeaders)).json();
+      assert.equal(ownerRows.rows[0][0][3], "Payment shared-id");
+      assert.equal(otherRows.rows[0][0][3], "Other user's payment");
+      const ownerPrefix = [...env.STATEMENTS.objects.keys()].find((key) => key.startsWith("transaction-data/v2/"));
+      assert.ok(ownerPrefix);
+      assert.equal(new Set([...env.STATEMENTS.objects.keys()].map((key) => key.split("/")[2])).size, 2);
     });
 
     it("validates rows and batch size", async () => {
       assert.equal((await post({ upserts: [["x"]] })).status, 400);
       assert.equal((await post({ upserts: [row("x", { 4: -5 })] })).status, 400);
       assert.equal((await post({ deletes: [5] })).status, 400);
+      assert.equal((await post({ upserts: [row("x")] }, "not-a-uuid")).status, 400);
       assert.equal((await post({ upserts: Array.from({ length: 2001 }, (_, index) => row(`r${index}`)) })).status, 413);
       const ok = await post({ upserts: Array.from({ length: 2000 }, (_, index) => row(`r${index}`)) });
       assert.equal(ok.status, 200);
+      assert.equal(env.STATEMENTS.objects.size, 1);
+      assert.equal(env.DB.raw.prepare("SELECT COUNT(*) AS count FROM transactions").get().count, 0);
     });
 
     it("clears everything as tombstones", async () => {
@@ -299,6 +380,124 @@ describe("Cloudflare API", () => {
       assert.ok(all.rows.every(([transaction]) => transaction.slice(1).every((value, index) =>
         value === ["1970-01-01", "", "", 0, 0, "Other", "", 0, ""][index],
       )));
+      assert.equal(env.DB.raw.prepare("SELECT COUNT(*) AS count FROM transactions").get().count, 0);
+      assert.equal((await (await call("/api/me")).json()).transactions, 0);
+    });
+
+    it("makes same-key retries idempotent and rejects key reuse with different data", async () => {
+      const batchId = "00000000-0000-4000-8000-000000000012";
+      const body = { upserts: [row("retry", { 9: "same payload" })] };
+      const first = await post(body, batchId);
+      const firstResult = await first.json();
+      const retry = await post(body, batchId);
+      const retryResult = await retry.json();
+      assert.equal(first.status, 200);
+      assert.equal(retry.status, 200);
+      assert.equal(retryResult.updatedAt, firstResult.updatedAt);
+      assert.equal(env.STATEMENTS.objects.size, 1);
+      assert.equal(env.DB.raw.prepare("SELECT COUNT(*) AS count FROM transaction_store_batches").get().count, 1);
+
+      const conflict = await post({ upserts: [row("retry", { 9: "different payload" })] }, batchId);
+      assert.equal(conflict.status, 409);
+      assert.equal((await conflict.json()).code, "idempotency_conflict");
+    });
+
+    it("leaves failed R2 writes pending and safely completes the same retry", async () => {
+      const batchId = "00000000-0000-4000-8000-000000000013";
+      const put = env.STATEMENTS.put;
+      env.STATEMENTS.put = async () => { throw new Error("simulated R2 outage"); };
+      const failed = await post({ upserts: [row("retry-after-failure")] }, batchId);
+      assert.equal(failed.status, 503);
+      assert.equal((await failed.json()).code, "storage_unavailable");
+      assert.equal(env.DB.raw.prepare("SELECT status FROM transaction_store_batches").get().status, "pending");
+      assert.equal(env.DB.raw.prepare("SELECT COUNT(*) AS count FROM transactions").get().count, 0);
+
+      env.STATEMENTS.put = put;
+      const retried = await post({ upserts: [row("retry-after-failure")] }, batchId);
+      assert.equal(retried.status, 200);
+      const page = await (await call("/api/transactions")).json();
+      assert.equal(page.rows[0][0][0], "retry-after-failure");
+      assert.equal(env.DB.raw.prepare("SELECT status FROM transaction_store_batches").get().status, "committed");
+    });
+
+    it("recovers an R2 object when the D1 manifest finalize was interrupted", async () => {
+      const db = env.DB;
+      const batch = db.batch.bind(db);
+      let batchCalls = 0;
+      env.DB = {
+        ...db,
+        batch: async (statements) => {
+          batchCalls += 1;
+          if (batchCalls === 2) throw new Error("simulated D1 finalize outage");
+          return batch(statements);
+        },
+      };
+      const interrupted = await post(
+        { upserts: [row("manifest-recovery")] },
+        "00000000-0000-4000-8000-000000000014",
+      );
+      assert.equal(interrupted.status, 503);
+      assert.equal(env.DB.raw.prepare("SELECT status FROM transaction_store_batches").get().status, "pending");
+      assert.equal(env.STATEMENTS.objects.size, 1, "the immutable object was written before the interrupted finalize");
+
+      env.DB = db;
+      const nextWrite = await post(
+        { upserts: [row("after-recovery")] },
+        "00000000-0000-4000-8000-000000000015",
+      );
+      assert.equal(nextWrite.status, 200);
+      const page = await (await call("/api/transactions")).json();
+      assert.deepEqual(page.rows.map(([transaction]) => transaction[0]).sort(), ["after-recovery", "manifest-recovery"]);
+      assert.equal(env.DB.raw.prepare("SELECT COUNT(*) AS count FROM transaction_store_batches WHERE status = 'committed'").get().count, 2);
+    });
+
+    it("orders concurrent same-id updates by the reserved manifest sequence", async () => {
+      const [left, right] = await Promise.all([
+        post({ upserts: [row("racing", { 3: "left" })] }, "00000000-0000-4000-8000-000000000016"),
+        post({ upserts: [row("racing", { 3: "right" })] }, "00000000-0000-4000-8000-000000000017"),
+      ]);
+      assert.equal(left.status, 200);
+      assert.equal(right.status, 200);
+      const [leftBody, rightBody] = await Promise.all([left.json(), right.json()]);
+      const expected = leftBody.updatedAt > rightBody.updatedAt ? "left" : "right";
+      const page = await (await call("/api/transactions")).json();
+      assert.equal(page.rows.find(([transaction]) => transaction[0] === "racing")[0][3], expected);
+      assert.equal(
+        env.DB.raw.prepare("SELECT updated_at FROM transaction_heads WHERE user_email = ? AND id = ?")
+          .get("owner@example.com", "racing").updated_at,
+        Math.max(leftBody.updatedAt, rightBody.updatedAt),
+      );
+    });
+
+    it("paginates large histories while storing one R2 object per write batch", async () => {
+      const records = Array.from({ length: 10_050 }, (_, index) => row(`large-${String(index).padStart(5, "0")}`));
+      for (let offset = 0, batchNumber = 20; offset < records.length; offset += 2000, batchNumber += 1) {
+        const batchId = `00000000-0000-4000-8000-${String(batchNumber).padStart(12, "0")}`;
+        const response = await post({ upserts: records.slice(offset, offset + 2000) }, batchId);
+        assert.equal(response.status, 200);
+      }
+      assert.equal(env.STATEMENTS.objects.size, 6);
+      assert.equal(env.DB.raw.prepare("SELECT COUNT(*) AS count FROM transactions").get().count, 0);
+
+      let after = "0:";
+      let count = 0;
+      for (;;) {
+        const page = await (await call(`/api/transactions?limit=5000&after=${encodeURIComponent(after)}`)).json();
+        count += page.rows.length;
+        if (!page.hasMore) break;
+        after = page.next;
+      }
+      assert.equal(count, records.length);
+      assert.equal(env.DB.raw.prepare("SELECT COUNT(*) AS count FROM transaction_heads").get().count, records.length);
+    });
+
+    it("fails closed rather than returning an empty history when a manifest object is missing", async () => {
+      await post({ upserts: [row("missing-segment")] });
+      const key = [...env.STATEMENTS.objects.keys()].find((value) => value.startsWith("transaction-data/v2/"));
+      env.STATEMENTS.objects.delete(key);
+      const response = await call("/api/transactions");
+      assert.equal(response.status, 503);
+      assert.equal((await response.json()).code, "storage_unavailable");
     });
   });
 
@@ -375,7 +574,7 @@ describe("Cloudflare API", () => {
       const { backup } = await created.json();
       assert.equal(backup.transactionCount, 1);
       assert.ok(backup.size > 0);
-      const [key] = [...env.STATEMENTS.objects.keys()];
+      const key = [...env.STATEMENTS.objects.keys()].find((value) => value.startsWith("backups/"));
       assert.match(key, /^backups\/[0-9a-f]{24}\/[0-9a-f-]{36}\.json$/);
       assert.ok(!key.includes("owner"));
 
@@ -396,7 +595,7 @@ describe("Cloudflare API", () => {
       assert.equal((await call(`/api/backups/${backup.id}`, {}, { "Cf-Access-Jwt-Assertion": otherToken })).status, 404);
 
       assert.equal((await call(`/api/backups/${backup.id}`, { method: "DELETE" })).status, 200);
-      assert.equal(env.STATEMENTS.objects.size, 0);
+      assert.equal([...env.STATEMENTS.objects.keys()].some((value) => value.startsWith("backups/")), false);
       assert.deepEqual((await (await call("/api/backups")).json()).backups, []);
     });
   });

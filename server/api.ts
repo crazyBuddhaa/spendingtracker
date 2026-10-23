@@ -11,6 +11,13 @@ import {
   type TransactionOverride,
 } from "./monthlyStorage.ts";
 import { loadStoragePreference, saveStoragePreference } from "./storagePreferences.ts";
+import {
+  clearTransactionsInStore,
+  countActiveTransactions,
+  listTransactionPage,
+  TransactionStorageError,
+  writeTransactionsToR2,
+} from "./transactionStorage.ts";
 import { validateStoragePreference } from "../src/lib/storagePreferences.ts";
 import { COLLECTION_NAMES, isValidSyncRow, MAX_ROWS_PER_REQUEST, type SyncRow } from "../src/lib/syncFormat.ts";
 import type { Transaction } from "../src/types.ts";
@@ -78,35 +85,13 @@ async function sha256Hex(data: ArrayBuffer | string): Promise<string> {
 
 /* ------------------------------------------------------------ transactions */
 
-async function listTransactions(db: D1Database, email: string, url: URL): Promise<Response> {
+async function listTransactions(db: D1Database, bucket: R2Bucket | undefined, email: string, url: URL): Promise<Response> {
   const after = url.searchParams.get("after") ?? "0:";
-  const separator = after.indexOf(":");
-  const afterTime = Number(separator >= 0 ? after.slice(0, separator) : after) || 0;
-  const afterId = separator >= 0 ? after.slice(separator + 1) : "";
   const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || DEFAULT_PAGE, 1), MAX_PAGE);
-  const { results } = await db.prepare(
-    `SELECT id, date, time, description, amount, direction, category, source, flags, note, deleted, updated_at
-       FROM transactions
-      WHERE user_email = ?1 AND (updated_at > ?2 OR (updated_at = ?2 AND id > ?3))
-      ORDER BY updated_at, id
-      LIMIT ?4`,
-  ).bind(email, afterTime, afterId, limit + 1).all<Record<string, unknown>>();
-  const page = results.slice(0, limit);
-  const rows = page.map((item) => [
-    [item.id, item.date, item.time ?? "", item.description ?? "", Number(item.amount), Number(item.direction), item.category, item.source, Number(item.flags), item.note ?? ""],
-    Number(item.deleted) ? 1 : 0,
-    Number(item.updated_at),
-  ]);
-  const last = page[page.length - 1];
-  return json({
-    rows,
-    next: last ? `${Number(last.updated_at)}:${String(last.id)}` : after,
-    hasMore: results.length > limit,
-    serverTime: Date.now(),
-  });
+  return json(await listTransactionPage(db, bucket, email, after, limit));
 }
 
-async function writeTransactions(db: D1Database, email: string, request: Request): Promise<Response> {
+async function writeTransactions(db: D1Database, bucket: R2Bucket, email: string, request: Request): Promise<Response> {
   const body = await readJson<{ upserts?: unknown; deletes?: unknown }>(request);
   const upserts = Array.isArray(body.upserts) ? body.upserts : [];
   const deletes = Array.isArray(body.deletes) ? body.deletes : [];
@@ -119,60 +104,20 @@ async function writeTransactions(db: D1Database, email: string, request: Request
     throw new HttpError(400, "Deletes must be a list of transaction ids.");
   }
 
-  const updatedAt = Date.now();
-  const statements = [];
-  if (upserts.length) {
-    // Allocate a per-user monotonic change stamp inside the write statement. A
-    // millisecond timestamp alone can collide across concurrent requests and make
-    // lower-sorting IDs invisible behind an incremental cursor.
-    statements.push(db.prepare(
-      `WITH change_stamp AS (
-         SELECT MAX(?2, COALESCE(MAX(updated_at), 0) + 1) AS value
-           FROM transactions WHERE user_email = ?1
-       )
-       INSERT INTO transactions (user_email, id, date, time, description, amount, direction, category, source, flags, note, deleted, updated_at)
-       SELECT ?1, json_extract(incoming.value, '$[0]'), json_extract(incoming.value, '$[1]'), json_extract(incoming.value, '$[2]'), json_extract(incoming.value, '$[3]'),
-              json_extract(incoming.value, '$[4]'), json_extract(incoming.value, '$[5]'), json_extract(incoming.value, '$[6]'), json_extract(incoming.value, '$[7]'),
-              json_extract(incoming.value, '$[8]'), json_extract(incoming.value, '$[9]'), 0, change_stamp.value
-         FROM json_each(?3) AS incoming, change_stamp WHERE true
-       ON CONFLICT (user_email, id) DO UPDATE SET
-         date = excluded.date, time = excluded.time, description = excluded.description, amount = excluded.amount,
-         direction = excluded.direction, category = excluded.category, source = excluded.source, flags = excluded.flags,
-         note = excluded.note, deleted = 0, updated_at = excluded.updated_at`,
-    ).bind(email, updatedAt, JSON.stringify(upserts as SyncRow[])));
-  }
-  if (deletes.length) {
-    // Tombstones keep only the id and change marker so other devices learn about the delete.
-    statements.push(db.prepare(
-      `WITH change_stamp AS (
-         SELECT MAX(?2, COALESCE(MAX(updated_at), 0) + 1) AS value
-           FROM transactions WHERE user_email = ?1
-       )
-       INSERT INTO transactions (user_email, id, date, time, description, amount, direction, category, source, flags, note, deleted, updated_at)
-       SELECT ?1, incoming.value, '1970-01-01', '', '', 0, 0, 'Other', '', 0, '', 1, change_stamp.value
-         FROM json_each(?3) AS incoming, change_stamp WHERE true
-       ON CONFLICT (user_email, id) DO UPDATE SET
-         date = '1970-01-01', time = '', description = '', amount = 0, direction = 0,
-         category = 'Other', source = '', flags = 0, note = '', deleted = 1, updated_at = excluded.updated_at`,
-    ).bind(email, updatedAt, JSON.stringify(deletes)));
-  }
-  if (statements.length) await db.batch(statements);
-  return json({ updatedAt, upserted: upserts.length, deleted: deletes.length });
+  const batchId = request.headers.get("Idempotency-Key") ?? crypto.randomUUID();
+  const result = await writeTransactionsToR2(
+    db,
+    bucket,
+    email,
+    batchId,
+    upserts as SyncRow[],
+    deletes as string[],
+  );
+  return json(result);
 }
 
 async function clearTransactions(db: D1Database, email: string): Promise<Response> {
-  const updatedAt = Date.now();
-  await db.prepare(
-    `WITH change_stamp AS (
-       SELECT MAX(?2, COALESCE(MAX(updated_at), 0) + 1) AS value
-         FROM transactions WHERE user_email = ?1
-     )
-     UPDATE transactions
-        SET date = '1970-01-01', time = '', description = '', amount = 0, direction = 0,
-            category = 'Other', source = '', flags = 0, note = '', deleted = 1,
-            updated_at = (SELECT value FROM change_stamp)
-      WHERE user_email = ?1 AND deleted = 0`,
-  ).bind(email, updatedAt).run();
+  const updatedAt = await clearTransactionsInStore(db, email);
   return json({ updatedAt });
 }
 
@@ -322,19 +267,19 @@ function backupJson(row: BackupRow) {
   };
 }
 
-function backupTransaction(row: Record<string, unknown>): Transaction {
-  const flags = Number(row.flags) || 0;
+function backupTransaction(row: SyncRow): Transaction {
+  const [id, date, time, description, amount, direction, category, source, flags, note] = row;
   const transaction: Transaction = {
-    id: String(row.id),
-    date: String(row.date),
-    description: String(row.description),
-    amount: Number(row.amount),
-    direction: Number(row.direction) === 1 ? "income" : "expense",
-    category: String(row.category) as Transaction["category"],
-    source: String(row.source),
+    id,
+    date,
+    description,
+    amount,
+    direction: direction === 1 ? "income" : "expense",
+    category: category as Transaction["category"],
+    source,
   };
-  if (typeof row.time === "string" && row.time) transaction.time = row.time;
-  if (typeof row.note === "string" && row.note) transaction.note = row.note;
+  if (time) transaction.time = time;
+  if (note) transaction.note = note;
   if (flags & 1) transaction.internalTransfer = true;
   if (flags & 2) transaction.ownAccountCandidate = true;
   if (flags & 4) transaction.manual = true;
@@ -342,21 +287,16 @@ function backupTransaction(row: Record<string, unknown>): Transaction {
   return transaction;
 }
 
-async function readAllTransactions(db: D1Database, email: string): Promise<Transaction[]> {
+async function readAllTransactions(db: D1Database, bucket: R2Bucket, email: string): Promise<Transaction[]> {
   const transactions: Transaction[] = [];
-  let afterId = "";
-  const pageSize = 5000;
+  let after = "0:";
   while (true) {
-    const { results } = await db.prepare(
-      `SELECT id, date, time, description, amount, direction, category, source, flags, note
-       FROM transactions
-       WHERE user_email = ?1 AND deleted = 0 AND id > ?2
-       ORDER BY id
-       LIMIT ${pageSize}`,
-    ).bind(email, afterId).all<Record<string, unknown>>();
-    for (const row of results) transactions.push(backupTransaction(row));
-    if (results.length < pageSize) return transactions;
-    afterId = String(results[results.length - 1].id);
+    const page = await listTransactionPage(db, bucket, email, after, 5000);
+    for (const [row, deleted] of page.rows) {
+      if (!deleted) transactions.push(backupTransaction(row));
+    }
+    if (!page.hasMore) return transactions;
+    after = page.next;
   }
 }
 
@@ -387,7 +327,7 @@ async function listBackups(db: D1Database, email: string): Promise<Response> {
 
 async function createCloudBackup(db: D1Database, bucket: R2Bucket, email: string): Promise<Response> {
   const [transactions, collections] = await Promise.all([
-    readAllTransactions(db, email),
+    readAllTransactions(db, bucket, email),
     readAllCollections(db, email),
   ]);
   const createdAt = Date.now();
@@ -518,11 +458,13 @@ async function route(request: Request, env: Env, email: string): Promise<Respons
   if (path === "/api/me" && method === "GET") {
     const storage = { database: Boolean(env.DB), files: Boolean(env.STATEMENTS) };
     if (!env.DB) return json({ email, storage, transactions: 0, statements: 0 });
-    const counts = await env.DB.prepare(
-      `SELECT (SELECT COUNT(*) FROM transactions WHERE user_email = ?1 AND deleted = 0) AS transactions,
-              (SELECT COUNT(*) FROM statements WHERE user_email = ?1) AS statements`,
-    ).bind(email).first<{ transactions: number; statements: number }>();
-    return json({ email, storage, transactions: Number(counts?.transactions ?? 0), statements: Number(counts?.statements ?? 0) });
+    const [transactions, statementCount] = await Promise.all([
+      countActiveTransactions(env.DB, email),
+      env.DB.prepare("SELECT COUNT(*) AS statements FROM statements WHERE user_email = ?1")
+        .bind(email)
+        .first<{ statements: number }>(),
+    ]);
+    return json({ email, storage, transactions, statements: Number(statementCount?.statements ?? 0) });
   }
 
   if (path === "/api/auth/start" && method === "GET") {
@@ -560,8 +502,8 @@ async function route(request: Request, env: Env, email: string): Promise<Respons
 
   if (path === "/api/transactions") {
     const db = requireDb(env);
-    if (method === "GET") return listTransactions(db, email, url);
-    if (method === "POST") return writeTransactions(db, email, request);
+    if (method === "GET") return listTransactions(db, env.STATEMENTS, email, url);
+    if (method === "POST") return writeTransactions(db, requireBucket(env), email, request);
     if (method === "DELETE") return clearTransactions(db, email);
   }
 
@@ -650,6 +592,7 @@ export async function handleApi(request: Request, env: Env, fetcher?: (input: st
     }
     if (error instanceof HttpError) return json({ error: error.message, code: error.code }, error.status);
     if (error instanceof MonthlyStorageError) return json({ error: error.message, code: error.code }, error.status);
+    if (error instanceof TransactionStorageError) return json({ error: error.message, code: error.code }, error.status);
     console.error("Spendwise API error", error);
     return json({ error: "Something went wrong on the server.", code: "server_error" }, 500);
   }

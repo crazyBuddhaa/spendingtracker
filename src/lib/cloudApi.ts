@@ -83,10 +83,10 @@ export const cloudApi = {
   transactionsPage: (after: string, limit = 5000) =>
     callJson<TransactionPage>(`/api/transactions?after=${encodeURIComponent(after)}&limit=${limit}`),
 
-  writeTransactions: (upserts: SyncRow[], deletes: string[]) =>
+  writeTransactions: (upserts: SyncRow[], deletes: string[], batchId = crypto.randomUUID()) =>
     callJson<{ updatedAt: number }>("/api/transactions", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "Idempotency-Key": batchId },
       body: JSON.stringify({ upserts, deletes }),
     }),
 

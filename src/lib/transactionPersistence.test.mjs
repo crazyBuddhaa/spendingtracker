@@ -93,8 +93,8 @@ describe("managed transaction persistence adapter", () => {
         calls.push(["load", after]);
         return page;
       },
-      writeTransactions: async (upserts, deletes) => {
-        calls.push(["write", upserts, deletes]);
+      writeTransactions: async (upserts, deletes, batchId) => {
+        calls.push(["write", upserts, deletes, batchId]);
         return { updatedAt: 42 };
       },
     };
@@ -105,10 +105,76 @@ describe("managed transaction persistence adapter", () => {
     assert.equal(await adapter.loadPage("10:previous"), page);
     await adapter.applyChanges(upserts, deletes);
 
+    const batchId = calls[1][3];
     assert.deepEqual(calls, [
       ["load", "10:previous"],
-      ["write", upserts, deletes],
+      ["write", upserts, deletes, batchId],
     ]);
+    assert.match(batchId, /^[0-9a-f-]{36}$/i);
+  });
+
+  it("reuses the idempotency key when a failed write is retried unchanged", async () => {
+    const batchIds = [];
+    let shouldFail = true;
+    const api = {
+      transactionsPage: async () => ({ rows: [], next: "0:", hasMore: false }),
+      writeTransactions: async (_upserts, _deletes, batchId) => {
+        batchIds.push(batchId);
+        if (shouldFail) {
+          shouldFail = false;
+          throw new Error("simulated network failure");
+        }
+        return { updatedAt: 42 };
+      },
+    };
+    const adapter = createTransactionPersistenceAdapter(DEFAULT_STORAGE_PREFERENCE.provider, api);
+    const upserts = [["retry", "2026-10-01", "", "Market", 500, 0, "Shopping", "Checking", 0, ""]];
+
+    await assert.rejects(() => adapter.applyChanges(upserts, []), /simulated network failure/);
+    await adapter.applyChanges(upserts, []);
+    assert.equal(batchIds.length, 2);
+    assert.equal(batchIds[0], batchIds[1]);
+  });
+
+  it("restores the idempotency key from persisted metadata after an adapter reload", async () => {
+    let stored = null;
+    const retryStore = {
+      read: async () => stored,
+      write: async (value) => { stored = value; return true; },
+    };
+    const batchIds = [];
+    const upserts = [["reload-retry", "2026-10-01", "", "Market", 500, 0, "Shopping", "Checking", 0, ""]];
+    const failingApi = {
+      transactionsPage: async () => ({ rows: [], next: "0:", hasMore: false }),
+      writeTransactions: async (_upserts, _deletes, batchId) => {
+        batchIds.push(batchId);
+        throw new Error("simulated page interruption");
+      },
+    };
+    const firstAdapter = createTransactionPersistenceAdapter(
+      DEFAULT_STORAGE_PREFERENCE.provider,
+      failingApi,
+      retryStore,
+    );
+    await assert.rejects(() => firstAdapter.applyChanges(upserts, []), /simulated page interruption/);
+    assert.ok(stored);
+
+    const succeedingApi = {
+      transactionsPage: async () => ({ rows: [], next: "0:", hasMore: false }),
+      writeTransactions: async (_upserts, _deletes, batchId) => {
+        batchIds.push(batchId);
+        return { updatedAt: 42 };
+      },
+    };
+    const reloadedAdapter = createTransactionPersistenceAdapter(
+      DEFAULT_STORAGE_PREFERENCE.provider,
+      succeedingApi,
+      retryStore,
+    );
+    await reloadedAdapter.applyChanges(upserts, []);
+    assert.equal(batchIds.length, 2);
+    assert.equal(batchIds[0], batchIds[1]);
+    assert.deepEqual(JSON.parse(stored), {});
   });
 
   it("does not provide a fake Google Sheets persistence adapter", () => {
