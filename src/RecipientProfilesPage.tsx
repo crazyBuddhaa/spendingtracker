@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { CalendarClock, Car, CircleHelp, Clock3, Pencil, Route, Search, Tag, Trash2, Users, X } from "lucide-react";
-import { findRecurringPayments, findRecurringTransportPayments } from "./lib/analytics";
+import { findRecurringPayments, findRecurringTransportPayments, recurringCadenceLabel } from "./lib/analytics";
 import { formatCurrency, formatDate } from "./lib/format";
 import {
   detectMultiRecipientJourneys,
@@ -161,7 +161,7 @@ export default function RecipientProfilesPage({
           <div><div className="panel-kicker">PAYMENT RHYTHM</div><h2>Recurring payments</h2></div>
           <span className="heading-note"><CalendarClock size={14} /> {recurringPayments.length} detected</span>
         </div>
-        <p className="panel-note">Weekly or monthly payments with a steady date rhythm and similar amounts. These are historical estimates, not scheduled payments.</p>
+        <p className="panel-note">Payments with a steady weekly, fortnightly, monthly, quarterly, or yearly rhythm and similar amounts. These are historical estimates, not scheduled payments.</p>
         {recurringPayments.length ? (
           <div className="simple-table-wrap">
             <table className="simple-table">
@@ -169,7 +169,7 @@ export default function RecipientProfilesPage({
               <tbody>{recurringPayments.map((item) => (
                 <tr key={item.key}>
                   <td><strong>{item.name}</strong><small>{item.category} · {item.occurrences} payments</small></td>
-                  <td>{item.cadence === "weekly" ? "Weekly" : "Monthly"}</td>
+                  <td>{recurringCadenceLabel(item.cadence)}</td>
                   <td>{formatCurrency(item.typicalAmount, currency)}</td>
                   <td>{formatCurrency(item.monthlyCost, currency)}</td>
                   <td><span className="next-date"><CalendarClock size={12} /> {formatDate(item.nextExpected)}</span></td>
@@ -177,7 +177,7 @@ export default function RecipientProfilesPage({
               ))}</tbody>
             </table>
           </div>
-        ) : <div className="counterparty-empty">No steady weekly or monthly payments found yet. At least three transactions on a regular rhythm are needed.</div>}
+        ) : <div className="counterparty-empty">No steady recurring payments found yet. At least three transactions on a regular rhythm are needed.</div>}
       </section>
 
       <section className="panel recipient-insight-panel">

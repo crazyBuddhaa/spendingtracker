@@ -472,7 +472,34 @@ describe("analytics", () => {
     assert.equal(recurring.name, "O.F Modupe Multichoice");
     assert.equal(recurring.occurrences, 4);
     assert.equal(recurring.typicalAmount, 2500);
-    assert.equal(recurring.nextExpected > "2026-10-01", true);
+    assert.equal(recurring.nextExpected, "2026-10-05");
+  });
+
+  it("detects fortnightly and quarterly recurring payments and estimates monthly cost", () => {
+    const periodic = [
+      tx({ id: "bi1", date: "2026-01-01", description: "Transfer to Mobile Plan | Bank", amount: 4000 }),
+      tx({ id: "bi2", date: "2026-01-15", description: "Transfer to Mobile Plan | Bank", amount: 4100 }),
+      tx({ id: "bi3", date: "2026-01-29", description: "Transfer to Mobile Plan | Bank", amount: 3900 }),
+      tx({ id: "q1", date: "2026-01-01", description: "Transfer to Insurance Co | Bank", amount: 12000 }),
+      tx({ id: "q2", date: "2026-04-01", description: "Transfer to Insurance Co | Bank", amount: 12100 }),
+      tx({ id: "q3", date: "2026-07-01", description: "Transfer to Insurance Co | Bank", amount: 11900 }),
+      tx({ id: "a1", date: "2023-01-01", description: "Transfer to Annual Plan | Bank", amount: 1200 }),
+      tx({ id: "a2", date: "2024-01-01", description: "Transfer to Annual Plan | Bank", amount: 1200 }),
+      tx({ id: "a3", date: "2025-01-01", description: "Transfer to Annual Plan | Bank", amount: 1200 }),
+    ];
+    const recurring = findRecurringPayments(periodic);
+    const fortnightly = recurring.find((item) => item.name === "Mobile Plan");
+    const quarterly = recurring.find((item) => item.name === "Insurance Co");
+    const yearly = recurring.find((item) => item.name === "Annual Plan");
+    assert.equal(fortnightly.cadence, "fortnightly");
+    assert.equal(fortnightly.monthlyCost, 8666.67);
+    assert.equal(fortnightly.nextExpected, "2026-02-12");
+    assert.equal(quarterly.cadence, "quarterly");
+    assert.equal(quarterly.monthlyCost, 4000);
+    assert.equal(quarterly.nextExpected, "2026-10-01");
+    assert.equal(yearly.cadence, "yearly");
+    assert.equal(yearly.monthlyCost, 100);
+    assert.equal(yearly.nextExpected, "2026-01-01");
   });
 
   it("summarises fees, payees, spending rhythm, and months", () => {

@@ -47,7 +47,10 @@ Transfers to or from your own name (in any order, at least two name parts, inclu
 - Top payees and sources of money in, bank fees and levies, average daily spend and the heaviest weekday.
 - **Monthly report** (money in, money out after refunds, net, betting, fees, top category) with CSV export.
 - **Budgets** per category with month-by-month tracking and a projection for the month in progress; suggested limits use your average over the last three full months.
-- **Regular payments** detected from weekly or monthly payments to the same payee with similar amounts.
+- **Regular payments** detected from weekly, fortnightly, monthly, quarterly, or yearly payments to the same payee with similar amounts; at least three occurrences are required.
+- **Daily and weekly spending trends** compare recent spend pace and transaction frequency with the previous week, alongside peak spending days and weeks.
+- **Spending-time and amount flags** highlight rare time windows and unusually large category expenses relative to earlier personal history. They are review prompts, not fraud or error determinations.
+- **Spending forecasts** extrapolate month-end and next-30-day spending from the recorded run rate; estimates need a minimum history span and do not model seasonality or upcoming bills.
 - **Typical fare ranges** show the 20th–80th percentile of identified Transport payments per payee after three transactions. Statements do not include trip routes, so this is a personal historical range rather than a route-price estimate.
 - **Recurring Transport estimates** project a monthly amount only for named payees with at least three similar Transport payments on a steady weekly or monthly cadence.
 - **Recipient timing patterns** show repeated outgoing transfers around a similar time of day. Possible recipient pairs and multi-recipient sequences are shown only when the same ordered pattern recurs on at least two dates; these are timing clues, not evidence of a journey or location.
