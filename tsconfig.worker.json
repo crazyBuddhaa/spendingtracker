@@ -13,5 +13,5 @@
     "skipLibCheck": true,
     "types": []
   },
-  "include": ["functions", "server/*.ts", "src/lib/syncFormat.ts", "src/types.ts"]
+  "include": ["functions", "server/*.ts", "src/types.ts"]
 }

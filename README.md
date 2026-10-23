@@ -52,60 +52,20 @@ Transfers to or from your own name (in any order, at least two name parts, inclu
 
 **Data & rules → Download backup** saves transactions, goals, circles, bets, rules and budgets in one JSON file. **Restore from file** replaces what is in the browser.
 
-Signed-in users can also create an on-demand cloud backup under **Data & rules → Cloud sync and storage**. The snapshot is saved in R2 and can be downloaded in the same JSON format for **Restore from file**. Cloud backups include D1 transactions and synced collections; original statement files remain separate R2 objects.
+## Cloudflare Access sign-in
 
-## Cloud sync with Cloudflare (D1 + R2 + Access)
+The website and financial tracker remain local-first. Cloudflare Access is an optional identity check; signing in does not upload or sync transactions, goals, bets, rules, budgets, or statement files.
 
-The website is public. Guests use browser storage only; signing in with an email code enables per-email cloud sync:
+To enable the sign-in flow:
 
-- **D1** stores transactions, savings goals, circles, bets, rules, and budgets, scoped to the signed-in email.
-- **R2** keeps the original statement files you import (CSV, Excel, PDF; up to 25 MB each, de-duplicated) and on-demand account backup snapshots. Download or delete them under **Data & rules**.
-- **Cloudflare Access** protects only `/api/*`, not the public website. The API verifies the Access token (signature, audience, issuer, expiry) on every request and refuses cloud access until Access is configured.
-- The browser keeps a copy, so the app opens instantly and works offline; changes made offline are queued (even across reloads) and sync when you reconnect. Other devices pick up changes on focus and every minute.
-- Guests stay local until they choose **Sign in to sync**. The button starts the Cloudflare Access login flow and returns to the public website; on first sign-in, history already saved in that browser is uploaded to that email's cloud account.
+1. In Cloudflare Zero Trust → Access → Applications, add a Self-hosted application covering only `/api/me` on your Pages hostname. Leave `/api/auth/start` and the public website outside the Access application so the sign-in button can begin the login flow.
+2. Choose an identity provider such as **One-time PIN**, then set an **Allow** policy for the people who should be able to sign in. Copy the application's **Audience (AUD) Tag**.
+3. In the Pages project's Variables and Secrets, set `ACCESS_TEAM_DOMAIN` to your team's `https://<team>.cloudflareaccess.com` address and `ACCESS_AUD` to that tag.
+4. Redeploy the Pages project.
 
-Without these bindings (or with `npm run dev`), the app works exactly as before, storing everything in the browser.
+The sign-in button opens Cloudflare Access and returns to the app. The authenticated `/api/me` endpoint verifies the Access token and returns the normalized email for display; it has no financial-data or storage routes.
 
-### Storage preference foundation
-
-The versioned preference model defaults existing users to **Spendwise-managed** storage and automatic backups disabled. Signed-in preference records are stored in D1's `storage_preferences` table, keyed by the lower-cased email returned by server-side Cloudflare Access JWT verification. The API derives that key from the authenticated request; it does not accept an account identifier from the client. A missing record returns the default without writing a row, and a record is created only when the user saves a preference. **Google Sheets remains not connected**: this API does not authorize it or change the existing transaction sync path. No tokens or provider credentials are stored. There is no storage-settings UI in this stage, and the backup preference does not activate automatic backups or change manual/on-demand R2 backup behavior.
-
-Stage 6A adds only the D1 preference foundation. It does not add a UI, Google Sheets integration, R2 transaction migration, or deployment. Apply the migration with the same D1 workflow as the other migrations:
-
-```sh
-npx wrangler d1 execute spendwise --remote --file=migrations/0004_storage_preferences.sql
-```
-
-### One-time setup
-
-Run these from the project folder (log in with `npx wrangler login` first):
-
-```sh
-npx wrangler d1 create spendwise
-npx wrangler d1 execute spendwise --remote --file=migrations/0001_init.sql
-npx wrangler d1 execute spendwise --remote --file=migrations/0002_scrub_transaction_tombstones.sql
-npx wrangler d1 execute spendwise --remote --file=migrations/0003_cloud_backups.sql
-npx wrangler d1 execute spendwise --remote --file=migrations/0004_storage_preferences.sql
-npx wrangler r2 bucket create spendwise-statements
-```
-
-Then in the Cloudflare dashboard:
-
-1. **Bindings**: Workers & Pages → your Pages project → Settings → Bindings → Add:
-   - D1 database: variable name `DB` → `spendwise`
-   - R2 bucket: variable name `STATEMENTS` → `spendwise-statements`
-2. **Access**: Zero Trust → Access → Applications → Add or update a Self-hosted application:
-   - Protect only each API path, such as `your-project.pages.dev/api/*` and `your-domain.example/api/*`. Do not add a hostname-wide rule; the public website must remain open to guests.
-   - For self-service accounts, use the *One-time PIN* identity provider and an *Allow* policy that includes *Everyone*. To make the app private, replace *Everyone* with an explicit email allowlist.
-   - After saving, copy the **Application Audience (AUD) Tag** from the application's overview.
-3. **Variables**: Pages project → Settings → Variables and Secrets (Production):
-   - `ACCESS_TEAM_DOMAIN` = `https://<your-team-name>.cloudflareaccess.com` (your team name is under Zero Trust → Settings → Custom pages)
-   - `ACCESS_AUD` = the AUD tag from step 2
-4. **Redeploy** the latest deployment (Deployments → ⋯ → Retry deployment) so the bindings and variables take effect.
-
-Open the public site as a guest to keep data in the browser, or choose **Sign in to sync** and enter the emailed code. The sidebar should then show **Synced to Cloudflare**. To change the schema later, add a new file in `migrations/` and run it with the same `d1 execute` command.
-
-To run the app with its API locally, copy `wrangler.example.toml` to `wrangler.toml`, fill in the IDs, set `DEV_USER_EMAIL`, then `npm run build && npx wrangler pages dev`.
+For local API testing, copy `wrangler.example.toml` to `wrangler.toml`, set `DEV_USER_EMAIL` for localhost, then run `npm run build && npx wrangler pages dev`.
 
 ## Savings and betting
 
@@ -119,14 +79,12 @@ Betting analytics include all-record stake and return totals, resolved net and R
 
 ## Privacy and scope
 
-With cloud sync set up, signed-in data is stored in your Cloudflare account (D1 and R2), behind your Cloudflare Access login; guest data stays in the browser:
-
-CSV, Excel, text-based PDF, and saved betting-page parsing run in the browser. Transactions are saved in that browser's IndexedDB (multi-year statements outgrow `localStorage`; data from older versions is moved over automatically), and savings goals, bets, rules, and budgets in `localStorage`; source files and records are not sent to a server. Clearing browser data removes the saved history. The app does not request bank logins or connect to bank APIs. Direct bank feeds require a supported open-banking provider and a separate server-side integration.
+CSV, Excel, text-based PDF, and saved betting-page parsing run in the browser. Transactions are saved in that browser's IndexedDB (multi-year statements outgrow `localStorage`; data from older versions is moved over automatically), and savings goals, bets, rules, and budgets in `localStorage`. Financial records and source files are not sent to a server. Cloudflare Access, when enabled, verifies sign-in identity only. Clearing browser data removes the saved history. The app does not request bank logins or connect to bank APIs. Direct bank feeds require a supported open-banking provider and a separate server-side integration.
 
 ## Stack
 
 - React, TypeScript, and Vite
 - Browser IndexedDB and `localStorage` for local persistence
 - Node's built-in test runner for import, calculation, and API tests (Node 22.13+)
-- Optional Cloudflare Pages Functions (`functions/`, `server/`) with D1, R2, and Access
+- Optional Cloudflare Pages Functions (`functions/`, `server/`) for Cloudflare Access identity verification
 

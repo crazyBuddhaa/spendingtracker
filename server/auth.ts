@@ -116,7 +116,7 @@ function cookieValue(request: Request, name: string): string | null {
 export async function authenticate(request: Request, env: Env, fetcher: Fetcher = fetch, now = Date.now()): Promise<string> {
   const token = request.headers.get("Cf-Access-Jwt-Assertion") ?? cookieValue(request, "CF_Authorization");
   if (teamOrigin(env) && env.ACCESS_AUD) {
-    if (!token) throw new AuthError("Sign in through Cloudflare Access to use cloud sync.");
+    if (!token) throw new AuthError("Sign in through Cloudflare Access to verify your identity.");
     return verifyAccessJwt(token, env, fetcher, now);
   }
   // Without Access configured, only allow an explicit developer identity on a local address.

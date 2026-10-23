@@ -1,9 +1,6 @@
-// Cloudflare Pages Function: every request under /api/* is handled by server/api.ts.
-// Bindings (configure in the Pages project: Settings → Bindings):
-//   DB          – D1 database (schema: migrations/0001_init.sql)
-//   STATEMENTS  – R2 bucket for original statement files and account backups
-// Variables: ACCESS_TEAM_DOMAIN, ACCESS_AUD (from your Cloudflare Access application).
-// Protect only /api/* with Access; the public website stays available to guests.
+// Cloudflare Pages Function: the /api/auth/start and /api/me routes are handled by server/api.ts.
+// Variables: ACCESS_TEAM_DOMAIN and ACCESS_AUD from your Cloudflare Access application.
+// Keep the public website open; use Access only on the identity check endpoint.
 import { handleApi } from "../../server/api.ts";
 import type { Env } from "../../server/bindings.ts";
 

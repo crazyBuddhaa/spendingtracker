@@ -800,22 +800,12 @@ button.category-row:disabled { cursor: default; }
 .report-table td:not(:first-child),.report-table th:not(:first-child) { text-align: right; }
 @media (max-width: 1150px) { .extras-grid { grid-template-columns: minmax(0,1fr); } }
 
-/* cloud sync */
-.sync-card-actions { display: flex; flex-wrap: wrap; gap: 10px; }
-.sync-card-actions button { display: inline-flex; align-items: center; gap: 4px; }
-.sync-card p { overflow-wrap: anywhere; }
-.sync-ok .privacy-icon { color: #2f7a55; background: #e3f1e8; }
-.sync-busy .privacy-icon { color: #3b6f9c; background: #e6eff8; }
-.sync-warn { border-color: #eadfc4; background: linear-gradient(140deg,#fffcf3,#fbf6e8); }
-.sync-warn .privacy-icon { color: #9a6b1d; background: #f6ecd2; }
-.cloud-panel { padding: 18px; }
-.cloud-panel--local { display: flex; align-items: flex-start; gap: 14px; }
-.cloud-panel--local h2 { margin: 0 0 6px; color: #304037; font: 700 14px "Manrope", sans-serif; }
-.cloud-panel--local p { margin: 0; color: #7f8a83; font-size: 11px; line-height: 1.55; }
-.cloud-facts { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; margin: 14px 0 6px; }
-.cloud-facts div { display: grid; gap: 5px; min-width: 0; padding: 11px 12px; border: 1px solid #edf0ec; border-radius: 8px; }
-.cloud-facts span { color: #9aa39d; font-size: 8px; font-weight: 700; letter-spacing: 1px; }
-.cloud-facts strong { overflow: hidden; color: #33433a; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.cloud-subheading { display: flex; align-items: center; gap: 6px; margin: 16px 0 4px; color: #46534b; font-size: 11px; }
+/* Access identity, separate from local financial data */
+.access-card-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.access-card-actions button { display: inline-flex; align-items: center; gap: 4px; }
+.access-card p { overflow-wrap: anywhere; }
+.access-panel { display: flex; align-items: flex-start; gap: 14px; padding: 18px; }
+.access-panel-copy { min-width: 0; }
+.access-panel-copy h2 { margin: 0 0 6px; color: #304037; font: 700 14px "Manrope", sans-serif; }
+.access-panel-copy p { margin: 0 0 10px; color: #7f8a83; font-size: 11px; line-height: 1.55; }
 a.icon-button { text-decoration: none; }
-@media (max-width: 600px) { .cloud-facts { grid-template-columns: minmax(0,1fr); } }

@@ -1,20 +1,8 @@
-# Optional: copy to wrangler.toml to run the app with its API locally (`npx wrangler pages dev`)
-# or to manage bindings from code. If you keep using the Cloudflare dashboard to configure
-# bindings, you don't need this file. Note that once a wrangler.toml exists in the repo,
-# Pages uses it instead of the dashboard settings.
+# Optional: copy to wrangler.toml to run the app and Access identity endpoint locally
+# with `npx wrangler pages dev`. Keep Access values in the Pages environment as well.
 name = "spendingtracker"              # your Pages project name
 pages_build_output_dir = "dist"
 compatibility_date = "2026-06-01"
-
-[[d1_databases]]
-binding = "DB"
-database_name = "spendwise"
-database_id = "PASTE-THE-ID-FROM-wrangler-d1-create"
-migrations_dir = "migrations"
-
-[[r2_buckets]]
-binding = "STATEMENTS"
-bucket_name = "spendwise-statements"
 
 [vars]
 ACCESS_TEAM_DOMAIN = "https://YOUR-TEAM.cloudflareaccess.com"

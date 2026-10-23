@@ -6,9 +6,6 @@ import {
   BarChart3,
   Check,
   ChevronDown,
-  Cloud,
-  CloudOff,
-  CloudUpload,
   DatabaseBackup,
   Download,
   FileText,
@@ -18,7 +15,6 @@ import {
   Lightbulb,
   LoaderCircle,
   LockKeyhole,
-  RefreshCw,
   Menu,
   PiggyBank,
   Plus,
@@ -50,8 +46,7 @@ import BettingPage from "./BettingPage";
 import BudgetsPage from "./BudgetsPage";
 import DataPage from "./DataPage";
 import InsightsExtras from "./InsightsExtras";
-import { useCloudSync, type SyncStatus } from "./useCloudSync";
-import type { CollectionName } from "./lib/syncFormat";
+import { useAccessAuth, type AccessStatus } from "./useAccessAuth";
 import { normaliseSavingsGoals } from "./lib/savings";
 import { normaliseSavingsCircles } from "./lib/savingsCircles";
 import { normaliseBets } from "./lib/sportyBetImport";
@@ -99,7 +94,6 @@ interface PendingStatementImport {
   diagnosticsAvailable: boolean;
   warnings: string[];
   files: File[];
-  filesWithTransactions: Array<{ file: File; rows: number }>;
 }
 
 const pageTitles: Record<Page, string> = {
@@ -358,46 +352,7 @@ function App() {
   const displayedTransactions = useMemo(() => visibleTransactions.slice(0, transactionLimit), [visibleTransactions, transactionLimit]);
   const visibleTotals = useMemo(() => calculateTotals(visibleTransactions), [visibleTransactions]);
 
-  const collections = useMemo(
-    () => ({ savingsGoals, savingsCircles, bets, rules, budgets }),
-    [savingsGoals, savingsCircles, bets, rules, budgets],
-  );
-  const applyCollection = useCallback((name: CollectionName, data: unknown): unknown[] => {
-    switch (name) {
-      case "savingsGoals": {
-        const value = normaliseSavingsGoals(data);
-        setSavingsGoals(value);
-        saveJson(SAVINGS_STORAGE_KEY, value);
-        return value;
-      }
-      case "savingsCircles": {
-        const value = normaliseSavingsCircles(data);
-        setSavingsCircles(value);
-        saveJson(CIRCLES_STORAGE_KEY, value);
-        return value;
-      }
-      case "bets": {
-        const value = normaliseBets(data);
-        setBets(value);
-        saveJson(BETS_STORAGE_KEY, value);
-        return value;
-      }
-      case "rules": {
-        const value = normaliseRules(data);
-        setRules(value);
-        saveJson(RULES_STORAGE_KEY, value);
-        return value;
-      }
-      default: {
-        const value = normaliseBudgets(data);
-        setBudgets(value);
-        saveJson(BUDGETS_STORAGE_KEY, value);
-        return value;
-      }
-    }
-  }, []);
-  const cloud = useCloudSync({ loaded, transactions, setTransactions, collections, applyCollection });
-  const cloudActive = cloud.status.mode === "cloud";
+  const access = useAccessAuth();
 
   const updateSavingsGoals = (next: SavingsGoal[]) => {
     setSavingsGoals(next);
@@ -434,7 +389,6 @@ function App() {
     setImporting(true);
     setImportWarnings([]);
     const imported: Transaction[] = [];
-    const filesWithTransactions: Array<{ file: File; rows: number }> = [];
     let skipped = 0;
     const messages: string[] = [];
     let diagnosticsAvailable = true;
@@ -453,7 +407,6 @@ function App() {
         try {
           const result = await parseStatementFile(file);
           imported.push(...result.transactions);
-          if (result.transactions.length) filesWithTransactions.push({ file, rows: result.transactions.length });
           skipped += result.skipped;
           if (!result.diagnostics) {
             diagnosticsAvailable = false;
@@ -484,7 +437,6 @@ function App() {
         diagnosticsAvailable,
         warnings: messages,
         files: statementFiles,
-        filesWithTransactions,
       });
     } finally {
       setImporting(false);
@@ -492,10 +444,7 @@ function App() {
     }
   };
 
-  const comparisonAvailable = loaded && (
-    cloud.status.mode === "local"
-    || (cloud.status.mode === "cloud" && cloud.status.state === "idle")
-  );
+  const comparisonAvailable = loaded;
   const importPreview: ImportPreview | null = useMemo(() => pendingImport
     ? buildImportPreview({
       imported: applyCategoryRules(pendingImport.transactions, rules),
@@ -533,22 +482,7 @@ function App() {
     } else {
       notify(messages[0] ?? "No transactions could be imported. Check the statement columns and try again.");
     }
-    if (cloudActive && cloud.status.filesEnabled && pendingImport.filesWithTransactions.length) {
-      void storeStatementFiles(pendingImport.filesWithTransactions);
-    }
     setPendingImport(null);
-  };
-
-  /** Keeps a copy of each imported statement file in R2. Runs in the background. */
-  const storeStatementFiles = async (files: Array<{ file: File; rows: number }>) => {
-    const results = await Promise.allSettled(files.map(({ file, rows }) => cloud.uploadStatement(file, rows)));
-    const failed = results.filter((result) => result.status === "rejected").length;
-    const stored = results.filter((result) => result.status === "fulfilled" && !result.value.duplicate).length;
-    if (failed) {
-      setImportWarnings((current) => [...current, `${failed} statement file${failed === 1 ? "" : "s"} could not be saved to cloud storage. The transactions were imported; you can re-import the file later to store it.`]);
-    } else if (stored) {
-      setImportWarnings((current) => [...current, `${stored} original statement file${stored === 1 ? " was" : "s were"} saved to your cloud storage (Data & rules → Statement files).`]);
-    }
   };
 
   const importBetPage = async (files: FileList | File[]) => {
@@ -756,9 +690,7 @@ function App() {
 
   const clearTransactions = () => {
     if (!transactions.length) return;
-    if (!window.confirm(cloudActive
-      ? "Delete all transactions from this browser AND your cloud database? This cannot be undone."
-      : "Delete all locally saved transactions? This cannot be undone.")) return;
+    if (!window.confirm("Delete all locally saved transactions? This cannot be undone.")) return;
     setTransactions([]);
     notify("Transaction history cleared from this browser.");
   };
@@ -832,7 +764,7 @@ function App() {
           <NavButton page="data" active={activePage} onClick={goTo} icon={<DatabaseBackup size={18} />} count={rules.length || undefined} />
         </nav>
         <div className="sidebar-bottom">
-          <SyncCard status={cloud.status} onSync={() => void cloud.syncNow()} onSignIn={cloud.signIn} onDetails={() => setShowPrivacy(true)} />
+          <AccessCard status={access.status} onSignIn={access.signIn} onDetails={() => setShowPrivacy(true)} />
         </div>
       </aside>
       {sidebarOpen && <div className="sidebar-scrim" onClick={() => setSidebarOpen(false)} aria-hidden="true" />}
@@ -883,7 +815,7 @@ function App() {
               </div>
 
               {transactions.length === 0 ? (
-                <EmptyState cloud={cloudActive} onImport={() => fileInput.current?.click()} onDemo={loadDemo} />
+                <EmptyState onImport={() => fileInput.current?.click()} onDemo={loadDemo} />
               ) : (
                 <>
                   {emptyPeriodNotice}
@@ -989,7 +921,7 @@ function App() {
                   </div>
                 </>
               )}
-              <div className="page-footnote"><ShieldCheck size={14} /> {cloudActive ? "Your data is private: it syncs only to your own Cloudflare account, behind your Cloudflare Access sign-in." : "Your transaction data is private and stays on this device."}</div>
+              <div className="page-footnote"><ShieldCheck size={14} /> Your financial records stay in this browser and are never uploaded.</div>
             </>
           )}
 
@@ -1119,18 +1051,8 @@ function App() {
               onExportBackup={exportBackup}
               onRestoreBackup={(file) => void restoreBackup(file)}
               onClearTransactions={clearTransactions}
-              cloud={{
-                status: cloud.status,
-                onSync: () => void cloud.syncNow(),
-                onSignIn: cloud.signIn,
-                listStatements: cloud.listStatements,
-                deleteStatement: cloud.deleteStatement,
-                statementUrl: cloud.statementUrl,
-                listBackups: cloud.listBackups,
-                createCloudBackup: cloud.createCloudBackup,
-                deleteCloudBackup: cloud.deleteCloudBackup,
-                backupUrl: cloud.backupUrl,
-              }}
+              access={access.status}
+              onSignIn={access.signIn}
             />
           )}
 
@@ -1145,7 +1067,7 @@ function App() {
                 <div className="heading-actions">{periodControls}</div>
               </div>
               {transactions.length === 0 ? (
-                <EmptyState cloud={cloudActive} onImport={() => fileInput.current?.click()} onDemo={loadDemo} />
+                <EmptyState onImport={() => fileInput.current?.click()} onDemo={loadDemo} />
               ) : (
                 <>
                   {emptyPeriodNotice}
@@ -1220,12 +1142,8 @@ function App() {
           warnings={pendingImport.warnings}
           diagnosticsAvailable={pendingImport.diagnosticsAvailable}
           comparisonNote={!comparisonAvailable
-            ? cloud.status.mode === "cloud"
-              ? "Comparison is incomplete while cloud sync is loading or unavailable; counts are withheld rather than estimated."
-              : "Comparison is incomplete until the transaction history has finished loading."
-            : cloud.status.mode === "local"
-              ? "Comparison uses the transaction history available in this browser only; no connected cloud history is included."
-              : "Comparison uses the currently loaded transaction history."}
+            ? "Comparison is incomplete until the transaction history has finished loading."
+            : "Comparison uses the transaction history saved in this browser only."}
           pdfExtraction={pendingImport.files.some((file) => file.name.toLowerCase().endsWith(".pdf"))}
           onModeChange={setImportMode}
           onMonthChange={setImportMonth}
@@ -1236,7 +1154,7 @@ function App() {
         />
       )}
       {toast && <div className="toast" role="status"><Check size={16} />{toast}</div>}
-      {showPrivacy && <PrivacyModal cloud={cloudActive ? cloud.status.email : null} onClose={() => setShowPrivacy(false)} />}
+      {showPrivacy && <PrivacyModal email={access.status.state === "signed-in" ? access.status.email : null} onClose={() => setShowPrivacy(false)} />}
       {showAddTransaction && <AddTransactionModal currency={currency} sources={sources} onClose={() => setShowAddTransaction(false)} onSave={addManualTransaction} />}
     </div>
   );
@@ -1353,7 +1271,7 @@ function ImportPreviewModal({
           <p>{comparisonNote}</p>
           <p>Statement-period metadata is not stored. The overlap check uses existing imported transaction dates within the detected range; it cannot confirm which original statement files covered those dates.</p>
           <p>Potential duplicates are date, amount, and description matches that did not meet the exact duplicate rule; they are not skipped. Existing import logic does not update existing transaction records.</p>
-          <p>Nothing is committed during preview. Confirm uses the existing transaction import path and may sync transactions to D1. Source statement files may be saved separately to R2 when enabled; transactions are not stored in R2.</p>
+          <p>Nothing is saved during preview. Confirm adds the selected transactions to this browser’s saved history. Original statement files are not uploaded.</p>
           {preview.missingDateRows > 0 && <p>{preview.missingDateRows.toLocaleString("en-NG")} row(s) had no date; {preview.invalidDateRows.toLocaleString("en-NG")} row(s) had an invalid date.</p>}
           {preview.ambiguousDateRows > 0 && <p>{preview.ambiguousDateRows.toLocaleString("en-NG")} ambiguous numeric date(s) use the existing day-first interpretation. Check these against the statement if it uses month-first dates.</p>}
           {preview.timeline.invalidTransactionDates > 0 && <p>{preview.timeline.invalidTransactionDates} parsed transaction(s) had an invalid normalized date and were excluded from timeline bounds.</p>}
@@ -1455,7 +1373,7 @@ function MetricCard({
   );
 }
 
-function EmptyState({ onImport, onDemo, cloud = false }: { onImport: () => void; onDemo: () => void; cloud?: boolean }) {
+function EmptyState({ onImport, onDemo }: { onImport: () => void; onDemo: () => void }) {
   return (
     <section className="empty-state">
       <div className="empty-art">
@@ -1467,8 +1385,8 @@ function EmptyState({ onImport, onDemo, cloud = false }: { onImport: () => void;
       <div className="eyebrow"><span className="eyebrow-dot" /> YOUR PRIVATE MONEY DASHBOARD</div>
       <h2>Start with your transaction history.</h2>
       <p>Import CSV, Excel, or text-based PDF statements (OPay, Access Bank, Moniepoint and similar). Spendwise brings them together and shows your income, spending, and patterns in one place.</p>
-      <div className="empty-actions"><button className="button button-primary" onClick={onImport}><CloudUpload size={17} /> Import a bank statement</button><button className="button button-text" onClick={onDemo}>Explore with sample data</button></div>
-      <div className="empty-foot"><LockKeyhole size={13} /> {cloud ? "Statements are read in your browser and saved only to your own Cloudflare account." : "Statements are read locally and never uploaded."}</div>
+      <div className="empty-actions"><button className="button button-primary" onClick={onImport}><FileText size={17} /> Import a bank statement</button><button className="button button-text" onClick={onDemo}>Explore with sample data</button></div>
+      <div className="empty-foot"><LockKeyhole size={13} /> Statements are read locally and never uploaded.</div>
     </section>
   );
 }
@@ -1810,87 +1728,45 @@ function summarySentence(
   return `${start}${topCategory ? `, and ${topCategory.category.toLowerCase()} was your largest spending area at ${formatCurrency(topCategory.amount, currency)}.` : "."}`;
 }
 
-function PrivacyModal({ cloud, onClose }: { cloud: string | null; onClose: () => void }) {
+function PrivacyModal({ email, onClose }: { email: string | null; onClose: () => void }) {
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className="privacy-modal" role="dialog" aria-modal="true" aria-labelledby="privacy-heading">
         <button className="icon-button modal-close" onClick={onClose} aria-label="Close"><X size={18} /></button>
         <div className="privacy-modal-icon"><LockKeyhole size={21} /></div>
         <div className="panel-kicker">PRIVATE BY DESIGN</div>
-        {cloud ? (
-          <>
-            <h2 id="privacy-heading">Synced to your own Cloudflare account.</h2>
-            <p>Signed in as <strong>{cloud}</strong>. Transactions, goals, bets, rules, and budgets are stored in your Cloudflare D1 database, and original statement files in your R2 bucket. Every request is checked against your Cloudflare Access sign-in, and each person only sees their own records.</p>
-            <ul><li><Check size={15} /> No bank login or credentials are collected</li><li><Check size={15} /> Statements are read in the browser; only the results and the original file are stored</li><li><Check size={15} /> A copy stays in this browser so the app opens fast and works offline</li></ul>
-            <p className="privacy-modal-note">Changes made offline are queued on this device and sync when you reconnect. You can still download a full backup file from Data & rules.</p>
-          </>
-        ) : (
-          <>
-            <h2 id="privacy-heading">Your records stay in this browser.</h2>
-            <p>Statements and saved SportyBet pages are read on your device. Transactions are kept in this browser’s IndexedDB storage; goals, bets, rules, and budgets in its local storage.</p>
-            <ul><li><Check size={15} /> No bank login or credentials are collected</li><li><Check size={15} /> No financial records are sent to a server</li><li><Check size={15} /> Download a full backup file any time from Data & rules</li></ul>
-            <p className="privacy-modal-note">When this app runs on Cloudflare Pages with D1, R2, and Access set up, it syncs to your own Cloudflare account instead.</p>
-          </>
-        )}
+        <h2 id="privacy-heading">Your records stay in this browser.</h2>
+        <p>Statements and saved SportyBet pages are read on your device. Transactions are kept in this browser’s IndexedDB storage; goals, bets, rules, and budgets in its local storage.</p>
+        {email && <p>Cloudflare Access verified your identity as <strong>{email}</strong>. Sign-in is only for access control; it does not upload or sync financial records.</p>}
+        <ul><li><Check size={15} /> No bank login or credentials are collected</li><li><Check size={15} /> No financial records are sent to a server</li><li><Check size={15} /> Download a full backup file any time from Data & rules</li></ul>
+        <p className="privacy-modal-note">Cloudflare Access sign-in verifies identity only. Your financial data remains on this device.</p>
         <button className="button button-primary modal-done" onClick={onClose}>Got it</button>
       </section>
     </div>
   );
 }
 
-function timeAgo(timestamp: number | null): string {
-  if (!timestamp) return "not yet";
-  const seconds = Math.round((Date.now() - timestamp) / 1000);
-  if (seconds < 45) return "just now";
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes} min ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours} h ago`;
-  return formatDate(localIsoDate(new Date(timestamp)));
-}
-
-function syncSummary(status: SyncStatus): { title: string; detail: string; tone: "ok" | "busy" | "warn" | "local" } {
-  if (status.mode === "checking") return { title: "Checking cloud sync…", detail: "Your data is loaded from this browser.", tone: "busy" };
-  if (status.mode === "local") {
-    if (status.state === "not-configured") return { title: "Cloud not set up", detail: status.message ?? "Connect D1 to this Pages project to sync.", tone: "warn" };
-    if (status.state === "signed-out") return { title: "Guest mode", detail: "Your data stays in this browser until you sign in to sync.", tone: "local" };
-    return { title: "Stored in this browser", detail: "Imports and records stay on this device. Download a backup from Data & rules.", tone: "local" };
-  }
-  const pending = status.pending ? ` · ${status.pending.toLocaleString("en-NG")} change${status.pending === 1 ? "" : "s"} waiting` : "";
-  switch (status.state) {
-    case "syncing":
-      return {
-        title: "Syncing…",
-        detail: status.progress
-          ? `${status.progress.done.toLocaleString("en-NG")} of ${status.progress.total.toLocaleString("en-NG")} uploaded`
-          : status.message ?? "Saving your latest changes.",
-        tone: "busy",
-      };
-    case "offline":
-      return { title: "Offline", detail: `Changes are kept on this device${pending}.`, tone: "warn" };
-    case "signed-out":
-      return { title: "Sign-in expired", detail: "Sign in again to resume syncing this account.", tone: "warn" };
-    case "not-configured":
-      return { title: "Cloud not set up", detail: status.message ?? "Connect D1 to this Pages project.", tone: "warn" };
-    case "error":
-      return { title: "Sync paused", detail: `${status.message ?? "Will retry shortly."}${pending}`, tone: "warn" };
-    default:
-      return { title: "Synced to Cloudflare", detail: `${status.email ?? ""} · ${timeAgo(status.lastSyncedAt)}${pending}`, tone: "ok" };
-  }
-}
-
-function SyncCard({ status, onSync, onSignIn, onDetails }: { status: SyncStatus; onSync: () => void; onSignIn: () => void; onDetails: () => void }) {
-  const summary = syncSummary(status);
-  const Icon = summary.tone === "local" ? LockKeyhole : summary.tone === "warn" ? CloudOff : Cloud;
+function AccessCard({ status, onSignIn, onDetails }: { status: AccessStatus; onSignIn: () => void; onDetails: () => void }) {
+  const checking = status.state === "checking";
+  const title = checking
+    ? "Checking sign-in"
+    : status.state === "signed-in"
+      ? "Cloudflare Access verified"
+      : "Records stay on this device";
+  const detail = status.state === "signed-in"
+    ? `Signed in as ${status.email}. Financial records stay in this browser.`
+    : status.state === "signed-out"
+      ? "Your records stay in this browser. Sign in with Cloudflare Access if required."
+      : status.state === "unavailable"
+        ? status.message ?? "Access sign-in is not configured on this site."
+        : "Financial records are stored locally in this browser.";
   return (
-    <div className={`privacy-card sync-card sync-${summary.tone}`} role="status" aria-live="polite">
-      <div className="privacy-icon">{summary.tone === "busy" ? <LoaderCircle className="spin" size={16} /> : <Icon size={16} />}</div>
-      <strong>{summary.title}</strong>
-      <p title={summary.detail}>{summary.detail}</p>
-      <div className="sync-card-actions">
-        {status.mode === "local" && status.state === "signed-out" && <button onClick={onSignIn}><Cloud size={12} /> Sign in to sync</button>}
-        {status.mode === "cloud" && status.state === "signed-out" && <button onClick={onSignIn}><Cloud size={12} /> Sign in again</button>}
-        {status.mode === "cloud" && status.state !== "syncing" && status.state !== "signed-out" && <button onClick={onSync}><RefreshCw size={12} /> Sync now</button>}
+    <div className="privacy-card access-card" role="status" aria-live="polite">
+      <div className="privacy-icon">{checking ? <LoaderCircle className="spin" size={16} /> : <LockKeyhole size={16} />}</div>
+      <strong>{title}</strong>
+      <p title={detail}>{detail}</p>
+      <div className="access-card-actions">
+        {status.state === "signed-out" && <button onClick={onSignIn}><LockKeyhole size={12} /> Sign in</button>}
         <button onClick={onDetails}>How it works <ArrowUpRight size={13} /></button>
       </div>
     </div>
