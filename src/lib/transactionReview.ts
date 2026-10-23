@@ -1,6 +1,7 @@
-import type { CategoryRule, Direction, Transaction } from "../types.ts";
-import { applyCategoryRules, isWalletProductMovement, recogniseTransactionParty } from "./categorise.ts";
+import type { CategoryRule, Direction, RecipientProfile, Transaction } from "../types.ts";
+import { applyCategoryRules, isWalletProductMovement } from "./categorise.ts";
 import { classifyTransaction, type ClassificationHistory, type TransactionClassification } from "./transactionIntelligence.ts";
+import { resolveTransactionParty } from "./recipientProfiles.ts";
 
 export interface ClassificationReviewCandidate {
   transaction: Transaction;
@@ -12,10 +13,11 @@ export function getClassificationReviewQueue(
   transactions: Transaction[],
   rules: CategoryRule[] = [],
   history?: ClassificationHistory,
+  profiles: RecipientProfile[] = [],
 ): ClassificationReviewCandidate[] {
   return transactions.flatMap((transaction) => {
     if (transaction.manual || transaction.categoryLocked) return [];
-    const classification = classifyTransaction(transaction, rules, history);
+    const classification = classifyTransaction(transaction, rules, history, profiles);
     const differs = classification.category !== transaction.category;
     const weak = classification.confidence < 0.6;
     if ((!differs && !weak) || classification.source === "custom-rule") return [];
@@ -38,6 +40,7 @@ export function reclassifyHistoricalTransactions(
   rules: CategoryRule[],
   history: ClassificationHistory,
   range: { start?: string; end?: string } = {},
+  profiles: RecipientProfile[] = [],
 ): HistoricalReclassificationResult {
   let changed = 0;
   let eligible = 0;
@@ -47,7 +50,7 @@ export function reclassifyHistoricalTransactions(
     if (range.end && transaction.date > range.end) return transaction;
     eligible += 1;
 
-    const classification = classifyTransaction(transaction, rules, history);
+    const classification = classifyTransaction(transaction, rules, history, profiles);
     const ruleEffects = applyCategoryRules([transaction], rules)[0];
     const next: Transaction = {
       ...transaction,
@@ -104,11 +107,11 @@ function frequencyLabel(days: number): string {
 }
 
 /** Detect a transfer recipient with at least three dates on a reasonably steady cadence. */
-export function detectRecurringRecipients(transactions: Transaction[]): RecurringRecipient[] {
+export function detectRecurringRecipients(transactions: Transaction[], profiles: RecipientProfile[] = []): RecurringRecipient[] {
   const groups = new Map<string, { name: string; direction: Direction; transactions: Transaction[] }>();
   for (const transaction of transactions) {
     if (transaction.internalTransfer || transaction.ownAccountCandidate) continue;
-    const party = recogniseTransactionParty(transaction.description);
+    const party = resolveTransactionParty(transaction.description, profiles);
     if (!party || party.kind !== "recipient") continue;
     const key = `${transaction.direction}:recipient:${party.key}`;
     const group = groups.get(key) ?? { name: party.name, direction: transaction.direction, transactions: [] };

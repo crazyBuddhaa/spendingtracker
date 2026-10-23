@@ -1,4 +1,5 @@
 export type Direction = "income" | "expense";
+export type TransactionPartyKind = "merchant" | "recipient" | "sender";
 
 export const categoryList = [
   "Income",
@@ -44,6 +45,16 @@ export interface Transaction {
   categoryLocked?: boolean;
   /** The category suggestion explicitly rejected by the user, retained for local learning. */
   rejectedSuggestion?: Category;
+}
+
+/** A user-managed identity that joins statement-name variants for one payee or payer. */
+export interface RecipientProfile {
+  id: string;
+  kind: TransactionPartyKind;
+  name: string;
+  aliases: string[];
+  category?: Category;
+  note?: string;
 }
 
 export interface CategoryRule {

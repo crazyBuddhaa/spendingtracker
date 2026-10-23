@@ -36,6 +36,7 @@ Transfers to or from your own name (in any order, at least two name parts, inclu
 ## Working with transactions
 
 - **Edit categories** inline. When other transactions look the same, Spendwise offers to apply the change to all of them and remember it as a **rule** for future imports. Manage rules under **Data & rules**.
+- **Recipient profiles** join variations in names from bank statements. Add aliases, a preferred display name, a private note, and an automatic category; locked manual categories are never overwritten.
 - **Exclude/include** any transaction from totals, **delete** it, or **add** a manual entry (cash spending or cash sales).
 - **Periods**: last 30/90 days, this month, last month, last 12 months, this year, all time, or custom dates. When a period has no data the app shows where your history starts and ends.
 - **Re-categorise history** (Data & rules) re-runs the latest categorisation over transactions imported with an older version, without touching categories you picked by hand.
@@ -47,10 +48,11 @@ Transfers to or from your own name (in any order, at least two name parts, inclu
 - **Monthly report** (money in, money out after refunds, net, betting, fees, top category) with CSV export.
 - **Budgets** per category with month-by-month tracking and a projection for the month in progress; suggested limits use your average over the last three full months.
 - **Regular payments** detected from weekly or monthly payments to the same payee with similar amounts.
+- **Typical fare ranges** show the 20th–80th percentile of identified Transport payments per payee after three transactions. Statements do not include trip routes, so this is a personal historical range rather than a route-price estimate.
 
 ## Backups
 
-**Data & rules → Download backup** saves transactions, goals, circles, bets, rules and budgets in one JSON file. **Restore from file** replaces what is in the browser.
+**Data & rules → Download backup** saves transactions, goals, circles, bets, recipient profiles, rules and budgets in one JSON file. **Restore from file** replaces what is in the browser.
 
 ## Cloudflare Access sign-in
 
@@ -79,7 +81,7 @@ Betting analytics include all-record stake and return totals, resolved net and R
 
 ## Privacy and scope
 
-CSV, Excel, text-based PDF, and saved betting-page parsing run in the browser. Transactions are saved in that browser's IndexedDB (multi-year statements outgrow `localStorage`; data from older versions is moved over automatically), and savings goals, bets, rules, and budgets in `localStorage`. Financial records and source files are not sent to a server. Cloudflare Access, when enabled, verifies sign-in identity only. Clearing browser data removes the saved history. The app does not request bank logins or connect to bank APIs. Direct bank feeds require a supported open-banking provider and a separate server-side integration.
+CSV, Excel, text-based PDF, and saved betting-page parsing run in the browser. Transactions are saved in that browser's IndexedDB (multi-year statements outgrow `localStorage`; data from older versions is moved over automatically), and savings goals, bets, rules, recipient profiles, and budgets in `localStorage`. Financial records and source files are not sent to a server. Cloudflare Access, when enabled, verifies sign-in identity only. Clearing browser data removes the saved history. The app does not request bank logins or connect to bank APIs. Direct bank feeds require a supported open-banking provider and a separate server-side integration.
 
 ## Stack
 

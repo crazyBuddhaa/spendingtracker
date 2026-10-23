@@ -1,5 +1,6 @@
-import type { Budget, Category, Transaction } from "../types.ts";
+import type { Budget, Category, RecipientProfile, Transaction } from "../types.ts";
 import { similarityKey } from "./categorise.ts";
+import { resolveTransactionParty } from "./recipientProfiles.ts";
 
 const round = (value: number) => Math.round(value * 100) / 100;
 
@@ -159,20 +160,23 @@ function addDays(date: string, days: number): string {
  * Finds payments to the same payee that repeat on a steady weekly or monthly rhythm
  * with similar amounts — subscriptions, rent, TV, data plans, salaries you pay.
  */
-export function findRecurringPayments(transactions: Transaction[]): RecurringPayment[] {
-  const groups = new Map<string, Transaction[]>();
+export function findRecurringPayments(transactions: Transaction[], profiles: RecipientProfile[] = []): RecurringPayment[] {
+  const groups = new Map<string, { transactions: Transaction[]; name: string }>();
   for (const transaction of transactions) {
-    if (!isSpending(transaction) || transaction.category === "Bank fees" || transaction.category === "Betting") continue;
-    const key = similarityKey(transaction.description) + (/^(?:airtime|mobile data|tv)\b/i.test(transaction.description)
+    if (!isSpending(transaction) || transaction.ownAccountCandidate || transaction.category === "Bank fees" || transaction.category === "Betting") continue;
+    const party = resolveTransactionParty(transaction.description, profiles);
+    const fallbackKey = similarityKey(transaction.description) + (/^(?:airtime|mobile data|tv)\b/i.test(transaction.description)
       ? `|${transaction.description.split("|").pop()?.trim().toLowerCase()}`
       : "");
-    const group = groups.get(key) ?? [];
-    group.push(transaction);
+    const key = party ? `${party.kind}:${party.key}` : fallbackKey;
+    const group = groups.get(key) ?? { transactions: [], name: party?.name ?? counterpartyName(transaction.description) };
+    group.transactions.push(transaction);
+    if (party) group.name = party.name;
     groups.set(key, group);
   }
 
   const results: RecurringPayment[] = [];
-  for (const [key, group] of groups) {
+  for (const [key, { transactions: group, name }] of groups) {
     if (group.length < 3) continue;
     // One payment per day is enough to read a rhythm.
     const byDay = new Map<string, number>();
@@ -193,10 +197,11 @@ export function findRecurringPayments(transactions: Transaction[]): RecurringPay
     const similar = amounts.filter((amount) => Math.abs(amount - typicalAmount) <= Math.max(typicalAmount * 0.25, 100)).length / amounts.length;
     if (similar < 0.6) continue;
     const lastDate = days[days.length - 1];
+    const lastTransaction = group.filter((transaction) => transaction.date === lastDate).at(-1) ?? group.at(-1)!;
     results.push({
       key,
-      name: counterpartyName(group[group.length - 1].description),
-      category: group[group.length - 1].category,
+      name,
+      category: lastTransaction.category,
       cadence,
       occurrences: days.length,
       typicalAmount: round(typicalAmount),

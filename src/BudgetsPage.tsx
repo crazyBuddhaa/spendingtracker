@@ -1,12 +1,13 @@
 import { useMemo, useState } from "react";
 import { AlertTriangle, CalendarClock, Check, Plus, Repeat, Target, Trash2, X } from "lucide-react";
-import { categoryList, type Budget, type Category, type Transaction } from "./types";
+import { categoryList, type Budget, type Category, type RecipientProfile, type Transaction } from "./types";
 import { findRecurringPayments, getBudgetStatus, suggestBudget } from "./lib/analytics";
 import { formatCurrency, formatDate, formatMonth } from "./lib/format";
 
 interface BudgetsPageProps {
   transactions: Transaction[];
   budgets: Budget[];
+  recipientProfiles: RecipientProfile[];
   currency: string;
   onSaveBudget: (budget: Budget) => void;
   onDeleteBudget: (category: Category) => void;
@@ -18,7 +19,7 @@ function monthKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 
-export default function BudgetsPage({ transactions, budgets, currency, onSaveBudget, onDeleteBudget }: BudgetsPageProps) {
+export default function BudgetsPage({ transactions, budgets, recipientProfiles, currency, onSaveBudget, onDeleteBudget }: BudgetsPageProps) {
   const today = new Date();
   const months = useMemo(() => {
     const keys = new Set<string>([monthKey(today)]);
@@ -32,7 +33,7 @@ export default function BudgetsPage({ transactions, budgets, currency, onSaveBud
   const [formAmount, setFormAmount] = useState("");
 
   const status = useMemo(() => getBudgetStatus(transactions, budgets, month, today), [transactions, budgets, month]);
-  const recurring = useMemo(() => findRecurringPayments(transactions), [transactions]);
+  const recurring = useMemo(() => findRecurringPayments(transactions, recipientProfiles), [transactions, recipientProfiles]);
   const totals = status.reduce((sum, item) => ({ limit: sum.limit + item.limit, spent: sum.spent + item.spent }), { limit: 0, spent: 0 });
   const suggestion = useMemo(() => {
     const latest = transactions.reduce((max, transaction) => (transaction.date > max ? transaction.date : max), "");

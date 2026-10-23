@@ -1,11 +1,12 @@
-import type { Category, CategoryRule, Transaction } from "../types.ts";
-import { applyCategoryRules, categorise, isWalletProductMovement, recogniseTransactionParty, ruleMatches, similarityKey } from "./categorise.ts";
+import type { Category, CategoryRule, RecipientProfile, Transaction } from "../types.ts";
+import { applyCategoryRules, categorise, isWalletProductMovement, ruleMatches, similarityKey } from "./categorise.ts";
+import { resolveTransactionParty } from "./recipientProfiles.ts";
 
 export interface TransactionClassification {
   category: Category;
   /** An evidence-based score from 0 to 1, not a calibrated probability. */
   confidence: number;
-  source: "manual" | "custom-rule" | "merchant-history" | "conflicting-history" | "transfer" | "heuristic" | "fallback";
+  source: "manual" | "custom-rule" | "recipient-profile" | "merchant-history" | "conflicting-history" | "transfer" | "heuristic" | "fallback";
   reason: string;
 }
 
@@ -16,17 +17,17 @@ export interface ClassificationHistoryEntry {
 
 export type ClassificationHistory = ReadonlyMap<string, ClassificationHistoryEntry>;
 
-function classificationIdentity(transaction: Pick<Transaction, "description" | "direction">): string | null {
-  const party = recogniseTransactionParty(transaction.description);
+function classificationIdentity(transaction: Pick<Transaction, "description" | "direction">, profiles: RecipientProfile[] = []): string | null {
+  const party = resolveTransactionParty(transaction.description, profiles);
   const identity = party ? party.kind + ":" + party.key : "description:" + similarityKey(transaction.description);
   return identity === "description:" ? null : transaction.direction + ":" + identity;
 }
 
 /** Build a local feedback index from categories the user deliberately chose. */
-export function buildClassificationHistory(transactions: Transaction[]): Map<string, ClassificationHistoryEntry> {
+export function buildClassificationHistory(transactions: Transaction[], profiles: RecipientProfile[] = []): Map<string, ClassificationHistoryEntry> {
   const history = new Map<string, { votes: Map<Category, number>; rejectedCategories: Set<Category> }>();
   for (const transaction of transactions) {
-    const key = classificationIdentity(transaction);
+    const key = classificationIdentity(transaction, profiles);
     if (!key) continue;
     const entry = history.get(key) ?? { votes: new Map<Category, number>(), rejectedCategories: new Set<Category>() };
     if (transaction.categoryLocked || transaction.manual) {
@@ -43,6 +44,7 @@ export function classifyTransaction(
   transaction: Transaction,
   rules: CategoryRule[] = [],
   history?: ClassificationHistory,
+  profiles: RecipientProfile[] = [],
 ): TransactionClassification {
   if (transaction.manual || transaction.categoryLocked) {
     return { category: transaction.category, confidence: 1, source: "manual", reason: "You selected this category; it is locked from automatic changes." };
@@ -61,7 +63,17 @@ export function classifyTransaction(
     return { category: "Transfers", confidence: 0.98, source: "transfer", reason: "The narration matches an internal or own-account transfer pattern." };
   }
 
-  const historyEntry = history?.get(classificationIdentity(transaction) ?? "");
+  const party = resolveTransactionParty(transaction.description, profiles);
+  if (party?.profile?.category) {
+    return {
+      category: party.profile.category,
+      confidence: 0.98,
+      source: "recipient-profile",
+      reason: `${party.name} has a saved recipient profile category: ${party.profile.category}.`,
+    };
+  }
+
+  const historyEntry = history?.get(classificationIdentity(transaction, profiles) ?? "");
   const votes = historyEntry?.votes;
   if (historyEntry && votes?.size) {
     let total = 0;
@@ -142,18 +154,19 @@ export function classifyTransactions(
   transactions: Transaction[],
   rules: CategoryRule[] = [],
   history?: ClassificationHistory,
+  profiles: RecipientProfile[] = [],
 ): Transaction[] {
   return applyCategoryRules(transactions, rules).map((transaction) => {
     if (transaction.manual || transaction.categoryLocked) return transaction;
-    const classification = classifyTransaction(transaction, rules, history);
+    const classification = classifyTransaction(transaction, rules, history, profiles);
     return classification.category === transaction.category ? transaction : { ...transaction, category: classification.category };
   });
 }
 
 /** Counts transactions with the same recognized party or normalized narration, without treating them as duplicates. */
-export function getSimilarTransactionCounts(transactions: Transaction[]): Map<string, number> {
+export function getSimilarTransactionCounts(transactions: Transaction[], profiles: RecipientProfile[] = []): Map<string, number> {
   const identityFor = (transaction: Transaction): string => {
-    const party = recogniseTransactionParty(transaction.description);
+    const party = resolveTransactionParty(transaction.description, profiles);
     const identity = party ? party.kind + ":" + party.key : "description:" + similarityKey(transaction.description);
     return transaction.direction + ":" + identity;
   };

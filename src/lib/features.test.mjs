@@ -18,6 +18,8 @@ import { buildImportPreview } from "./importPreview.ts";
 import { buildClassificationHistory, classifyTransaction, classifyTransactions, getSimilarTransactionCounts } from "./transactionIntelligence.ts";
 import { detectRecurringRecipients, getClassificationReviewQueue, reclassifyHistoricalTransactions } from "./transactionReview.ts";
 import { createBackup, normaliseBudgets, normaliseRules, readBackup } from "./backup.ts";
+import { getRecipientDirectory, normaliseRecipientProfiles, resolveTransactionParty } from "./recipientProfiles.ts";
+import { detectTypicalFareRanges } from "./recipientAnalytics.ts";
 
 const tx = (overrides) => ({
   id: overrides.id ?? `t-${Math.random()}`,
@@ -172,6 +174,8 @@ describe("transaction intelligence", () => {
     const recipient = recogniseTransactionParty("Transfer to JANE DOE | GTBank | 12345678901");
     assert.equal(recipient?.kind, "recipient");
     assert.equal(recipient?.key, "jane doe");
+    assert.equal(recipient?.name, "Jane Doe");
+    assert.equal(recogniseTransactionParty("Transfer to POS Transfer - ADA LOVELACE - OPay | OPay | 123456789")?.key, "ada lovelace");
     const merchant = recogniseTransactionParty("POS purchase at Shoprite | REF 12345678901");
     assert.equal(merchant?.kind, "merchant");
     assert.equal(merchant?.key, "shoprite");
@@ -313,6 +317,88 @@ describe("custom classification rules and confidence scoring", () => {
   });
 });
 
+describe("recipient profiles and transport fare ranges", () => {
+  const profile = {
+    id: "recipient:jane-doe",
+    kind: "recipient",
+    name: "Jane Doe",
+    aliases: ["JANE A DOE", "Jane Doe - PalmPay"],
+    category: "Rent & housing",
+    note: "Landlord",
+  };
+
+  it("normalises, resolves, and groups statement aliases under one recipient profile", () => {
+    const profiles = normaliseRecipientProfiles([profile, { ...profile, id: "duplicate", name: " " }, null]);
+    assert.equal(profiles.length, 1);
+    const first = resolveTransactionParty("Transfer to JANE A DOE | GTBank | REF 123456789", profiles);
+    const second = resolveTransactionParty("Transfer to JANE DOE - PALMPAY | OPay | 765432109", profiles);
+    assert.equal(first?.name, "Jane Doe");
+    assert.equal(second?.key, first?.key);
+
+    const directory = getRecipientDirectory([
+      tx({ id: "j1", description: "Transfer to JANE A DOE | GTBank | 1", amount: 2000 }),
+      tx({ id: "j2", description: "Transfer to Jane Doe - PalmPay | OPay | 2", amount: 3000 }),
+    ], profiles);
+    assert.equal(directory.length, 1);
+    assert.equal(directory[0].transactions, 2);
+    assert.equal(directory[0].sent, 5000);
+  });
+
+  it("uses a saved recipient category for aliases, without overriding hand-picked categories or explicit rules", () => {
+    const aliasTransaction = tx({ id: "alias", description: "Transfer to JANE A DOE | GTBank | 1", category: "Transfers" });
+    const locked = tx({ id: "locked-profile", description: "Transfer to JANE A DOE | GTBank | 2", category: "Health", categoryLocked: true });
+    assert.equal(classifyTransaction(aliasTransaction, [], undefined, [profile]).category, "Rent & housing");
+    assert.equal(classifyTransaction(locked, [], undefined, [profile]).category, "Health");
+    const explicitRule = { id: "specific", pattern: "transfer to jane", category: "Business", createdAt: "" };
+    assert.equal(classifyTransaction(aliasTransaction, [explicitRule], undefined, [profile]).category, "Business");
+  });
+
+  it("merges recurring recipients and recurring payments across aliases", () => {
+    const paymentProfile = {
+      id: "merchant:power",
+      kind: "merchant",
+      name: "PowerCo",
+      aliases: ["Power Co Utilities"],
+    };
+    const transfers = [
+      tx({ id: "r1", date: "2026-01-01", description: "Transfer to Jane Doe | GTBank | 1", amount: 12000 }),
+      tx({ id: "r2", date: "2026-02-01", description: "Transfer to JANE A DOE | OPay | 2", amount: 13000 }),
+      tx({ id: "r3", date: "2026-03-04", description: "Transfer to Jane Doe - PalmPay | UBA | 3", amount: 11000 }),
+    ];
+    const recipients = detectRecurringRecipients(transfers, [profile]);
+    assert.equal(recipients.length, 1);
+    assert.equal(recipients[0].name, "Jane Doe");
+    assert.equal(recipients[0].count, 3);
+
+    const bills = [
+      tx({ id: "p1", date: "2026-01-01", description: "Payment at Power Co Utilities | 1", category: "Bills & utilities", amount: 9800 }),
+      tx({ id: "p2", date: "2026-02-01", description: "Payment at PowerCo | 2", category: "Bills & utilities", amount: 10000 }),
+      tx({ id: "p3", date: "2026-03-01", description: "Payment at Power Co Utilities | 3", category: "Bills & utilities", amount: 10200 }),
+    ];
+    const [recurring] = findRecurringPayments(bills, [paymentProfile]);
+    assert.equal(recurring.name, "PowerCo");
+    assert.equal(recurring.occurrences, 3);
+    assert.equal(recurring.category, "Bills & utilities");
+  });
+
+  it("shows a robust typical fare band only after three named Transport payments", () => {
+    const fares = [
+      tx({ id: "f1", date: "2026-01-01", description: "Bolt ride", category: "Transport", amount: 1000 }),
+      tx({ id: "f2", date: "2026-01-02", description: "Uber trip", category: "Transport", amount: 2000 }),
+      tx({ id: "f3", date: "2026-01-03", description: "Bolt ride", category: "Transport", amount: 3000 }),
+      tx({ id: "f4", date: "2026-01-04", description: "Bolt ride", category: "Transport", amount: 40000 }),
+      tx({ id: "grocery", description: "Bolt ride", category: "Food & groceries", amount: 500 }),
+      tx({ id: "internal-fare", description: "Bolt ride", category: "Transport", internalTransfer: true, amount: 500 }),
+    ];
+    const ranges = detectTypicalFareRanges(fares);
+    assert.equal(ranges.length, 1);
+    assert.equal(ranges[0].name, "Bolt");
+    assert.equal(ranges[0].count, 3);
+    assert.equal(ranges[0].medianAmount, 3000);
+    assert.ok(ranges[0].upperAmount < 40000);
+  });
+});
+
 describe("periods and totals", () => {
   const now = new Date(2026, 9, 19);
   it("resolves calendar periods and equal-length previous windows", () => {
@@ -419,11 +505,16 @@ describe("storage and backups", () => {
       bets: [],
       rules: [{ id: "r", pattern: "abc", category: "Business", createdAt: "2026-10-19" }],
       budgets: [{ category: "Betting", monthlyLimit: 5000 }],
+      recipientProfiles: [{ id: "recipient:a", kind: "recipient", name: "Ada", aliases: ["ADA O."], category: "Rent & housing", note: "Landlord" }],
     };
     const restored = readBackup(createBackup(data));
     assert.deepEqual(restored.transactions, data.transactions);
     assert.deepEqual(restored.rules, [{ ...data.rules[0], direction: undefined, markInternal: undefined }]);
     assert.deepEqual(restored.budgets, data.budgets);
+    assert.deepEqual(restored.recipientProfiles, data.recipientProfiles);
+    const legacyBackup = JSON.parse(createBackup(data));
+    delete legacyBackup.recipientProfiles;
+    assert.deepEqual(readBackup(JSON.stringify(legacyBackup)).recipientProfiles, []);
     assert.equal(readBackup("{\"format\":\"something-else\"}"), null);
     assert.equal(readBackup("not json"), null);
     assert.deepEqual(normaliseRules([{ id: "x", pattern: "  ", category: "Business" }]), []);

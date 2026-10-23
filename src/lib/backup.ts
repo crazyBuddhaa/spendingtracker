@@ -1,8 +1,9 @@
-import { categoryList, type BetRecord, type Budget, type Category, type CategoryRule, type SavingsCircle, type SavingsGoal, type Transaction } from "../types.ts";
+import { categoryList, type BetRecord, type Budget, type Category, type CategoryRule, type RecipientProfile, type SavingsCircle, type SavingsGoal, type Transaction } from "../types.ts";
 import { normaliseBets } from "./sportyBetImport.ts";
 import { normaliseSavingsCircles } from "./savingsCircles.ts";
 import { normaliseSavingsGoals } from "./savings.ts";
 import { parseStoredTransactions, serializeTransactions } from "./transactionStorage.ts";
+import { normaliseRecipientProfiles } from "./recipientProfiles.ts";
 
 export const BACKUP_FORMAT = "spendwise.backup.v1";
 
@@ -13,6 +14,7 @@ export interface BackupData {
   bets: BetRecord[];
   rules: CategoryRule[];
   budgets: Budget[];
+  recipientProfiles?: RecipientProfile[];
 }
 
 const validCategories = new Set<string>(categoryList);
@@ -61,6 +63,7 @@ export function createBackup(data: BackupData, now = new Date()): string {
     bets: data.bets,
     rules: data.rules,
     budgets: data.budgets,
+    recipientProfiles: normaliseRecipientProfiles(data.recipientProfiles),
   });
 }
 
@@ -81,5 +84,6 @@ export function readBackup(text: string): BackupData | null {
     bets: normaliseBets(backup.bets),
     rules: normaliseRules(backup.rules),
     budgets: normaliseBudgets(backup.budgets),
+    recipientProfiles: normaliseRecipientProfiles(backup.recipientProfiles),
   };
 }
