@@ -809,3 +809,7 @@ button.category-row:disabled { cursor: default; }
 .access-panel-copy h2 { margin: 0 0 6px; color: #304037; font: 700 14px "Manrope", sans-serif; }
 .access-panel-copy p { margin: 0 0 10px; color: #7f8a83; font-size: 11px; line-height: 1.55; }
 a.icon-button { text-decoration: none; }
+
+
+/* Transaction intelligence is derived locally; the original bank narration stays visible. */
+.transaction-intelligence-label { color: #6f7d73 !important; font-size: 8px !important; }

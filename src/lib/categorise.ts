@@ -70,15 +70,103 @@ export function categorise(description: string, direction: Direction): Category 
   return "Other";
 }
 
-/** A short, stable key for "transactions like this one". */
-export function similarityKey(description: string): string {
-  const first = description.split("|")[0] ?? description;
-  return first
-    .toLowerCase()
-    .replace(/\(.*?\)/g, (match) => (/(easemoni|transaction|from|refund)/.test(match) ? match : ""))
-    .replace(/\d{4,}/g, "")
+export interface RecognisedTransactionParty {
+  kind: "merchant" | "recipient" | "sender";
+  name: string;
+  key: string;
+}
+
+function normalisePartyName(value: string): string {
+  return value
+    .replace(/^\s*(?:pos|card)\s+transfer\s*[-:]?\s*/i, "")
+    .replace(/^\s*(?:purchase|payment|transaction)\s+(?:at|to|from|for)\s*/i, "")
+    .replace(/\b(?:reference|ref|session|rrn|trace|transaction\s*id|account\s*(?:no|number))\b\s*[:#-]?\s*[a-z0-9*_-]+/gi, " ")
+    .replace(/\b\d{4,}\b/g, " ")
+    .replace(/\b(?:limited|ltd|plc|incorporated|inc|llc)\b/gi, " ")
+    .replace(/\b(?:payment|purchase|transaction|order)\b\s*$/i, " ")
+    .replace(/[|,;]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function partyKey(value: string): string {
+  return normalisePartyName(value)
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function isNarrationLabel(value: string): boolean {
+  const key = partyKey(value);
+  return !key || /^(?:pos|card|online|mobile|third party|third party merchant|merchant|merchant order|third party merchant order|purchase|payment|bill payment|airtime|mobile data|transfer|debit|credit|bank transaction)$/.test(key);
+}
+
+const bankOrRailNames = new Set([
+  "access bank", "access", "gtbank", "guaranty trust bank", "uba", "united bank for africa", "zenith", "zenith bank",
+  "first bank", "fidelity bank", "wema bank", "stanbic ibtc", "union bank", "sterling bank", "kuda bank", "palmpay",
+  "opay", "moniepoint", "flutterwave", "flw", "paystack", "remita",
+]);
+
+/** Extract a payee, sender, or merchant from common bank-statement narrations without changing the stored narration. */
+export function recogniseTransactionParty(description: string): RecognisedTransactionParty | null {
+  const text = description.trim();
+  const transfer = text.match(/^transfer\s+(to|from)\s+([^|]+)/i);
+  if (transfer) {
+    const kind = transfer[1].toLowerCase() === "to" ? "recipient" : "sender";
+    const name = normalisePartyName(transfer[2]);
+    const key = partyKey(name);
+    if (!key || isNarrationLabel(name)) return null;
+    return { kind, name, key };
+  }
+
+  const explicit = text.match(/\b(?:pos|card|online|web|qr|merchant|mobile)?\s*(?:purchase|payment|transaction)\s+(?:at|to|from|for)\s+([^|]+)/i);
+  if (explicit) {
+    const name = normalisePartyName(explicit[1]);
+    const key = partyKey(name);
+    if (key && !isNarrationLabel(name)) return { kind: "merchant", name, key };
+  }
+
+  const segments = text.split("|");
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    const name = normalisePartyName(segments[index]);
+    const key = partyKey(name);
+    if (!key || isNarrationLabel(name) || bankOrRailNames.has(key) || /^\d+$/.test(key)) continue;
+    return { kind: "merchant", name, key };
+  }
+
+  const knownMerchant = text.match(/\b(shoprite|spar|shoprite|kfc|domino(?:s)?|chicken republic|chowdeck|glovo|jumia|konga|amazon|netflix|spotify|youtube|bolt|uber|indrive|mtn|airtel|glo|9mobile|dstv|gotv|startimes|showmax|spectranet|smile)\b/i);
+  if (knownMerchant) {
+    const name = normalisePartyName(knownMerchant[0]);
+    return { kind: "merchant", name, key: partyKey(name) };
+  }
+  return null;
+}
+
+/** A stable, lower-case description used for comparison; raw statement text remains untouched. */
+export function normaliseTransactionDescription(description: string): string {
+  const party = recogniseTransactionParty(description);
+  if (party) {
+    if (party.kind === "merchant") return "merchant " + party.key;
+    return "transfer " + (party.kind === "recipient" ? "to " : "from ") + party.key;
+  }
+  return description
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\b(?:reference|ref|transaction(?:\s+id)?|session|rrn|trace|authorization|auth)\b[\s:#-]*[a-z0-9*_-]+/gi, " ")
+    .replace(/\b\d{4,}\b/g, " ")
+    .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, " ")
+    .replace(/[|,;:]+/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** A short, stable key for "transactions like this one". */
+export function similarityKey(description: string): string {
+  return normaliseTransactionDescription(description);
 }
 
 export function ruleMatches(rule: CategoryRule, transaction: Pick<Transaction, "description" | "direction">): boolean {
