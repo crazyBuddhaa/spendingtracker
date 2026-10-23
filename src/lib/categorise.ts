@@ -80,8 +80,11 @@ function normalisePartyName(value: string): string {
   return value
     .replace(/^\s*(?:pos|card)\s+transfer\s*[-:]?\s*/i, "")
     .replace(/^\s*(?:purchase|payment|transaction)\s+(?:at|to|from|for)\s*/i, "")
+    .replace(/^\s*(?:mr|mrs|ms|miss|dr|prof)\.?\s+/i, "")
     .replace(/\b(?:reference|ref|session|rrn|trace|transaction\s*id|account\s*(?:no|number))\b\s*[:#-]?\s*[a-z0-9*_-]+/gi, " ")
     .replace(/\b\d{4,}\b/g, " ")
+    .replace(/\s*\((?:opay|palmpay|moniepoint|kuda|paystack|flutterwave|flw|gtbank|access bank|uba|zenith bank)\)\s*$/i, " ")
+    .replace(/\s*(?:[-/]\s*|\bvia\s+)(?:opay|palmpay|moniepoint|kuda|paystack|flutterwave|flw|gtbank|access bank|uba|zenith bank)(?:\s+(?:mfb|bank))?\s*$/i, " ")
     .replace(/\b(?:limited|ltd|plc|incorporated|inc|llc)\b/gi, " ")
     .replace(/\b(?:payment|purchase|transaction|order)\b\s*$/i, " ")
     .replace(/[|,;]+/g, " ")
@@ -89,7 +92,7 @@ function normalisePartyName(value: string): string {
     .trim();
 }
 
-function partyKey(value: string): string {
+export function normalisePartyKey(value: string): string {
   return normalisePartyName(value)
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -98,8 +101,31 @@ function partyKey(value: string): string {
     .trim();
 }
 
+const displayAcronyms: Record<string, string> = {
+  GTBANK: "GTBank",
+  OPAY: "OPay",
+  PALMPAY: "PalmPay",
+  MTN: "MTN",
+  UBA: "UBA",
+  MFB: "MFB",
+  POS: "POS",
+  ATM: "ATM",
+  KFC: "KFC",
+};
+
+function displayPartyName(value: string): string {
+  return value.replace(/[A-Za-z][A-Za-z.]*/g, (token) => {
+    const acronym = displayAcronyms[token.toUpperCase()];
+    if (acronym) return acronym;
+    if (/[a-z]/.test(token) && /[A-Z]/.test(token)) return token;
+    const letters = token.replace(/\./g, "");
+    if (letters.length <= 2 && token === token.toUpperCase()) return token;
+    return token.charAt(0).toUpperCase() + token.slice(1).toLowerCase();
+  });
+}
+
 function isNarrationLabel(value: string): boolean {
-  const key = partyKey(value);
+  const key = normalisePartyKey(value);
   return !key || /^(?:pos|card|online|mobile|third party|third party merchant|merchant|merchant order|third party merchant order|purchase|payment|bill payment|airtime|mobile data|transfer|debit|credit|bank transaction)$/.test(key);
 }
 
@@ -115,32 +141,33 @@ export function recogniseTransactionParty(description: string): RecognisedTransa
   const transfer = text.match(/^transfer\s+(to|from)\s+([^|]+)/i);
   if (transfer) {
     const kind = transfer[1].toLowerCase() === "to" ? "recipient" : "sender";
-    const name = normalisePartyName(transfer[2]);
-    const key = partyKey(name);
+    const name = displayPartyName(normalisePartyName(transfer[2]));
+    const key = normalisePartyKey(name);
     if (!key || isNarrationLabel(name)) return null;
     return { kind, name, key };
   }
 
   const explicit = text.match(/\b(?:pos|card|online|web|qr|merchant|mobile)?\s*(?:purchase|payment|transaction)\s+(?:at|to|from|for)\s+([^|]+)/i);
   if (explicit) {
-    const name = normalisePartyName(explicit[1]);
-    const key = partyKey(name);
+    const name = displayPartyName(normalisePartyName(explicit[1]));
+    const key = normalisePartyKey(name);
     if (key && !isNarrationLabel(name)) return { kind: "merchant", name, key };
+  }
+
+  const knownMerchant = text.match(/\b(shoprite|spar|kfc|domino(?:s)?|chicken republic|chowdeck|glovo|jumia|konga|amazon|netflix|spotify|youtube|bolt|uber|indrive|mtn|airtel|glo|9mobile|dstv|gotv|startimes|showmax|spectranet|smile)\b/i);
+  if (knownMerchant) {
+    const name = displayPartyName(normalisePartyName(knownMerchant[0]));
+    return { kind: "merchant", name, key: normalisePartyKey(name) };
   }
 
   const segments = text.split("|");
   for (let index = segments.length - 1; index >= 0; index -= 1) {
-    const name = normalisePartyName(segments[index]);
-    const key = partyKey(name);
+    const name = displayPartyName(normalisePartyName(segments[index]));
+    const key = normalisePartyKey(name);
     if (!key || isNarrationLabel(name) || bankOrRailNames.has(key) || /^\d+$/.test(key)) continue;
     return { kind: "merchant", name, key };
   }
 
-  const knownMerchant = text.match(/\b(shoprite|spar|shoprite|kfc|domino(?:s)?|chicken republic|chowdeck|glovo|jumia|konga|amazon|netflix|spotify|youtube|bolt|uber|indrive|mtn|airtel|glo|9mobile|dstv|gotv|startimes|showmax|spectranet|smile)\b/i);
-  if (knownMerchant) {
-    const name = normalisePartyName(knownMerchant[0]);
-    return { kind: "merchant", name, key: partyKey(name) };
-  }
   return null;
 }
 

@@ -29,6 +29,7 @@ import {
   TrendingDown,
   TrendingUp,
   Wallet,
+  Users,
   X,
 } from "lucide-react";
 import { transactionsToCsv } from "./lib/csv";
@@ -38,7 +39,8 @@ import { findNewTransactions } from "./lib/transactionDeduplication";
 import { buildImportPreview, type ImportDateRange, type ImportMode, type ImportPreview } from "./lib/importPreview";
 import { getTransferInsights } from "./lib/transactionPatterns";
 import { readValue, writeValue } from "./lib/persistentStore";
-import { applyCategoryRules, categorise, recogniseTransactionParty, ruleMatches, similarityKey } from "./lib/categorise";
+import { applyCategoryRules, categorise, ruleMatches, similarityKey } from "./lib/categorise";
+import { normaliseRecipientProfiles, resolveTransactionParty } from "./lib/recipientProfiles";
 import { buildClassificationHistory, classifyTransaction, classifyTransactions, getSimilarTransactionCounts, type ClassificationHistory } from "./lib/transactionIntelligence";
 import { detectRecurringRecipients, getClassificationReviewQueue, reclassifyHistoricalTransactions } from "./lib/transactionReview";
 import { createBackup, normaliseBudgets, normaliseRules, readBackup } from "./lib/backup";
@@ -50,6 +52,7 @@ import BudgetsPage from "./BudgetsPage";
 import DataPage from "./DataPage";
 import InsightsExtras from "./InsightsExtras";
 import ClassificationReviewPage from "./ClassificationReviewPage";
+import RecipientProfilesPage from "./RecipientProfilesPage";
 import { useAccessAuth, type AccessStatus } from "./useAccessAuth";
 import { normaliseSavingsGoals } from "./lib/savings";
 import { normaliseSavingsCircles } from "./lib/savingsCircles";
@@ -75,6 +78,7 @@ import {
   type CategoryRule,
   type Direction,
   type ImportDiagnostics,
+  type RecipientProfile,
   type SavingsCircle,
   type SavingsContribution,
   type SavingsGoal,
@@ -86,10 +90,11 @@ const CIRCLES_STORAGE_KEY = "spendwise.savings-circles.v1";
 const BETS_STORAGE_KEY = "spendwise.bets.v1";
 const RULES_STORAGE_KEY = "spendwise.rules.v1";
 const BUDGETS_STORAGE_KEY = "spendwise.budgets.v1";
+const RECIPIENT_PROFILES_STORAGE_KEY = "spendwise.recipient-profiles.v1";
 const PERIOD_STORAGE_KEY = "spendwise.period.v1";
 const currency = "NGN";
 
-type Page = "overview" | "transactions" | "review" | "insights" | "budgets" | "savings" | "betting" | "data";
+type Page = "overview" | "transactions" | "review" | "insights" | "recipients" | "budgets" | "savings" | "betting" | "data";
 
 interface PendingStatementImport {
   transactions: Transaction[];
@@ -105,6 +110,7 @@ const pageTitles: Record<Page, string> = {
   transactions: "Transactions",
   review: "Classification review",
   insights: "Insights",
+  recipients: "Recipients",
   budgets: "Budgets",
   savings: "Savings",
   betting: "Betting",
@@ -240,6 +246,7 @@ function App() {
   const [savingsCircles, setSavingsCircles] = useState<SavingsCircle[]>(() => readJson(CIRCLES_STORAGE_KEY, normaliseSavingsCircles, []));
   const [bets, setBets] = useState<BetRecord[]>(() => readJson(BETS_STORAGE_KEY, normaliseBets, []));
   const [rules, setRules] = useState<CategoryRule[]>(() => readJson(RULES_STORAGE_KEY, normaliseRules, []));
+  const [recipientProfiles, setRecipientProfiles] = useState<RecipientProfile[]>(() => readJson(RECIPIENT_PROFILES_STORAGE_KEY, normaliseRecipientProfiles, []));
   const [budgets, setBudgets] = useState<Budget[]>(() => readJson(BUDGETS_STORAGE_KEY, normaliseBudgets, []));
   const [period, setPeriod] = useState<Period>(storedPeriod.period);
   const [customRange, setCustomRange] = useState<DateRange>(storedPeriod.custom);
@@ -344,13 +351,13 @@ function App() {
     const previous = previousRange(period, range);
     return previous ? calculateTotals(filterByRange(transactions, previous)) : null;
   }, [transactions, period, range]);
-  const classificationHistory = useMemo(() => buildClassificationHistory(transactions), [transactions]);
-  const similarTransactionCounts = useMemo(() => getSimilarTransactionCounts(transactions), [transactions]);
+  const classificationHistory = useMemo(() => buildClassificationHistory(transactions, recipientProfiles), [transactions, recipientProfiles]);
+  const similarTransactionCounts = useMemo(() => getSimilarTransactionCounts(transactions, recipientProfiles), [transactions, recipientProfiles]);
   const classificationReviewQueue = useMemo(
-    () => getClassificationReviewQueue(transactions, rules, classificationHistory),
-    [transactions, rules, classificationHistory],
+    () => getClassificationReviewQueue(transactions, rules, classificationHistory, recipientProfiles),
+    [transactions, rules, classificationHistory, recipientProfiles],
   );
-  const recurringRecipients = useMemo(() => detectRecurringRecipients(transactions), [transactions]);
+  const recurringRecipients = useMemo(() => detectRecurringRecipients(transactions, recipientProfiles), [transactions, recipientProfiles]);
   const recurringTransactionIds = useMemo(
     () => new Set(recurringRecipients.flatMap((recipient) => recipient.transactionIds)),
     [recurringRecipients],
@@ -364,11 +371,13 @@ function App() {
       .filter((transaction) => sourceFilter === "All accounts" || transaction.source === sourceFilter)
       .filter((transaction) => !ownTransferFilter || (transaction.ownAccountCandidate === true && !transaction.internalTransfer))
       .filter((transaction) => !hideInternal || !transaction.internalTransfer)
-      .filter((transaction) =>
-        !normalizedQuery ||
-        `${transaction.description} ${transaction.category} ${transaction.source} ${transaction.note ?? ""} ${transaction.amount}`.toLowerCase().replace(/\s+/g, " ").includes(normalizedQuery))
+      .filter((transaction) => {
+        if (!normalizedQuery) return true;
+        const party = resolveTransactionParty(transaction.description, recipientProfiles);
+        return `${transaction.description} ${transaction.category} ${transaction.source} ${transaction.note ?? ""} ${transaction.amount} ${party?.name ?? ""} ${party?.profile?.aliases.join(" ") ?? ""}`.toLowerCase().replace(/\s+/g, " ").includes(normalizedQuery);
+      })
       .sort(sortNewestFirst);
-  }, [withinPeriod, query, categoryFilter, directionFilter, sourceFilter, ownTransferFilter, hideInternal]);
+  }, [withinPeriod, query, categoryFilter, directionFilter, sourceFilter, ownTransferFilter, hideInternal, recipientProfiles]);
   const displayedTransactions = useMemo(() => visibleTransactions.slice(0, transactionLimit), [visibleTransactions, transactionLimit]);
   const visibleTotals = useMemo(() => calculateTotals(visibleTransactions), [visibleTransactions]);
 
@@ -392,6 +401,12 @@ function App() {
   const updateRules = (next: CategoryRule[]) => {
     setRules(next);
     if (!saveJson(RULES_STORAGE_KEY, next)) notify("Could not save your rules in this browser.");
+  };
+
+  const updateRecipientProfiles = (next: RecipientProfile[]) => {
+    const normalised = normaliseRecipientProfiles(next);
+    setRecipientProfiles(normalised);
+    if (!saveJson(RECIPIENT_PROFILES_STORAGE_KEY, normalised)) notify("Could not save recipient profiles in this browser.");
   };
 
   const updateBudgets = (next: Budget[]) => {
@@ -467,7 +482,7 @@ function App() {
   const comparisonAvailable = loaded;
   const importPreview: ImportPreview | null = useMemo(() => pendingImport
     ? buildImportPreview({
-      imported: classifyTransactions(pendingImport.transactions, rules, classificationHistory),
+      imported: classifyTransactions(pendingImport.transactions, rules, classificationHistory, recipientProfiles),
       existing: transactions,
       diagnostics: pendingImport.diagnosticsAvailable ? pendingImport.diagnostics : undefined,
       skipped: pendingImport.skipped,
@@ -476,12 +491,12 @@ function App() {
       customRange: importCustomRange,
       comparisonAvailable,
     })
-    : null, [pendingImport, transactions, rules, classificationHistory, importMode, importMonth, importCustomRange, comparisonAvailable]);
+    : null, [pendingImport, transactions, rules, classificationHistory, recipientProfiles, importMode, importMonth, importCustomRange, comparisonAvailable]);
 
   const confirmImport = () => {
     if (!pendingImport || !importPreview?.rangeValid) return;
     const imported = importPreview.transactionsInRange;
-    const newTransactions = findNewTransactions(transactions, classifyTransactions(importPreview.transactionsForConfirmation, rules, classificationHistory));
+    const newTransactions = findNewTransactions(transactions, classifyTransactions(importPreview.transactionsForConfirmation, rules, classificationHistory, recipientProfiles));
     const duplicates = imported.length - newTransactions.length;
     const messages = [...pendingImport.warnings];
     if (importPreview.transactionsOutsideRange > 0) {
@@ -590,7 +605,7 @@ function App() {
   const resolveReviewCandidate = (transactionId: string, decision: "accept" | "reject" | "confirm") => {
     const target = transactions.find((transaction) => transaction.id === transactionId);
     if (!target) return;
-    const suggestion = classifyTransaction(target, rules, classificationHistory);
+    const suggestion = classifyTransaction(target, rules, classificationHistory, recipientProfiles);
     if (decision === "reject" && suggestion.category === target.category) return;
     setTransactions((current) => current.map((transaction) => {
       if (transaction.id !== transactionId) return transaction;
@@ -672,9 +687,27 @@ function App() {
       return;
     }
     if (!window.confirm(`Reclassify up to ${eligible.toLocaleString("en-NG")} unlocked transactions in ${rangeText}? Hand-picked categories and manual entries will stay unchanged.`)) return;
-    const result = reclassifyHistoricalTransactions(transactions, rules, classificationHistory, { start: startDate, end: endDate });
+    const result = reclassifyHistoricalTransactions(transactions, rules, classificationHistory, { start: startDate, end: endDate }, recipientProfiles);
     setTransactions(result.transactions);
     notify(`${result.changed.toLocaleString("en-NG")} categor${result.changed === 1 ? "y" : "ies"} changed across ${result.eligible.toLocaleString("en-NG")} eligible transactions.`);
+  };
+
+  const saveRecipientProfile = (profile: RecipientProfile) => {
+    const nextProfiles = normaliseRecipientProfiles([...recipientProfiles.filter((item) => item.id !== profile.id), profile]);
+    updateRecipientProfiles(nextProfiles);
+    const history = buildClassificationHistory(transactions, nextProfiles);
+    const result = reclassifyHistoricalTransactions(transactions, rules, history, {}, nextProfiles);
+    setTransactions(result.transactions);
+    notify(`Profile saved · ${result.changed.toLocaleString("en-NG")} unlocked categor${result.changed === 1 ? "y" : "ies"} refreshed.`);
+  };
+
+  const deleteRecipientProfile = (profileId: string) => {
+    const nextProfiles = recipientProfiles.filter((profile) => profile.id !== profileId);
+    updateRecipientProfiles(nextProfiles);
+    const history = buildClassificationHistory(transactions, nextProfiles);
+    const result = reclassifyHistoricalTransactions(transactions, rules, history, {}, nextProfiles);
+    setTransactions(result.transactions);
+    notify("Profile removed. Unlocked transactions returned to their remaining rules and history.");
   };
 
   /* ---------------------------------------------- savings and betting */
@@ -739,7 +772,7 @@ function App() {
 
   const exportBackup = () => {
     downloadFile(
-      createBackup({ transactions, savingsGoals, savingsCircles, bets, rules, budgets }),
+      createBackup({ transactions, savingsGoals, savingsCircles, bets, rules, budgets, recipientProfiles }),
       `spendwise-backup-${localIsoDate()}.json`,
       "application/json",
     );
@@ -752,13 +785,14 @@ function App() {
       notify("That file is not a Spendwise backup.");
       return;
     }
-    if (!window.confirm(`Replace everything in this browser with the backup (${backup.transactions.length.toLocaleString("en-NG")} transactions, ${backup.savingsGoals.length} goals, ${backup.bets.length} bets, ${backup.rules.length} rules, ${backup.budgets.length} budgets)?`)) return;
+    if (!window.confirm(`Replace everything in this browser with the backup (${backup.transactions.length.toLocaleString("en-NG")} transactions, ${backup.savingsGoals.length} goals, ${backup.bets.length} bets, ${backup.rules.length} rules, ${backup.budgets.length} budgets, ${backup.recipientProfiles?.length ?? 0} recipient profiles)?`)) return;
     setTransactions(backup.transactions);
     updateSavingsGoals(backup.savingsGoals);
     updateSavingsCircles(backup.savingsCircles);
     updateBets(backup.bets);
     updateRules(backup.rules);
     updateBudgets(backup.budgets);
+    updateRecipientProfiles(backup.recipientProfiles ?? []);
     setPeriod("all");
     notify("Backup restored.");
   };
@@ -842,6 +876,7 @@ function App() {
           <NavButton page="transactions" active={activePage} onClick={goTo} icon={<ArrowLeftRight size={18} />} count={transactions.length} />
           <NavButton page="review" active={activePage} onClick={goTo} icon={<ClipboardCheck size={18} />} count={classificationReviewQueue.length} />
           <NavButton page="insights" active={activePage} onClick={goTo} icon={<BarChart3 size={18} />} />
+          <NavButton page="recipients" active={activePage} onClick={goTo} icon={<Users size={18} />} count={recipientProfiles.length || undefined} />
           <NavButton page="budgets" active={activePage} onClick={goTo} icon={<Target size={18} />} count={budgets.length || undefined} />
           <NavButton page="savings" active={activePage} onClick={goTo} icon={<PiggyBank size={18} />} count={savingsGoals.length + savingsCircles.length || undefined} />
           <NavButton page="betting" active={activePage} onClick={goTo} icon={<Ticket size={18} />} count={bets.length || undefined} />
@@ -880,7 +915,7 @@ function App() {
             </section>
           )}
 
-          {!loaded && (activePage === "overview" || activePage === "transactions" || activePage === "review" || activePage === "insights") && (
+          {!loaded && (activePage === "overview" || activePage === "transactions" || activePage === "review" || activePage === "insights" || activePage === "recipients") && (
             <div className="loading-state"><LoaderCircle className="spin" size={20} /> Loading your history…</div>
           )}
 
@@ -996,6 +1031,7 @@ function App() {
                         currency={currency}
                         rules={rules}
                         classificationHistory={classificationHistory}
+                        recipientProfiles={recipientProfiles}
                         recurringTransactionIds={recurringTransactionIds}
                       />
                     </section>
@@ -1088,6 +1124,7 @@ function App() {
                       similarCounts={similarTransactionCounts}
                       rules={rules}
                       classificationHistory={classificationHistory}
+                      recipientProfiles={recipientProfiles}
                       recurringTransactionIds={recurringTransactionIds}
                       selectedTransactionIds={selectedTransactionIds}
                       onToggleSelection={toggleTransactionSelection}
@@ -1122,10 +1159,25 @@ function App() {
             />
           )}
 
+          {loaded && activePage === "recipients" && (
+            <RecipientProfilesPage
+              transactions={transactions}
+              profiles={recipientProfiles}
+              currency={currency}
+              onSaveProfile={saveRecipientProfile}
+              onDeleteProfile={deleteRecipientProfile}
+              onOpenTransactions={(name) => {
+                setPeriod("all");
+                searchTransactions(name);
+              }}
+            />
+          )}
+
           {activePage === "budgets" && (
             <BudgetsPage
               transactions={transactions}
               budgets={budgets}
+              recipientProfiles={recipientProfiles}
               currency={currency}
               onSaveBudget={(budget) => {
                 updateBudgets([...budgets.filter((item) => item.category !== budget.category), budget]);
@@ -1165,7 +1217,7 @@ function App() {
             <DataPage
               rules={rules}
               transactions={transactions}
-              counts={{ transactions: transactions.length, goals: savingsGoals.length, circles: savingsCircles.length, bets: bets.length, budgets: budgets.length }}
+              counts={{ transactions: transactions.length, goals: savingsGoals.length, circles: savingsCircles.length, bets: bets.length, budgets: budgets.length, profiles: recipientProfiles.length }}
               matchCount={(rule) => transactions.filter((transaction) => ruleMatches(rule, transaction)).length}
               onAddRule={addRule}
               onDeleteRule={(ruleId) => {
@@ -1611,6 +1663,7 @@ function TransactionTable({
   similarCounts,
   rules = [],
   classificationHistory,
+  recipientProfiles = [],
   recurringTransactionIds,
   selectedTransactionIds,
   onToggleSelection,
@@ -1625,6 +1678,7 @@ function TransactionTable({
   similarCounts?: ReadonlyMap<string, number>;
   rules?: CategoryRule[];
   classificationHistory?: ClassificationHistory;
+  recipientProfiles?: RecipientProfile[];
   recurringTransactionIds?: ReadonlySet<string>;
   selectedTransactionIds?: ReadonlySet<string>;
   onToggleSelection?: (transactionId: string) => void;
@@ -1645,8 +1699,8 @@ function TransactionTable({
         <tbody>
           {transactions.map((transaction) => {
             const isIncome = transaction.direction === "income";
-            const party = recogniseTransactionParty(transaction.description);
-            const classification = classifyTransaction(transaction, rules, classificationHistory);
+            const party = resolveTransactionParty(transaction.description, recipientProfiles);
+            const classification = classifyTransaction(transaction, rules, classificationHistory, recipientProfiles);
             const confidenceTone = classification.confidence >= 0.85 ? "high" : classification.confidence >= 0.6 ? "medium" : "low";
             const suggestsDifferentCategory = classification.category !== transaction.category && !transaction.categoryLocked && !transaction.manual;
             const similarCount = Math.max(0, (similarCounts?.get(transaction.id) ?? 0) - 1);
