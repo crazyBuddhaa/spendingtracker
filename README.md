@@ -49,6 +49,7 @@ Transfers to or from your own name (in any order, at least two name parts, inclu
 - **Budgets** per category with month-by-month tracking and a projection for the month in progress; suggested limits use your average over the last three full months.
 - **Regular payments** detected from weekly or monthly payments to the same payee with similar amounts.
 - **Typical fare ranges** show the 20th–80th percentile of identified Transport payments per payee after three transactions. Statements do not include trip routes, so this is a personal historical range rather than a route-price estimate.
+- **Recipient timing patterns** show repeated outgoing transfers around a similar time of day. Possible recipient pairs and multi-recipient sequences are shown only when the same ordered pattern recurs on at least two dates; these are timing clues, not evidence of a journey or location.
 
 ## Backups
 

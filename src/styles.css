@@ -901,6 +901,7 @@ a.icon-button { text-decoration: none; }
 .recipient-fare-amount strong { color: #3b6b51; font-size: 11px; }
 .recipient-fare-median { display: flex; justify-content: space-between; grid-column: 1 / -1; padding-top: 8px; border-top: 1px solid #edf0ec; }
 .recipient-fare-median strong { color: #47564c; font-size: 10px; }
+.journey-sequence { display: inline-block; max-width: 430px; white-space: normal; line-height: 1.45; }
 .recipient-profile-modal { max-height: min(90vh, 760px); overflow-y: auto; }
 .recipient-profile-modal > p { margin: 0 0 12px; color: #7f8a83; font-size: 10px; line-height: 1.5; }
 .recipient-profile-modal .savings-form textarea { width: 100%; min-height: 58px; resize: vertical; padding: 9px 10px; border: 1px solid #e4e8e3; border-radius: 7px; color: #46534b; background: #fff; font: inherit; font-size: 10px; }
