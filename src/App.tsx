@@ -6,6 +6,7 @@ import {
   BarChart3,
   Check,
   ChevronDown,
+  ClipboardCheck,
   DatabaseBackup,
   Download,
   FileText,
@@ -37,8 +38,9 @@ import { findNewTransactions } from "./lib/transactionDeduplication";
 import { buildImportPreview, type ImportDateRange, type ImportMode, type ImportPreview } from "./lib/importPreview";
 import { getTransferInsights } from "./lib/transactionPatterns";
 import { readValue, writeValue } from "./lib/persistentStore";
-import { applyCategoryRules, categorise, recogniseTransactionParty, refreshCategories, ruleMatches, similarityKey } from "./lib/categorise";
+import { applyCategoryRules, categorise, recogniseTransactionParty, ruleMatches, similarityKey } from "./lib/categorise";
 import { buildClassificationHistory, classifyTransaction, classifyTransactions, getSimilarTransactionCounts, type ClassificationHistory } from "./lib/transactionIntelligence";
+import { detectRecurringRecipients, getClassificationReviewQueue, reclassifyHistoricalTransactions } from "./lib/transactionReview";
 import { createBackup, normaliseBudgets, normaliseRules, readBackup } from "./lib/backup";
 import { getFeeSummary } from "./lib/analytics";
 import { downloadFile, formatCurrency, formatDate, localIsoDate, newId } from "./lib/format";
@@ -47,6 +49,7 @@ import BettingPage from "./BettingPage";
 import BudgetsPage from "./BudgetsPage";
 import DataPage from "./DataPage";
 import InsightsExtras from "./InsightsExtras";
+import ClassificationReviewPage from "./ClassificationReviewPage";
 import { useAccessAuth, type AccessStatus } from "./useAccessAuth";
 import { normaliseSavingsGoals } from "./lib/savings";
 import { normaliseSavingsCircles } from "./lib/savingsCircles";
@@ -86,7 +89,7 @@ const BUDGETS_STORAGE_KEY = "spendwise.budgets.v1";
 const PERIOD_STORAGE_KEY = "spendwise.period.v1";
 const currency = "NGN";
 
-type Page = "overview" | "transactions" | "insights" | "budgets" | "savings" | "betting" | "data";
+type Page = "overview" | "transactions" | "review" | "insights" | "budgets" | "savings" | "betting" | "data";
 
 interface PendingStatementImport {
   transactions: Transaction[];
@@ -100,6 +103,7 @@ interface PendingStatementImport {
 const pageTitles: Record<Page, string> = {
   overview: "Overview",
   transactions: "Transactions",
+  review: "Classification review",
   insights: "Insights",
   budgets: "Budgets",
   savings: "Savings",
@@ -254,6 +258,8 @@ function App() {
   const [importMonth, setImportMonth] = useState("");
   const [importCustomRange, setImportCustomRange] = useState<ImportDateRange>({ start: null, end: null });
   const [transactionLimit, setTransactionLimit] = useState(100);
+  const [selectedTransactionIds, setSelectedTransactionIds] = useState<Set<string>>(() => new Set());
+  const [bulkCategory, setBulkCategory] = useState<Category>("Other");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [showAddTransaction, setShowAddTransaction] = useState(false);
@@ -302,6 +308,7 @@ function App() {
 
   useEffect(() => {
     setTransactionLimit(100);
+    setSelectedTransactionIds(new Set());
   }, [query, categoryFilter, directionFilter, sourceFilter, ownTransferFilter, hideInternal, period, customRange]);
 
   const range = useMemo(() => resolvePeriod(period, new Date(), customRange), [period, customRange]);
@@ -339,6 +346,15 @@ function App() {
   }, [transactions, period, range]);
   const classificationHistory = useMemo(() => buildClassificationHistory(transactions), [transactions]);
   const similarTransactionCounts = useMemo(() => getSimilarTransactionCounts(transactions), [transactions]);
+  const classificationReviewQueue = useMemo(
+    () => getClassificationReviewQueue(transactions, rules, classificationHistory),
+    [transactions, rules, classificationHistory],
+  );
+  const recurringRecipients = useMemo(() => detectRecurringRecipients(transactions), [transactions]);
+  const recurringTransactionIds = useMemo(
+    () => new Set(recurringRecipients.flatMap((recipient) => recipient.transactionIds)),
+    [recurringRecipients],
+  );
 
   const visibleTransactions = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase().replace(/\s+/g, " ");
@@ -529,7 +545,7 @@ function App() {
     const target = transactions.find((transaction) => transaction.id === transactionId);
     if (!target) return;
     setTransactions((current) => current.map((transaction) =>
-      transaction.id === transactionId ? { ...transaction, category, categoryLocked: true } : transaction));
+      transaction.id === transactionId ? { ...transaction, category, categoryLocked: true, rejectedSuggestion: undefined } : transaction));
     const pattern = similarityKey(target.description);
     if (pattern.length < 3) return;
     const probe = { id: "", pattern, category, direction: target.direction, createdAt: "" };
@@ -537,6 +553,58 @@ function App() {
       transaction.id !== transactionId && !transaction.categoryLocked && !transaction.manual &&
       transaction.category !== category && ruleMatches(probe, transaction)).length;
     setPendingRule({ pattern, category, direction: target.direction, count: similar });
+  };
+
+  const toggleTransactionSelection = (transactionId: string) => {
+    setSelectedTransactionIds((current) => {
+      const next = new Set(current);
+      if (next.has(transactionId)) next.delete(transactionId);
+      else next.add(transactionId);
+      return next;
+    });
+  };
+
+  const selectDisplayedTransactions = (shown: Transaction[], selected: boolean) => {
+    setSelectedTransactionIds((current) => {
+      const next = new Set(current);
+      for (const transaction of shown) {
+        if (selected) next.add(transaction.id);
+        else next.delete(transaction.id);
+      }
+      return next;
+    });
+  };
+
+  const applyBulkCategory = () => {
+    if (!selectedTransactionIds.size) return;
+    const ids = new Set(selectedTransactionIds);
+    const applied = transactions.filter((transaction) => ids.has(transaction.id)).length;
+    const changed = transactions.filter((transaction) => ids.has(transaction.id) && transaction.category !== bulkCategory).length;
+    setTransactions((current) => current.map((transaction) => ids.has(transaction.id)
+      ? { ...transaction, category: bulkCategory, categoryLocked: true, rejectedSuggestion: undefined }
+      : transaction));
+    setSelectedTransactionIds(new Set());
+    notify(`${applied.toLocaleString("en-NG")} transaction${applied === 1 ? "" : "s"} set to ${bulkCategory} · ${changed.toLocaleString("en-NG")} categor${changed === 1 ? "y" : "ies"} changed.`);
+  };
+
+  const resolveReviewCandidate = (transactionId: string, decision: "accept" | "reject" | "confirm") => {
+    const target = transactions.find((transaction) => transaction.id === transactionId);
+    if (!target) return;
+    const suggestion = classifyTransaction(target, rules, classificationHistory);
+    if (decision === "reject" && suggestion.category === target.category) return;
+    setTransactions((current) => current.map((transaction) => {
+      if (transaction.id !== transactionId) return transaction;
+      if (decision === "accept") {
+        return { ...transaction, category: suggestion.category, categoryLocked: true, rejectedSuggestion: undefined };
+      }
+      if (decision === "reject") {
+        return { ...transaction, categoryLocked: true, rejectedSuggestion: suggestion.category };
+      }
+      return { ...transaction, categoryLocked: true, rejectedSuggestion: undefined };
+    }));
+    notify(decision === "reject"
+      ? `Suggestion rejected. Future matches for this payee will learn ${target.category}.`
+      : `Category confirmed as ${decision === "accept" ? suggestion.category : target.category}.`);
   };
 
   const addRule = (rule: Omit<CategoryRule, "id" | "createdAt">) => {
@@ -591,11 +659,22 @@ function App() {
     notify("Transaction added.");
   };
 
-  const refreshAllCategories = () => {
-    if (!window.confirm("Re-run automatic categorisation and your rules over your imported history? Categories you set by hand are kept.")) return;
-    const result = refreshCategories(transactions, rules);
+  const refreshAllCategories = (startDate?: string, endDate?: string) => {
+    const rangeText = startDate || endDate
+      ? `${startDate ? formatDate(startDate) : "earliest history"} through ${endDate ? formatDate(endDate) : "latest history"}`
+      : "all imported history";
+    const eligible = transactions.filter((transaction) =>
+      !transaction.manual && !transaction.categoryLocked &&
+      (!startDate || transaction.date >= startDate) &&
+      (!endDate || transaction.date <= endDate)).length;
+    if (!eligible) {
+      notify("No unlocked transactions are in that date range.");
+      return;
+    }
+    if (!window.confirm(`Reclassify up to ${eligible.toLocaleString("en-NG")} unlocked transactions in ${rangeText}? Hand-picked categories and manual entries will stay unchanged.`)) return;
+    const result = reclassifyHistoricalTransactions(transactions, rules, classificationHistory, { start: startDate, end: endDate });
     setTransactions(result.transactions);
-    notify(`${result.changed.toLocaleString("en-NG")} transaction${result.changed === 1 ? "" : "s"} re-categorised.`);
+    notify(`${result.changed.toLocaleString("en-NG")} categor${result.changed === 1 ? "y" : "ies"} changed across ${result.eligible.toLocaleString("en-NG")} eligible transactions.`);
   };
 
   /* ---------------------------------------------- savings and betting */
@@ -700,6 +779,7 @@ function App() {
 
   const goTo = (page: Page) => {
     setActivePage(page);
+    setSelectedTransactionIds(new Set());
     setSidebarOpen(false);
     window.scrollTo({ top: 0 });
   };
@@ -760,6 +840,7 @@ function App() {
         <nav className="primary-nav" aria-label="Main navigation">
           <NavButton page="overview" active={activePage} onClick={goTo} icon={<LayoutDashboard size={18} />} />
           <NavButton page="transactions" active={activePage} onClick={goTo} icon={<ArrowLeftRight size={18} />} count={transactions.length} />
+          <NavButton page="review" active={activePage} onClick={goTo} icon={<ClipboardCheck size={18} />} count={classificationReviewQueue.length} />
           <NavButton page="insights" active={activePage} onClick={goTo} icon={<BarChart3 size={18} />} />
           <NavButton page="budgets" active={activePage} onClick={goTo} icon={<Target size={18} />} count={budgets.length || undefined} />
           <NavButton page="savings" active={activePage} onClick={goTo} icon={<PiggyBank size={18} />} count={savingsGoals.length + savingsCircles.length || undefined} />
@@ -799,7 +880,7 @@ function App() {
             </section>
           )}
 
-          {!loaded && (activePage === "overview" || activePage === "transactions" || activePage === "insights") && (
+          {!loaded && (activePage === "overview" || activePage === "transactions" || activePage === "review" || activePage === "insights") && (
             <div className="loading-state"><LoaderCircle className="spin" size={20} /> Loading your history…</div>
           )}
 
@@ -910,7 +991,13 @@ function App() {
                         </div>
                         <button className="subtle-link" onClick={() => goTo("transactions")}>See all <ArrowUpRight size={14} /></button>
                       </div>
-                      <TransactionTable transactions={[...withinPeriod].sort(sortNewestFirst).slice(0, 6)} currency={currency} rules={rules} classificationHistory={classificationHistory} />
+                      <TransactionTable
+                        transactions={[...withinPeriod].sort(sortNewestFirst).slice(0, 6)}
+                        currency={currency}
+                        rules={rules}
+                        classificationHistory={classificationHistory}
+                        recurringTransactionIds={recurringTransactionIds}
+                      />
                     </section>
                     <InsightsPanel
                       count={withinPeriod.length}
@@ -979,6 +1066,18 @@ function App() {
                   <span>Showing {displayedTransactions.length.toLocaleString("en-NG")} of {visibleTransactions.length.toLocaleString("en-NG")} transaction{visibleTransactions.length === 1 ? "" : "s"}</span>
                   <span>{formatCurrency(visibleTotals.income, currency)} in · {formatCurrency(visibleTotals.expenses, currency)} out <small>(own transfers excluded)</small></span>
                 </div>
+                {selectedTransactionIds.size > 0 && (
+                  <div className="bulk-classification-toolbar" role="status">
+                    <strong>{selectedTransactionIds.size.toLocaleString("en-NG")} selected</strong>
+                    <label>Set category to
+                      <select value={bulkCategory} onChange={(event) => setBulkCategory(event.target.value as Category)}>
+                        {categoryList.map((category) => <option key={category}>{category}</option>)}
+                      </select>
+                    </label>
+                    <button className="button button-primary" onClick={applyBulkCategory}><Check size={14} /> Apply to selected</button>
+                    <button className="button button-text" onClick={() => setSelectedTransactionIds(new Set())}>Clear selection</button>
+                  </div>
+                )}
                 {visibleTransactions.length
                   ? <>
                     <TransactionTable
@@ -989,6 +1088,10 @@ function App() {
                       similarCounts={similarTransactionCounts}
                       rules={rules}
                       classificationHistory={classificationHistory}
+                      recurringTransactionIds={recurringTransactionIds}
+                      selectedTransactionIds={selectedTransactionIds}
+                      onToggleSelection={toggleTransactionSelection}
+                      onSelectDisplayed={selectDisplayedTransactions}
                       onToggleInternal={toggleInternal}
                       onDelete={deleteTransaction}
                     />
@@ -1002,6 +1105,21 @@ function App() {
                   : <div className="no-results"><Search size={20} /><strong>No transactions match those filters</strong><span>Try another search, period, or import a statement.</span></div>}
               </section>
             </>
+          )}
+
+          {loaded && activePage === "review" && (
+            <ClassificationReviewPage
+              candidates={classificationReviewQueue}
+              recurringRecipients={recurringRecipients}
+              currency={currency}
+              onAcceptSuggestion={(transactionId) => resolveReviewCandidate(transactionId, "accept")}
+              onRejectSuggestion={(transactionId) => resolveReviewCandidate(transactionId, "reject")}
+              onConfirmCurrent={(transactionId) => resolveReviewCandidate(transactionId, "confirm")}
+              onOpenRecipient={(name) => {
+                setPeriod("all");
+                searchTransactions(name);
+              }}
+            />
           )}
 
           {activePage === "budgets" && (
@@ -1046,6 +1164,7 @@ function App() {
           {activePage === "data" && (
             <DataPage
               rules={rules}
+              transactions={transactions}
               counts={{ transactions: transactions.length, goals: savingsGoals.length, circles: savingsCircles.length, bets: bets.length, budgets: budgets.length }}
               matchCount={(rule) => transactions.filter((transaction) => ruleMatches(rule, transaction)).length}
               onAddRule={addRule}
@@ -1492,6 +1611,10 @@ function TransactionTable({
   similarCounts,
   rules = [],
   classificationHistory,
+  recurringTransactionIds,
+  selectedTransactionIds,
+  onToggleSelection,
+  onSelectDisplayed,
 }: {
   transactions: Transaction[];
   currency: string;
@@ -1502,12 +1625,23 @@ function TransactionTable({
   similarCounts?: ReadonlyMap<string, number>;
   rules?: CategoryRule[];
   classificationHistory?: ClassificationHistory;
+  recurringTransactionIds?: ReadonlySet<string>;
+  selectedTransactionIds?: ReadonlySet<string>;
+  onToggleSelection?: (transactionId: string) => void;
+  onSelectDisplayed?: (transactions: Transaction[], selected: boolean) => void;
 }) {
   const editable = Boolean(onChangeCategory || onToggleInternal || onDelete);
+  const selectable = Boolean(onToggleSelection && selectedTransactionIds && onSelectDisplayed);
+  const selectedCount = selectable ? transactions.filter((transaction) => selectedTransactionIds!.has(transaction.id)).length : 0;
+  const allSelected = transactions.length > 0 && selectedCount === transactions.length;
+  const partiallySelected = selectedCount > 0 && !allSelected;
   return (
     <div className="transaction-table-wrap">
       <table className="transaction-table">
-        <thead><tr><th>TRANSACTION</th><th>DATE</th>{showSource && <th>ACCOUNT</th>}<th>CATEGORY</th><th className="amount-heading">AMOUNT</th>{editable && <th aria-label="Actions" />}</tr></thead>
+        <thead><tr>
+          {selectable && <th className="transaction-select-heading"><input type="checkbox" checked={allSelected} ref={(element) => { if (element) element.indeterminate = partiallySelected; }} onChange={(event) => onSelectDisplayed?.(transactions, event.target.checked)} aria-label="Select all displayed transactions" /></th>}
+          <th>TRANSACTION</th><th>DATE</th>{showSource && <th>ACCOUNT</th>}<th>CATEGORY</th><th className="amount-heading">AMOUNT</th>{editable && <th aria-label="Actions" />}
+        </tr></thead>
         <tbody>
           {transactions.map((transaction) => {
             const isIncome = transaction.direction === "income";
@@ -1518,6 +1652,7 @@ function TransactionTable({
             const similarCount = Math.max(0, (similarCounts?.get(transaction.id) ?? 0) - 1);
             return (
               <tr key={transaction.id} className={transaction.internalTransfer ? "row-internal" : undefined}>
+                {selectable && <td className="transaction-select-cell"><input type="checkbox" checked={selectedTransactionIds!.has(transaction.id)} onChange={() => onToggleSelection?.(transaction.id)} aria-label={`Select ${transaction.description}`} /></td>}
                 <td>
                   <div className="transaction-name-cell">
                     <div className={`transaction-icon ${isIncome ? "transaction-icon-income" : ""}`}>
@@ -1530,6 +1665,7 @@ function TransactionTable({
                       {similarCount > 0 && <span className="transaction-intelligence-label">{similarCount} similar transaction{similarCount === 1 ? "" : "s"}</span>}
                       {suggestsDifferentCategory ? <span className={`classification-confidence classification-confidence--${confidenceTone}`} title={classification.reason} aria-label={"Suggested category " + classification.category + ", confidence " + Math.round(classification.confidence * 100) + " percent. " + classification.reason}>Suggest {classification.category} · {Math.round(classification.confidence * 100)}%</span> : <span className={`classification-confidence classification-confidence--${confidenceTone}`} title={classification.reason} aria-label={"Classification confidence " + Math.round(classification.confidence * 100) + " percent. " + classification.reason}>Confidence {Math.round(classification.confidence * 100)}%</span>}
                       {classification.confidence < 0.5 && <span className="transaction-review-label">Review category</span>}
+                      {recurringTransactionIds?.has(transaction.id) && <span className="transaction-intelligence-label">Recurring recipient pattern</span>}
                       {transaction.internalTransfer && <span className="transaction-review-label">Own money moving · excluded from totals</span>}
                       {transaction.ownAccountCandidate && !transaction.internalTransfer && (
                         <span className="transaction-review-row">

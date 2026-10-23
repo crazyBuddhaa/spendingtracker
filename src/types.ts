@@ -42,6 +42,8 @@ export interface Transaction {
   manual?: boolean;
   /** True once the user has chosen the category; automatic rules no longer change it. */
   categoryLocked?: boolean;
+  /** The category suggestion explicitly rejected by the user, retained for local learning. */
+  rejectedSuggestion?: Category;
 }
 
 export interface CategoryRule {
