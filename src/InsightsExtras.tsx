@@ -4,8 +4,14 @@ import type { Transaction } from "./types";
 import { getFeeSummary, getMonthlyReport, getSpendingRhythm, getTopCounterparties, monthlyReportToCsv } from "./lib/analytics";
 import type { DateRange } from "./lib/insights";
 import { downloadFile, formatCurrency, formatDate, formatMonth } from "./lib/format";
-import { formatHour, formatMinuteOfDay, getSpendingTimeAnalytics, getSpendingTimeline } from "./lib/spendingTimeAnalytics";
+import { formatHour, formatMinuteOfDay, getSpendingTimeAnalytics } from "./lib/spendingTimeAnalytics";
 import { getSpendingPatternAnalytics } from "./lib/spendingPatterns";
+import {
+  getIncomeSpendingTimeline,
+  getSpendingSessionAnalytics,
+  getTimePeriodPatterns,
+  getTimeToFirstDiscretionaryPurchase,
+} from "./lib/timeSpendingAnalytics";
 
 interface InsightsExtrasProps {
   transactions: Transaction[];
@@ -22,8 +28,11 @@ export default function InsightsExtras({ transactions, allTransactions, range, c
   const rhythm = useMemo(() => getSpendingRhythm(transactions, range.start, range.end), [transactions, range.start, range.end]);
   const report = useMemo(() => getMonthlyReport(allTransactions), [allTransactions]);
   const timeAnalytics = useMemo(() => getSpendingTimeAnalytics(transactions), [transactions]);
-  const timeline = useMemo(() => getSpendingTimeline(transactions, 20), [transactions]);
+  const cashflowTimeline = useMemo(() => getIncomeSpendingTimeline(transactions, 24), [transactions]);
   const patterns = useMemo(() => getSpendingPatternAnalytics(transactions, range), [transactions, range.start, range.end]);
+  const firstDiscretionary = useMemo(() => getTimeToFirstDiscretionaryPurchase(transactions), [transactions]);
+  const sessions = useMemo(() => getSpendingSessionAnalytics(transactions), [transactions]);
+  const timePeriods = useMemo(() => getTimePeriodPatterns(transactions, range), [transactions, range.start, range.end]);
   const maxWeekday = Math.max(1, ...rhythm.byWeekday.map((day) => day.average));
   const maxCounterparty = Math.max(1, ...counterparties.map((item) => item.amount));
   const maxHourlySpend = Math.max(1, ...timeAnalytics.byHour.map((hour) => hour.amount));
@@ -31,9 +40,17 @@ export default function InsightsExtras({ transactions, allTransactions, range, c
   const maxDailyPattern = Math.max(1, ...patterns.dailyTrend.map((day) => day.amount));
   const maxWeeklyPattern = Math.max(1, ...patterns.weeklyTrend.map((week) => week.amount));
   const maxWeeklyFrequency = Math.max(1, ...patterns.weeklyTrend.map((week) => week.transactionCount));
+  const maxDayPartSpend = Math.max(1, ...timePeriods.byDayPart.map((part) => part.amount));
+  const maxCalendarPeriodAverage = Math.max(1, timePeriods.weekday.averagePerDay, timePeriods.weekend.averagePerDay);
   const peakHour = timeAnalytics.byHour.filter((hour) => hour.count > 0).sort((a, b) => b.amount - a.amount)[0];
   const paceChange = patterns.velocityChangePercent;
   const frequencyChange = patterns.frequencyChangePercent;
+  const medianDelayLabel = firstDiscretionary.medianCalendarDays === null
+    ? "Not enough data"
+    : firstDiscretionary.medianCalendarDays === 0
+      ? "Same day"
+      : `${firstDiscretionary.medianCalendarDays.toLocaleString("en-NG", { maximumFractionDigits: 1 })} calendar days`;
+  const medianSameDayMinutes = firstDiscretionary.medianSameDayMinutes;
 
   return (
     <>
@@ -223,29 +240,128 @@ export default function InsightsExtras({ transactions, allTransactions, range, c
         </section>
       </div>
 
+      <div className="time-analysis-grid">
+        <section className="panel extras-panel time-analysis-panel">
+          <div className="panel-heading">
+            <div><div className="panel-kicker">INCOME TO FIRST DISCRETIONARY PURCHASE</div><h2>{medianDelayLabel}</h2></div>
+            <CalendarDays size={16} className="muted-icon" />
+          </div>
+          {firstDiscretionary.matchedIncomeDates ? (
+            <>
+              <div className="time-analysis-stat">
+                <strong>{firstDiscretionary.matchedIncomeDates} of {firstDiscretionary.incomeDates}</strong>
+                <span>income dates were followed by a categorized discretionary purchase before the next recorded income.</span>
+              </div>
+              {medianSameDayMinutes !== null && (
+                <p className="panel-note">For {firstDiscretionary.timedSameDayPurchases} same-day purchase{firstDiscretionary.timedSameDayPurchases === 1 ? "" : "s"} with usable times, the median delay was {Math.floor(medianSameDayMinutes / 60)}h {Math.round(medianSameDayMinutes % 60)}m.</p>
+              )}
+              <div className="time-match-list">
+                {firstDiscretionary.matches.slice(0, 4).map((match) => (
+                  <div key={`${match.incomeDate}-${match.purchaseDate}-${match.purchaseName}`}>
+                    <span>{formatDate(match.incomeDate)} income</span>
+                    <strong>{match.purchaseName}</strong>
+                    <small>{match.purchaseCategory} · {match.calendarDays === 0 ? "same day" : `${match.calendarDays} day${match.calendarDays === 1 ? "" : "s"} later`}</small>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div className="counterparty-empty"><CalendarDays size={14} /> No matched income-to-purchase intervals in this period yet.</div>
+          )}
+          <p className="panel-note">Discretionary categories here are Shopping, Entertainment, and Betting. Same-day order is counted only when all income and purchase times are recorded; the latest income interval may still be in progress.</p>
+        </section>
+
+        <section className="panel extras-panel time-analysis-panel">
+          <div className="panel-heading">
+            <div><div className="panel-kicker">SPENDING SESSIONS</div><h2>{sessions.sessionCount} grouped session{sessions.sessionCount === 1 ? "" : "s"}</h2></div>
+            <Clock3 size={16} className="muted-icon" />
+          </div>
+          <div className="session-metrics">
+            <div><span>TIMED EXPENSES</span><strong>{sessions.timedTransactions.toLocaleString("en-NG")}</strong></div>
+            <div><span>IN SESSIONS</span><strong>{sessions.groupedTransactionCount.toLocaleString("en-NG")}</strong></div>
+            <div><span>AVG SESSION</span><strong>{formatCurrency(sessions.averageSessionAmount, currency, true)}</strong></div>
+          </div>
+          <p className="panel-note">A session groups at least two same-day expenses with no more than 60 minutes between consecutive transactions. Transactions without a valid time are not grouped.</p>
+          {sessions.largestSessions.length ? (
+            <div className="session-list">
+              {sessions.largestSessions.slice(0, 4).map((session) => (
+                <div key={`${session.date}-${session.startMinute}-${session.endMinute}`}>
+                  <span>{formatDate(session.date)} · {formatMinuteOfDay(session.startMinute)}–{formatMinuteOfDay(session.endMinute)}</span>
+                  <small>{session.transactionCount} transactions · {session.categories.join(", ")}</small>
+                  <strong>{formatCurrency(session.amount, currency, true)}</strong>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="counterparty-empty"><Clock3 size={14} /> No multi-transaction sessions detected from the available timed expenses.</div>
+          )}
+        </section>
+      </div>
+
+      <section className="panel extras-panel time-period-panel">
+        <div className="panel-heading">
+          <div><div className="panel-kicker">MORNING, EVENING &amp; TIME-PERIOD COMPARISONS</div><h2>When and which days spending happens</h2></div>
+          <CalendarRange size={16} className="muted-icon" />
+        </div>
+        <div className="time-period-grid">
+          <div className="time-period-section">
+            <h3>By time of day</h3>
+            <p className="time-period-subtitle">Expenses with a valid statement time</p>
+            <div className="daypart-list">
+              {timePeriods.byDayPart.map((part) => (
+                <div className="daypart-row" key={part.key}>
+                  <div className="daypart-label"><strong>{part.label}</strong><small>{part.hours} · {part.transactionCount} transaction{part.transactionCount === 1 ? "" : "s"}</small></div>
+                  <span className="daypart-track"><i style={{ width: `${Math.max((part.amount / maxDayPartSpend) * 100, part.amount > 0 ? 2 : 0)}%` }} /></span>
+                  <strong className="daypart-amount">{formatCurrency(part.amount, currency, true)}</strong>
+                </div>
+              ))}
+            </div>
+            <p className="panel-note">{timePeriods.timedTransactions} of {timePeriods.totalDatedExpenses} dated expenses include a usable time ({timePeriods.totalDatedExpenses ? Math.round((timePeriods.timedTransactions / timePeriods.totalDatedExpenses) * 100) : 0}% time coverage).</p>
+          </div>
+
+          <div className="time-period-section">
+            <h3>Weekdays vs weekends</h3>
+            <p className="time-period-subtitle">Average spend per calendar day, including expenses without a time</p>
+            {[timePeriods.weekday, timePeriods.weekend].map((period) => (
+              <div className="calendar-period-row" key={period.label}>
+                <div className="calendar-period-heading"><strong>{period.label}</strong><small>{period.days} calendar days · {period.transactionCount} transactions</small></div>
+                <strong>{formatCurrency(period.averagePerDay, currency, true)}<small> / day</small></strong>
+                <span className="daypart-track"><i style={{ width: `${Math.max((period.averagePerDay / maxCalendarPeriodAverage) * 100, period.averagePerDay > 0 ? 2 : 0)}%` }} /></span>
+                <small>Total {formatCurrency(period.amount, currency, true)}</small>
+              </div>
+            ))}
+            <p className="panel-note">
+              {timePeriods.weekendVsWeekdayAveragePercent === null
+                ? "A weekday-to-weekend average comparison needs recorded weekday spending."
+                : `Weekend daily spending is ${Math.abs(timePeriods.weekendVsWeekdayAveragePercent).toFixed(1)}% ${timePeriods.weekendVsWeekdayAveragePercent > 0 ? "higher" : timePeriods.weekendVsWeekdayAveragePercent < 0 ? "lower" : "the same as"} weekday spending in this period.`}
+            </p>
+          </div>
+        </div>
+      </section>
+
       <section className="panel extras-panel spending-timeline-panel">
         <div className="panel-heading">
-          <div><div className="panel-kicker">SPENDING TIMELINE</div><h2>Recent transactions in this period</h2></div>
-          <span className="heading-note"><ListOrdered size={14} /> {timeline.length} shown</span>
+          <div><div className="panel-kicker">INCOME-TO-SPENDING TIMELINE</div><h2>Recent cashflow in this period</h2></div>
+          <span className="heading-note"><ListOrdered size={14} /> {cashflowTimeline.length} shown</span>
         </div>
-        <p className="panel-note">Latest expenses first. Transactions without a statement time appear after timed entries on the same date; select an item to find it in Transactions.</p>
-        {timeline.length ? (
+        <p className="panel-note">Income, refunds, and expenses in reverse chronological order. Confirmed internal transfers are excluded; transactions without a statement time appear after timed entries on the same date.</p>
+        {cashflowTimeline.length ? (
           <ol className="spending-timeline">
-            {timeline.map(({ transaction, name, minuteOfDay }) => (
-              <li key={transaction.id}>
+            {cashflowTimeline.map(({ transaction, name, minuteOfDay, kind }) => (
+              <li key={transaction.id} className={`cashflow-row-${kind}`}>
                 <button className="spending-timeline-entry" onClick={() => onSearch(transaction.description)} title={transaction.description}>
                   <span className="spending-timeline-marker" aria-hidden="true" />
                   <span className="spending-timeline-copy">
                     <strong>{name}</strong>
-                    <small>{transaction.category} · {minuteOfDay === null ? "Time not recorded" : formatMinuteOfDay(minuteOfDay)} · {transaction.source}</small>
+                    <small>{kind === "income" ? "Income" : kind === "refund" ? "Refund" : "Expense"} · {transaction.category} · {minuteOfDay === null ? "Time not recorded" : formatMinuteOfDay(minuteOfDay)} · {transaction.source}</small>
                   </span>
                   <span className="spending-timeline-date">{formatDate(transaction.date)}</span>
-                  <strong className="spending-timeline-amount">−{formatCurrency(transaction.amount, currency, true)}</strong>
+                  <strong className="spending-timeline-amount">{kind === "expense" ? "−" : "+"}{formatCurrency(transaction.amount, currency, true)}</strong>
                 </button>
               </li>
             ))}
           </ol>
-        ) : <div className="counterparty-empty"><ListOrdered size={14} /> No spending transactions in this period.</div>}
+        ) : <div className="counterparty-empty"><ListOrdered size={14} /> No income or spending transactions in this period.</div>}
       </section>
 
       <section className="panel report-panel">
