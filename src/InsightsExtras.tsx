@@ -1,17 +1,24 @@
 import { useMemo, useState } from "react";
-import { CalendarDays, CalendarRange, Clock3, Download, ListOrdered, Receipt, TrendingDown, TrendingUp, Users } from "lucide-react";
+import { Activity, AlertTriangle, CalendarDays, CalendarRange, Clock3, Download, ListOrdered, Receipt, TrendingDown, TrendingUp, Users } from "lucide-react";
 import type { Transaction } from "./types";
 import { getFeeSummary, getMonthlyReport, getSpendingRhythm, getTopCounterparties, monthlyReportToCsv } from "./lib/analytics";
 import type { DateRange } from "./lib/insights";
 import { downloadFile, formatCurrency, formatDate, formatMonth } from "./lib/format";
 import { formatHour, formatMinuteOfDay, getSpendingTimeAnalytics } from "./lib/spendingTimeAnalytics";
 import { getSpendingPatternAnalytics } from "./lib/spendingPatterns";
+import { getSpendingForecasts } from "./lib/spendingForecasts";
+import { getSpendingAnomalies, getUnusualSpendingTimes } from "./lib/spendingSignals";
 import {
   getIncomeSpendingTimeline,
   getSpendingSessionAnalytics,
   getTimePeriodPatterns,
   getTimeToFirstDiscretionaryPurchase,
 } from "./lib/timeSpendingAnalytics";
+
+function formatTimeWindow(startHour: number): string {
+  const endHour = (startHour + 2) % 24;
+  return `${String(startHour).padStart(2, "0")}:00–${String(endHour).padStart(2, "0")}:59`;
+}
 
 interface InsightsExtrasProps {
   transactions: Transaction[];
@@ -33,6 +40,9 @@ export default function InsightsExtras({ transactions, allTransactions, range, c
   const firstDiscretionary = useMemo(() => getTimeToFirstDiscretionaryPurchase(transactions), [transactions]);
   const sessions = useMemo(() => getSpendingSessionAnalytics(transactions), [transactions]);
   const timePeriods = useMemo(() => getTimePeriodPatterns(transactions, range), [transactions, range.start, range.end]);
+  const unusualTimes = useMemo(() => getUnusualSpendingTimes(transactions, allTransactions), [transactions, allTransactions]);
+  const anomalies = useMemo(() => getSpendingAnomalies(transactions, allTransactions), [transactions, allTransactions]);
+  const forecasts = useMemo(() => getSpendingForecasts(allTransactions), [allTransactions]);
   const maxWeekday = Math.max(1, ...rhythm.byWeekday.map((day) => day.average));
   const maxCounterparty = Math.max(1, ...counterparties.map((item) => item.amount));
   const maxHourlySpend = Math.max(1, ...timeAnalytics.byHour.map((hour) => hour.amount));
@@ -337,6 +347,65 @@ export default function InsightsExtras({ transactions, allTransactions, range, c
             </p>
           </div>
         </div>
+      </section>
+
+      <div className="spending-signal-grid">
+        <section className="panel extras-panel">
+          <div className="panel-heading">
+            <div><div className="panel-kicker">UNUSUAL SPENDING TIMES</div><h2>{unusualTimes.unusualCount} flagged in this period</h2></div>
+            <Clock3 size={16} className="muted-icon" />
+          </div>
+          <p className="panel-note">A flag means this 3-hour window is rare in your own history: at least 20 earlier timed expenses, with no more than one in the window and at most 5% of earlier activity. This is not a fraud alert.</p>
+          {unusualTimes.items.length ? (
+            <div className="signal-list">
+              {unusualTimes.items.map((item) => (
+                <button className="signal-row" key={item.transactionId} onClick={() => onSearch(item.name)} title="Show matching transactions">
+                  <span><strong>{item.name}</strong><small>{formatDate(item.date)} · {item.time} · {formatTimeWindow(item.windowStartHour)} · {item.windowTransactionCount}/{item.priorTimedTransactions} earlier expenses in this window</small></span>
+                  <strong>{formatCurrency(item.amount, currency, true)}</strong>
+                </button>
+              ))}
+            </div>
+          ) : <div className="counterparty-empty"><Clock3 size={14} /> {unusualTimes.eligibleTransactions ? "No timed purchases stood out against your earlier pattern." : "This needs at least 20 earlier expenses with recorded times before it can flag an unusual window."}</div>}
+        </section>
+
+        <section className="panel extras-panel">
+          <div className="panel-heading">
+            <div><div className="panel-kicker">SPENDING ANOMALIES</div><h2>{anomalies.anomalyCount} unusually large purchase{anomalies.anomalyCount === 1 ? "" : "s"}</h2></div>
+            <AlertTriangle size={16} className="muted-icon" />
+          </div>
+          <p className="panel-note">Compared with at least five expenses in the same category from the preceding 12 months. A flag is a review clue, not proof of an error.</p>
+          {anomalies.items.length ? (
+            <div className="signal-list">
+              {anomalies.items.map((item) => (
+                <button className="signal-row" key={item.transactionId} onClick={() => onSearch(item.name)} title="Show matching transactions">
+                  <span><strong>{item.name}</strong><small>{item.category} · {formatDate(item.date)} · {item.multipleOfMedian.toFixed(1)}× category median across {item.priorCategoryTransactions} earlier expenses</small></span>
+                  <strong>{formatCurrency(item.amount, currency, true)}</strong>
+                </button>
+              ))}
+            </div>
+          ) : <div className="counterparty-empty"><AlertTriangle size={14} /> {anomalies.eligibleTransactions ? "No unusually large purchases stood out in this period." : "A category needs at least five earlier expenses to establish a personal baseline."}</div>}
+          <p className="panel-note">Threshold: category median plus the larger of the median or three scaled median absolute deviations (at least 2× median).</p>
+        </section>
+      </div>
+
+      <section className="panel extras-panel spending-forecast-panel">
+        <div className="panel-heading">
+          <div><div className="panel-kicker">SPENDING FORECASTS · RUN RATE</div><h2>Projected spending</h2></div>
+          <Activity size={16} className="muted-icon" />
+        </div>
+        <div className="forecast-metrics">
+          <div className="forecast-metric">
+            <span>MONTH-END AT CURRENT PACE</span>
+            <strong>{forecasts.monthEndProjection === null ? "Building baseline" : formatCurrency(forecasts.monthEndProjection, currency, true)}</strong>
+            <small>{formatMonth(forecasts.asOfDate.slice(0, 7))} · {formatCurrency(forecasts.monthToDateSpending, currency, true)} across {forecasts.monthHistoryDays} days of history</small>
+          </div>
+          <div className="forecast-metric">
+            <span>NEXT 30 DAYS AT RECENT PACE</span>
+            <strong>{forecasts.next30DayProjection === null ? "Building baseline" : formatCurrency(forecasts.next30DayProjection, currency, true)}</strong>
+            <small>{formatCurrency(forecasts.recentWindowSpending, currency, true)} over {forecasts.recentWindowDays} recorded-history days since {formatDate(forecasts.recentWindowStart)}</small>
+          </div>
+        </div>
+        <p className="panel-note">Simple extrapolations from recorded expenses after refunds; internal transfers are excluded. They assume imported history is up to date and do not model future bills or seasonal changes. Month-end needs seven elapsed days; the 30-day estimate needs 14 days of history.</p>
       </section>
 
       <section className="panel extras-panel spending-timeline-panel">

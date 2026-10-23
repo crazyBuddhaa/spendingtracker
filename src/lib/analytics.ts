@@ -136,12 +136,24 @@ export interface RecurringPayment {
   key: string;
   name: string;
   category: Category;
-  cadence: "weekly" | "monthly";
+  cadence: RecurringCadence;
   occurrences: number;
   typicalAmount: number;
   lastDate: string;
   nextExpected: string;
   monthlyCost: number;
+}
+
+export type RecurringCadence = "weekly" | "fortnightly" | "monthly" | "quarterly" | "yearly";
+
+export function recurringCadenceLabel(cadence: RecurringCadence): string {
+  return {
+    weekly: "Weekly",
+    fortnightly: "Fortnightly",
+    monthly: "Monthly",
+    quarterly: "Quarterly",
+    yearly: "Yearly",
+  }[cadence];
 }
 
 function median(values: number[]): number {
@@ -156,9 +168,25 @@ function addDays(date: string, days: number): string {
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
 }
 
+function addMonths(date: string, months: number): string {
+  const value = new Date(`${date}T00:00:00`);
+  const targetMonth = new Date(value.getFullYear(), value.getMonth() + months, 1);
+  const lastDay = new Date(targetMonth.getFullYear(), targetMonth.getMonth() + 1, 0).getDate();
+  const nextDate = new Date(targetMonth.getFullYear(), targetMonth.getMonth(), Math.min(value.getDate(), lastDay));
+  return `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, "0")}-${String(nextDate.getDate()).padStart(2, "0")}`;
+}
+
+function nextRecurringDate(lastDate: string, cadence: RecurringCadence): string {
+  if (cadence === "weekly") return addDays(lastDate, 7);
+  if (cadence === "fortnightly") return addDays(lastDate, 14);
+  if (cadence === "monthly") return addMonths(lastDate, 1);
+  if (cadence === "quarterly") return addMonths(lastDate, 3);
+  return addMonths(lastDate, 12);
+}
+
 /**
- * Finds payments to the same payee that repeat on a steady weekly or monthly rhythm
- * with similar amounts — subscriptions, rent, TV, data plans, salaries you pay.
+ * Finds payments to the same payee that repeat on a steady weekly-to-yearly rhythm
+ * with similar amounts — subscriptions, rent, TV, data plans, and other regular bills.
  */
 export function findRecurringPayments(transactions: Transaction[], profiles: RecipientProfile[] = []): RecurringPayment[] {
   const groups = new Map<string, { transactions: Transaction[]; name: string }>();
@@ -187,10 +215,23 @@ export function findRecurringPayments(transactions: Transaction[], profiles: Rec
       Math.round((new Date(`${day}T00:00:00`).getTime() - new Date(`${days[index]}T00:00:00`).getTime()) / 86_400_000));
     const recentGaps = gaps.slice(-6);
     const gap = median(recentGaps);
-    const cadence = gap >= 6 && gap <= 8 ? "weekly" : gap >= 26 && gap <= 35 ? "monthly" : null;
-    if (!cadence) continue;
-    const window = cadence === "weekly" ? 2 : 6;
-    const steady = recentGaps.filter((value) => Math.abs(value - gap) <= window).length / recentGaps.length;
+    const cadenceConfigs: Array<{
+      cadence: RecurringCadence;
+      min: number;
+      max: number;
+      tolerance: number;
+      paymentsPerMonth: number;
+    }> = [
+      { cadence: "weekly", min: 6, max: 8, tolerance: 2, paymentsPerMonth: 52 / 12 },
+      { cadence: "fortnightly", min: 12, max: 16, tolerance: 3, paymentsPerMonth: 26 / 12 },
+      { cadence: "monthly", min: 26, max: 35, tolerance: 6, paymentsPerMonth: 1 },
+      { cadence: "quarterly", min: 80, max: 100, tolerance: 15, paymentsPerMonth: 1 / 3 },
+      { cadence: "yearly", min: 330, max: 400, tolerance: 45, paymentsPerMonth: 1 / 12 },
+    ];
+    const cadenceConfig = cadenceConfigs.find((item) => gap >= item.min && gap <= item.max);
+    if (!cadenceConfig) continue;
+    const cadence = cadenceConfig.cadence;
+    const steady = recentGaps.filter((value) => Math.abs(value - gap) <= cadenceConfig.tolerance).length / recentGaps.length;
     if (steady < 0.6) continue;
     const amounts = days.slice(-6).map((day) => byDay.get(day)!);
     const typicalAmount = median(amounts);
@@ -206,8 +247,8 @@ export function findRecurringPayments(transactions: Transaction[], profiles: Rec
       occurrences: days.length,
       typicalAmount: round(typicalAmount),
       lastDate,
-      nextExpected: addDays(lastDate, cadence === "weekly" ? 7 : Math.round(gap)),
-      monthlyCost: round(cadence === "weekly" ? (typicalAmount * 52) / 12 : typicalAmount),
+      nextExpected: nextRecurringDate(lastDate, cadence),
+      monthlyCost: round(typicalAmount * cadenceConfig.paymentsPerMonth),
     });
   }
   return results.sort((a, b) => b.lastDate.localeCompare(a.lastDate) || b.monthlyCost - a.monthlyCost);

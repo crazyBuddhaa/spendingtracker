@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { AlertTriangle, CalendarClock, Check, Plus, Repeat, Target, Trash2, X } from "lucide-react";
 import { categoryList, type Budget, type Category, type RecipientProfile, type Transaction } from "./types";
-import { findRecurringPayments, getBudgetStatus, suggestBudget } from "./lib/analytics";
+import { findRecurringPayments, getBudgetStatus, recurringCadenceLabel, suggestBudget } from "./lib/analytics";
 import { formatCurrency, formatDate, formatMonth } from "./lib/format";
 
 interface BudgetsPageProps {
@@ -126,7 +126,7 @@ export default function BudgetsPage({ transactions, budgets, recipientProfiles, 
           <div><div className="panel-kicker">DETECTED FROM YOUR HISTORY</div><h2>Regular payments</h2></div>
           <span className="heading-note"><Repeat size={13} /> {recurring.length} found</span>
         </div>
-        <p className="panel-note">Payments to the same payee that repeat weekly or monthly with a similar amount — subscriptions, TV, rent, data plans, or staff you pay.</p>
+        <p className="panel-note">Payments to the same payee that repeat weekly, fortnightly, monthly, quarterly, or yearly with similar amounts. This is a historical estimate, not a scheduled payment.</p>
         {recurring.length ? (
           <div className="simple-table-wrap">
             <table className="simple-table">
@@ -135,7 +135,7 @@ export default function BudgetsPage({ transactions, budgets, recipientProfiles, 
                 {recurring.map((item) => (
                   <tr key={item.key}>
                     <td><strong>{item.name}</strong><small>{item.category} · {item.occurrences} payments</small></td>
-                    <td>{item.cadence === "weekly" ? "Week" : "Month"}</td>
+                    <td>{recurringCadenceLabel(item.cadence)}</td>
                     <td>{formatCurrency(item.typicalAmount, currency)}</td>
                     <td>{formatCurrency(item.monthlyCost, currency)}</td>
                     <td>{formatDate(item.lastDate)}</td>
@@ -146,7 +146,7 @@ export default function BudgetsPage({ transactions, budgets, recipientProfiles, 
             </table>
           </div>
         ) : (
-          <div className="counterparty-empty">No steady weekly or monthly payments were found yet. They appear once a payee has been paid at least three times on a regular rhythm.</div>
+          <div className="counterparty-empty">No steady recurring payments were found yet. A payee needs at least three payments on a regular rhythm.</div>
         )}
       </section>
 
