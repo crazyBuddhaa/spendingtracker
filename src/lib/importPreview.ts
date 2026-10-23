@@ -1,5 +1,6 @@
 import type { ImportDiagnostics, Transaction } from "../types.ts";
 import { findNewTransactions } from "./transactionDeduplication.ts";
+import { similarityKey } from "./categorise.ts";
 
 export type ImportMode = "full-history" | "specific-month" | "custom-range" | "new-transactions-only";
 
@@ -123,7 +124,7 @@ function validRange(range: ImportDateRange | null, mode: ImportMode): boolean {
 }
 
 function duplicateCandidateKey(transaction: Transaction): string {
-  return `${transaction.date}|${transaction.amount.toFixed(2)}|${transaction.description.toLowerCase().trim().replace(/\s+/g, " ")}`;
+  return `${transaction.date}|${transaction.direction}|${transaction.amount.toFixed(2)}|${similarityKey(transaction.description)}`;
 }
 
 function potentialDuplicateCount(existing: Transaction[], newRows: Transaction[]): number {

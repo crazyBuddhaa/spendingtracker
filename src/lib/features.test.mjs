@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { parseTransactionsCsv } from "./csv.ts";
-import { applyCategoryRules, categorise, isOwnAccountTransfer, isWalletProductMovement, refreshCategories, ruleMatches, similarityKey } from "./categorise.ts";
+import { applyCategoryRules, categorise, isOwnAccountTransfer, isWalletProductMovement, normaliseTransactionDescription, recogniseTransactionParty, refreshCategories, ruleMatches, similarityKey } from "./categorise.ts";
 import { parseStatementSheets } from "./workbookStatement.ts";
 import { calculateTotals, getMonthlySeries, previousRange, resolvePeriod } from "./insights.ts";
 import {
@@ -14,6 +14,8 @@ import {
   suggestBudget,
 } from "./analytics.ts";
 import { parseStoredTransactions, serializeTransactions } from "./transactionStorage.ts";
+import { buildImportPreview } from "./importPreview.ts";
+import { classifyTransaction, getSimilarTransactionCounts } from "./transactionIntelligence.ts";
 import { createBackup, normaliseBudgets, normaliseRules, readBackup } from "./backup.ts";
 
 const tx = (overrides) => ({
@@ -159,6 +161,57 @@ describe("user rules", () => {
     assert.equal(transactions[2].category, "Shopping");
     assert.equal(transactions[3].category, "Other");
     assert.equal(changed, 2);
+  });
+});
+
+
+
+describe("transaction intelligence", () => {
+  it("recognises transfer recipients and merchants while normalising volatile references", () => {
+    const recipient = recogniseTransactionParty("Transfer to JANE DOE | GTBank | 12345678901");
+    assert.equal(recipient?.kind, "recipient");
+    assert.equal(recipient?.key, "jane doe");
+    const merchant = recogniseTransactionParty("POS purchase at Shoprite | REF 12345678901");
+    assert.equal(merchant?.kind, "merchant");
+    assert.equal(merchant?.key, "shoprite");
+    assert.equal(
+      normaliseTransactionDescription("POS purchase at Shoprite | REF 12345678901"),
+      normaliseTransactionDescription("Card payment at SHOPRITE | REF 98765432109"),
+    );
+    assert.equal(similarityKey("Transfer to  ISAAC  ADEKANMI | United Bank For Africa | 1024085079"), "transfer to isaac adekanmi");
+  });
+
+  it("uses accepted personal rules for classification and groups similar transactions", () => {
+    const rules = [{ id: "r1", pattern: "merchant shoprite", category: "Food & groceries", direction: "expense", createdAt: "2026-10-23" }];
+    const first = tx({ id: "one", description: "POS purchase at Shoprite | REF 12345678901" });
+    const second = tx({ id: "two", description: "Card payment at SHOPRITE | REF 98765432109" });
+    const classification = classifyTransaction(first, rules);
+    assert.equal(classification.category, "Food & groceries");
+    assert.equal(classification.source, "personal-rule");
+    assert.equal(classification.confidence, 0.98);
+    const counts = getSimilarTransactionCounts([first, second]);
+    assert.equal(counts.get("one"), 2);
+    assert.equal(counts.get("two"), 2);
+  });
+
+  it("flags weak fallback categories for review", () => {
+    const result = classifyTransaction(tx({ description: "Unrecognised statement narration" }));
+    assert.equal(result.category, "Other");
+    assert.equal(result.confidence < 0.5, true);
+  });
+
+  it("matches potential duplicates using normalized merchant identity, not account references", () => {
+    const result = buildImportPreview({
+      imported: [tx({ id: "new", date: "2026-10-16", description: "Card payment at SHOPRITE | REF 98765432109", amount: 2500, source: "OPay" })],
+      existing: [tx({ id: "old", date: "2026-10-16", description: "POS purchase at Shoprite | REF 12345678901", amount: 2500, source: "Access Bank" })],
+      skipped: 0,
+      mode: "full-history",
+      month: "",
+      customRange: { start: null, end: null },
+      comparisonAvailable: true,
+    });
+    assert.equal(result.confirmedDuplicates, 0);
+    assert.equal(result.potentialDuplicates, 1);
   });
 });
 

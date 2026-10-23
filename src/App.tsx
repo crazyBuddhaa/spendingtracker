@@ -37,7 +37,8 @@ import { findNewTransactions } from "./lib/transactionDeduplication";
 import { buildImportPreview, type ImportDateRange, type ImportMode, type ImportPreview } from "./lib/importPreview";
 import { getTransferInsights } from "./lib/transactionPatterns";
 import { readValue, writeValue } from "./lib/persistentStore";
-import { applyCategoryRules, categorise, refreshCategories, ruleMatches, similarityKey } from "./lib/categorise";
+import { applyCategoryRules, categorise, recogniseTransactionParty, refreshCategories, ruleMatches, similarityKey } from "./lib/categorise";
+import { classifyTransaction, getSimilarTransactionCounts } from "./lib/transactionIntelligence";
 import { createBackup, normaliseBudgets, normaliseRules, readBackup } from "./lib/backup";
 import { getFeeSummary } from "./lib/analytics";
 import { downloadFile, formatCurrency, formatDate, localIsoDate, newId } from "./lib/format";
@@ -336,6 +337,8 @@ function App() {
     const previous = previousRange(period, range);
     return previous ? calculateTotals(filterByRange(transactions, previous)) : null;
   }, [transactions, period, range]);
+  const similarTransactionCounts = useMemo(() => getSimilarTransactionCounts(transactions), [transactions]);
+
   const visibleTransactions = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase().replace(/\s+/g, " ");
     return withinPeriod
@@ -532,8 +535,7 @@ function App() {
     const similar = transactions.filter((transaction) =>
       transaction.id !== transactionId && !transaction.categoryLocked && !transaction.manual &&
       transaction.category !== category && ruleMatches(probe, transaction)).length;
-    setPendingRule(similar > 0 ? { pattern, category, direction: target.direction, count: similar } : null);
-    if (!similar) notify(`Category set to ${category}.`);
+    setPendingRule({ pattern, category, direction: target.direction, count: similar });
   };
 
   const addRule = (rule: Omit<CategoryRule, "id" | "createdAt">) => {
@@ -942,10 +944,10 @@ function App() {
               {emptyPeriodNotice}
               {pendingRule && (
                 <section className="rule-suggestion" role="status">
-                  <span>Also set <strong>{pendingRule.count.toLocaleString("en-NG")}</strong> similar transaction{pendingRule.count === 1 ? "" : "s"} matching “{pendingRule.pattern}” to <strong>{pendingRule.category}</strong>, and do the same for future imports?</span>
+                  <span>{pendingRule.count > 0 ? <>Also set <strong>{pendingRule.count.toLocaleString("en-NG")}</strong> similar transaction{pendingRule.count === 1 ? "" : "s"} matching “{pendingRule.pattern}” to <strong>{pendingRule.category}</strong>, and remember it for future imports?</> : <>Remember <strong>{pendingRule.pattern}</strong> as <strong>{pendingRule.category}</strong> for future imports?</>}</span>
                   <span className="rule-suggestion-actions">
                     <button className="button button-secondary" onClick={() => setPendingRule(null)}>Only this one</button>
-                    <button className="button button-primary" onClick={acceptPendingRule}><Check size={14} /> Apply to all &amp; remember</button>
+                    <button className="button button-primary" onClick={acceptPendingRule}><Check size={14} /> {pendingRule.count > 0 ? "Apply to all & remember" : "Remember for future"}</button>
                   </span>
                 </section>
               )}
@@ -983,6 +985,8 @@ function App() {
                       currency={currency}
                       showSource
                       onChangeCategory={changeCategory}
+                      similarCounts={similarTransactionCounts}
+                      rules={rules}
                       onToggleInternal={toggleInternal}
                       onDelete={deleteTransaction}
                     />
@@ -1270,7 +1274,7 @@ function ImportPreviewModal({
           <strong>Comparison limits</strong>
           <p>{comparisonNote}</p>
           <p>Statement-period metadata is not stored. The overlap check uses existing imported transaction dates within the detected range; it cannot confirm which original statement files covered those dates.</p>
-          <p>Potential duplicates are date, amount, and description matches that did not meet the exact duplicate rule; they are not skipped. Existing import logic does not update existing transaction records.</p>
+          <p>Potential duplicates share a date and amount plus a normalized merchant or narration match; they are not skipped. Existing import logic does not update existing transaction records.</p>
           <p>Nothing is saved during preview. Confirm adds the selected transactions to this browser’s saved history. Original statement files are not uploaded.</p>
           {preview.missingDateRows > 0 && <p>{preview.missingDateRows.toLocaleString("en-NG")} row(s) had no date; {preview.invalidDateRows.toLocaleString("en-NG")} row(s) had an invalid date.</p>}
           {preview.ambiguousDateRows > 0 && <p>{preview.ambiguousDateRows.toLocaleString("en-NG")} ambiguous numeric date(s) use the existing day-first interpretation. Check these against the statement if it uses month-first dates.</p>}
@@ -1483,6 +1487,8 @@ function TransactionTable({
   onChangeCategory,
   onToggleInternal,
   onDelete,
+  similarCounts,
+  rules = [],
 }: {
   transactions: Transaction[];
   currency: string;
@@ -1490,6 +1496,8 @@ function TransactionTable({
   onChangeCategory?: (transactionId: string, category: Category) => void;
   onToggleInternal?: (transactionId: string) => void;
   onDelete?: (transactionId: string) => void;
+  similarCounts?: ReadonlyMap<string, number>;
+  rules?: CategoryRule[];
 }) {
   const editable = Boolean(onChangeCategory || onToggleInternal || onDelete);
   return (
@@ -1499,6 +1507,9 @@ function TransactionTable({
         <tbody>
           {transactions.map((transaction) => {
             const isIncome = transaction.direction === "income";
+            const party = recogniseTransactionParty(transaction.description);
+            const classification = classifyTransaction(transaction, rules);
+            const similarCount = Math.max(0, (similarCounts?.get(transaction.id) ?? 0) - 1);
             return (
               <tr key={transaction.id} className={transaction.internalTransfer ? "row-internal" : undefined}>
                 <td>
@@ -1509,6 +1520,9 @@ function TransactionTable({
                     <div className="transaction-name-copy">
                       <strong title={transaction.description}>{transaction.description}</strong>
                       <span>{transaction.source}{transaction.manual ? " · added by you" : ""}{transaction.note ? ` · ${transaction.note}` : ""}</span>
+                      {party && <span className="transaction-intelligence-label">{party.kind === "merchant" ? "Merchant" : party.kind === "recipient" ? "Recipient" : "Sender"} · {party.name}</span>}
+                      {similarCount > 0 && <span className="transaction-intelligence-label">{similarCount} similar transaction{similarCount === 1 ? "" : "s"}</span>}
+                      {classification.confidence < 0.5 && <span className="transaction-review-label">Review category</span>}
                       {transaction.internalTransfer && <span className="transaction-review-label">Own money moving · excluded from totals</span>}
                       {transaction.ownAccountCandidate && !transaction.internalTransfer && (
                         <span className="transaction-review-row">
