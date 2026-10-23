@@ -1,10 +1,22 @@
 import { useMemo, useState } from "react";
-import { CalendarClock, Car, CircleHelp, Pencil, Search, Tag, Trash2, Users, X } from "lucide-react";
+import { CalendarClock, Car, CircleHelp, Clock3, Pencil, Route, Search, Tag, Trash2, Users, X } from "lucide-react";
 import { findRecurringPayments } from "./lib/analytics";
 import { formatCurrency, formatDate } from "./lib/format";
-import { detectTypicalFareRanges } from "./lib/recipientAnalytics";
+import {
+  detectMultiRecipientJourneys,
+  detectPossibleJourneyPairs,
+  detectTimeBasedRecipientPatterns,
+  detectTypicalFareRanges,
+} from "./lib/recipientAnalytics";
 import { getRecipientDirectory, normaliseRecipientProfiles, type RecipientSummary } from "./lib/recipientProfiles";
 import { categoryList, type RecipientProfile, type Transaction } from "./types";
+
+function formatDuration(minutes: number): string {
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder ? `${hours}h ${remainder}m` : `${hours}h`;
+}
 
 interface RecipientProfilesPageProps {
   transactions: Transaction[];
@@ -34,6 +46,9 @@ export default function RecipientProfilesPage({
   const directory = useMemo(() => getRecipientDirectory(transactions, profiles), [transactions, profiles]);
   const recurringPayments = useMemo(() => findRecurringPayments(transactions, profiles), [transactions, profiles]);
   const fareRanges = useMemo(() => detectTypicalFareRanges(transactions, profiles), [transactions, profiles]);
+  const timePatterns = useMemo(() => detectTimeBasedRecipientPatterns(transactions, profiles), [transactions, profiles]);
+  const journeyPairs = useMemo(() => detectPossibleJourneyPairs(transactions, profiles), [transactions, profiles]);
+  const multiRecipientJourneys = useMemo(() => detectMultiRecipientJourneys(transactions, profiles), [transactions, profiles]);
   const filtered = directory.filter((item) =>
     (kindFilter === "all" || item.kind === kindFilter) &&
     (!query.trim() || `${item.name} ${item.aliases.join(" ")} ${item.note ?? ""}`.toLowerCase().includes(query.trim().toLowerCase())));
@@ -177,6 +192,76 @@ export default function RecipientProfilesPage({
         ) : (
           <div className="counterparty-empty"><CircleHelp size={15} /> No payee has three identified Transport payments yet. Categorise ride payments as Transport to include them.</div>
         )}
+      </section>
+
+      <section className="panel recipient-insight-panel">
+        <div className="panel-heading">
+          <div><div className="panel-kicker">TIME-OF-DAY PATTERNS</div><h2>When you pay familiar recipients</h2></div>
+          <span className="heading-note"><Clock3 size={14} /> {timePatterns.length} patterns</span>
+        </div>
+        <p className="panel-note">Timed outgoing transfers to the same recipient, clustered within about an hour of the typical time. These are historical patterns, not reminders.</p>
+        {timePatterns.length ? (
+          <div className="simple-table-wrap">
+            <table className="simple-table">
+              <thead><tr><th>RECIPIENT</th><th>TYPICAL TIME</th><th>PAYMENTS</th><th>DATES</th><th>LAST ACTIVITY</th></tr></thead>
+              <tbody>{timePatterns.slice(0, 8).map((pattern) => (
+                <tr key={pattern.key}>
+                  <td><strong>{pattern.name}</strong></td>
+                  <td>Around {pattern.typicalTime} (±1h)</td>
+                  <td>{pattern.count}</td>
+                  <td>{pattern.days}</td>
+                  <td>{formatDate(pattern.lastDate)}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        ) : <div className="counterparty-empty"><CircleHelp size={15} /> No repeat time-of-day pattern yet. At least three timed transfers on two or more dates are needed.</div>}
+      </section>
+
+      <section className="panel recipient-insight-panel">
+        <div className="panel-heading">
+          <div><div className="panel-kicker">POSSIBLE JOURNEY PAIRS</div><h2>Repeated recipient pairs</h2></div>
+          <span className="heading-note"><Route size={14} /> {journeyPairs.length} pairs</span>
+        </div>
+        <p className="panel-note">The same ordered pair of recipients paid within 90 minutes, repeated on at least two dates. This is a timing-based clue, not proof of a trip or route.</p>
+        {journeyPairs.length ? (
+          <div className="simple-table-wrap">
+            <table className="simple-table">
+              <thead><tr><th>RECIPIENT SEQUENCE</th><th>REPEATED DATES</th><th>TYPICAL GAP</th><th>LAST ACTIVITY</th></tr></thead>
+              <tbody>{journeyPairs.slice(0, 8).map((pair) => (
+                <tr key={pair.key}>
+                  <td><strong>{pair.firstRecipient} → {pair.secondRecipient}</strong></td>
+                  <td>{pair.days}</td>
+                  <td>{formatDuration(pair.typicalGapMinutes)}</td>
+                  <td>{formatDate(pair.lastDate)}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        ) : <div className="counterparty-empty"><CircleHelp size={15} /> No repeated recipient pairs found. Both transfers need statement times and the same order on two or more dates.</div>}
+      </section>
+
+      <section className="panel recipient-insight-panel">
+        <div className="panel-heading">
+          <div><div className="panel-kicker">MULTI-RECIPIENT JOURNEYS</div><h2>Repeated payment sequences</h2></div>
+          <span className="heading-note"><Users size={14} /> {multiRecipientJourneys.length} sequences</span>
+        </div>
+        <p className="panel-note">Ordered sequences of three or more distinct recipients, with no more than 90 minutes between payments and a four-hour maximum span. Statements contain no location data, so this does not identify routes.</p>
+        {multiRecipientJourneys.length ? (
+          <div className="simple-table-wrap">
+            <table className="simple-table">
+              <thead><tr><th>RECIPIENT SEQUENCE</th><th>REPEATED DATES</th><th>TYPICAL SPAN</th><th>LAST ACTIVITY</th></tr></thead>
+              <tbody>{multiRecipientJourneys.slice(0, 8).map((journey) => (
+                <tr key={journey.key}>
+                  <td><strong className="journey-sequence">{journey.recipients.join(" → ")}</strong></td>
+                  <td>{journey.days}</td>
+                  <td>{formatDuration(journey.typicalDurationMinutes)}</td>
+                  <td>{formatDate(journey.lastDate)}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        ) : <div className="counterparty-empty"><CircleHelp size={15} /> No repeated multi-recipient sequence found. Three or more distinct timed recipients must recur in the same order on two dates.</div>}
       </section>
 
       {editing && (
