@@ -798,6 +798,40 @@ button.category-row:disabled { cursor: default; }
 .weekday-chart .busiest span { background: #2f7a55; }
 .weekday-chart small { color: #929d95; font-size: 9px; }
 .report-table td:not(:first-child),.report-table th:not(:first-child) { text-align: right; }
+.spending-pattern-panel { margin: 14px 0; }
+.pattern-metrics { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; margin: 4px 0 12px; }
+.pattern-metric { display: flex; min-width: 0; flex-direction: column; gap: 5px; padding: 11px 12px; border: 1px solid #e9eee9; border-radius: 10px; background: #fbfcfb; }
+.pattern-metric > span { color: #89948c; font-size: 8px; font-weight: 700; letter-spacing: .08em; }
+.pattern-metric > strong { color: #25372b; font-size: 19px; line-height: 1.15; }
+.pattern-metric > strong small { color: #819087; font-size: 10px; font-weight: 600; }
+.pattern-metric > small { color: #8a958d; font-size: 9px; }
+.pattern-comparison { display: flex; min-height: 25px; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 12px; color: #7c8980; font-size: 10px; }
+.pattern-comparison > span { display: inline-flex; align-items: center; gap: 4px; color: #66766b; font-weight: 650; }
+.pattern-comparison > .pattern-change-up { color: #a55446; }
+.pattern-comparison > .pattern-change-down { color: #2f7a55; }
+.pattern-comparison > small { color: #98a29b; font-size: 9px; }
+.spending-pattern-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.pattern-chart-panel { min-width: 0; padding: 12px; border: 1px solid #edf0ed; border-radius: 10px; background: #fff; }
+.pattern-chart-heading h3 { margin: 0; color: #344238; font-size: 11px; }
+.pattern-chart-heading p { margin: 3px 0 0; color: #98a29b; font-size: 9px; }
+.pattern-bars { display: grid; grid-auto-flow: column; align-items: end; gap: 4px; height: 112px; min-width: 0; margin: 12px 0 8px; overflow-x: auto; }
+.daily-pattern-bars { grid-template-columns: repeat(30,minmax(9px,1fr)); }
+.weekly-pattern-bars { grid-template-columns: repeat(16,minmax(12px,1fr)); }
+.pattern-bar { display: grid; grid-template-rows: 1fr 12px; align-items: end; justify-items: center; gap: 4px; min-width: 0; height: 100%; }
+.pattern-bar > span { width: 100%; max-width: 18px; align-self: end; border-radius: 4px 4px 2px 2px; background: #8cba98; }
+.pattern-bar-pair { display: flex; width: 100%; height: 100%; align-items: end; justify-content: center; gap: 2px; }
+.pattern-bar-pair span,.pattern-bar-pair i { width: 45%; max-width: 9px; border-radius: 3px 3px 1px 1px; }
+.pattern-bar-pair .pattern-bar-spend { background: #8cba98; }
+.pattern-bar-pair .pattern-bar-frequency { background: #e4bd89; }
+.pattern-bar small { color: #98a29b; font-size: 7px; white-space: nowrap; }
+.pattern-peak { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; padding-top: 8px; border-top: 1px solid #f0f2f0; color: #8a958d; font-size: 9px; }
+.pattern-peak strong { color: #4c5d51; font-size: 9px; font-weight: 650; }
+.pattern-chart-legend { display: flex; justify-content: flex-end; gap: 10px; margin: -2px 0 8px; color: #8a958d; font-size: 8px; }
+.pattern-chart-legend span { display: inline-flex; align-items: center; gap: 4px; }
+.pattern-chart-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; }
+.pattern-legend-spend { background: #8cba98; }
+.pattern-legend-frequency { background: #e4bd89; }
+.pattern-peaks { display: grid; gap: 6px; }
 @media (max-width: 1150px) { .extras-grid { grid-template-columns: minmax(0,1fr); } }
 .spending-time-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; margin: 14px 0; }
 .hourly-chart { display: grid; grid-template-columns: repeat(24,minmax(0,1fr)); align-items: end; gap: 3px; height: 132px; margin: 14px 2px 8px; }
@@ -829,6 +863,7 @@ button.category-row:disabled { cursor: default; }
 .spending-timeline-date { white-space: nowrap; }
 .spending-timeline-amount { color: #506056; font-size: 9px; font-weight: 600; text-align: right; white-space: nowrap; }
 @media (max-width: 1150px) { .spending-time-grid { grid-template-columns: minmax(0,1fr); } }
+@media (max-width: 720px) { .spending-pattern-grid { grid-template-columns: minmax(0,1fr); } .pattern-metrics { grid-template-columns: minmax(0,1fr); } }
 @media (max-width: 520px) {
   .spending-timeline-entry { grid-template-columns: 9px minmax(0,1fr) auto; gap: 7px; }
   .spending-timeline-date { display: none; }

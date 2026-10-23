@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react";
-import { CalendarDays, CalendarRange, Clock3, Download, ListOrdered, Receipt, Users } from "lucide-react";
+import { CalendarDays, CalendarRange, Clock3, Download, ListOrdered, Receipt, TrendingDown, TrendingUp, Users } from "lucide-react";
 import type { Transaction } from "./types";
 import { getFeeSummary, getMonthlyReport, getSpendingRhythm, getTopCounterparties, monthlyReportToCsv } from "./lib/analytics";
 import type { DateRange } from "./lib/insights";
 import { downloadFile, formatCurrency, formatDate, formatMonth } from "./lib/format";
 import { formatHour, formatMinuteOfDay, getSpendingTimeAnalytics, getSpendingTimeline } from "./lib/spendingTimeAnalytics";
+import { getSpendingPatternAnalytics } from "./lib/spendingPatterns";
 
 interface InsightsExtrasProps {
   transactions: Transaction[];
@@ -22,10 +23,17 @@ export default function InsightsExtras({ transactions, allTransactions, range, c
   const report = useMemo(() => getMonthlyReport(allTransactions), [allTransactions]);
   const timeAnalytics = useMemo(() => getSpendingTimeAnalytics(transactions), [transactions]);
   const timeline = useMemo(() => getSpendingTimeline(transactions, 20), [transactions]);
+  const patterns = useMemo(() => getSpendingPatternAnalytics(transactions, range), [transactions, range.start, range.end]);
   const maxWeekday = Math.max(1, ...rhythm.byWeekday.map((day) => day.average));
   const maxCounterparty = Math.max(1, ...counterparties.map((item) => item.amount));
   const maxHourlySpend = Math.max(1, ...timeAnalytics.byHour.map((hour) => hour.amount));
   const maxHeatmapSpend = Math.max(1, ...timeAnalytics.heatmap.flatMap((day) => day.cells.map((cell) => cell.amount)));
+  const maxDailyPattern = Math.max(1, ...patterns.dailyTrend.map((day) => day.amount));
+  const maxWeeklyPattern = Math.max(1, ...patterns.weeklyTrend.map((week) => week.amount));
+  const maxWeeklyFrequency = Math.max(1, ...patterns.weeklyTrend.map((week) => week.transactionCount));
+  const peakHour = timeAnalytics.byHour.filter((hour) => hour.count > 0).sort((a, b) => b.amount - a.amount)[0];
+  const paceChange = patterns.velocityChangePercent;
+  const frequencyChange = patterns.frequencyChangePercent;
 
   return (
     <>
@@ -79,6 +87,88 @@ export default function InsightsExtras({ transactions, allTransactions, range, c
         </div>
       </div>
 
+      <section className="panel extras-panel spending-pattern-panel">
+        <div className="panel-heading">
+          <div><div className="panel-kicker">SPENDING VELOCITY &amp; FREQUENCY</div><h2>Daily and weekly patterns</h2></div>
+          <CalendarRange size={16} className="muted-icon" />
+        </div>
+        {patterns.transactionCount ? (
+          <>
+            <div className="pattern-metrics">
+              <div className="pattern-metric"><span>DAILY AVERAGE</span><strong>{formatCurrency(patterns.averageDailySpending, currency, true)}</strong><small>per calendar day · {patterns.calendarDays.toLocaleString("en-NG")} days</small></div>
+              <div className="pattern-metric"><span>WEEKLY PACE</span><strong>{formatCurrency(patterns.weeklyPace, currency, true)}</strong><small>at this period’s daily rate</small></div>
+              <div className="pattern-metric"><span>TRANSACTIONS</span><strong>{patterns.transactionsPerWeek.toFixed(1)}<small> / week</small></strong><small>{patterns.transactionCount.toLocaleString("en-NG")} expense transactions</small></div>
+            </div>
+
+            <p className="pattern-comparison">
+              {paceChange !== null || frequencyChange !== null ? (
+                <>
+                  {paceChange !== null && (
+                    <span className={paceChange > 0 ? "pattern-change-up" : paceChange < 0 ? "pattern-change-down" : ""}>
+                      {paceChange > 0 ? <TrendingUp size={13} /> : paceChange < 0 ? <TrendingDown size={13} /> : null}
+                      Spend pace {paceChange > 0 ? "up" : paceChange < 0 ? "down" : "unchanged"} {Math.abs(paceChange).toFixed(1)}%
+                    </span>
+                  )}
+                  {frequencyChange !== null && (
+                    <span className={frequencyChange > 0 ? "pattern-change-up" : frequencyChange < 0 ? "pattern-change-down" : ""}>
+                      {frequencyChange > 0 ? <TrendingUp size={13} /> : frequencyChange < 0 ? <TrendingDown size={13} /> : null}
+                      Transaction frequency {frequencyChange > 0 ? "up" : frequencyChange < 0 ? "down" : "unchanged"} {Math.abs(frequencyChange).toFixed(1)}%
+                    </span>
+                  )}
+                  <small>Latest 7 days compared with the previous 7 days in this period.</small>
+                </>
+              ) : <small>Compare with the prior week once this period includes at least 14 days and the prior week has recorded activity.</small>}
+            </p>
+
+            <div className="spending-pattern-grid">
+              <div className="pattern-chart-panel">
+                <div className="pattern-chart-heading"><div><h3>Daily spend</h3><p>Latest {patterns.dailyTrend.length} calendar days in this period</p></div></div>
+                <div className="pattern-bars daily-pattern-bars" role="img" aria-label={`Daily spending for the latest ${patterns.dailyTrend.length} days`}>
+                  {patterns.dailyTrend.map((day, index) => (
+                    <div className="pattern-bar" key={day.date} title={`${formatDate(day.date)}: ${formatCurrency(day.amount, currency)} · ${day.transactionCount} transaction${day.transactionCount === 1 ? "" : "s"}`}>
+                      <span style={{ height: `${day.amount > 0 ? Math.max((day.amount / maxDailyPattern) * 100, 3) : 0}%` }} />
+                      <small>{index === 0 || index === patterns.dailyTrend.length - 1 || index % 5 === 0 ? day.date.slice(8, 10) : ""}</small>
+                    </div>
+                  ))}
+                </div>
+                <div className="pattern-peak">
+                  <span>Peak day</span>
+                  <strong>{patterns.peakDay ? `${formatDate(patterns.peakDay.date)} · ${formatCurrency(patterns.peakDay.amount, currency, true)}` : "—"}</strong>
+                </div>
+              </div>
+
+              <div className="pattern-chart-panel">
+                <div className="pattern-chart-heading"><div><h3>Weekly spend</h3><p>Latest {patterns.weeklyTrend.length} calendar weeks · bars include transaction counts</p></div></div>
+                <div className="pattern-bars weekly-pattern-bars" role="img" aria-label={`Weekly spending for the latest ${patterns.weeklyTrend.length} weeks`}>
+                  {patterns.weeklyTrend.map((week, index) => (
+                    <div className="pattern-bar" key={week.weekStart} title={`${formatDate(week.weekStart)}–${formatDate(week.weekEnd)}: ${formatCurrency(week.amount, currency)} · ${week.transactionCount} transaction${week.transactionCount === 1 ? "" : "s"} · ${week.daysInPeriod} day${week.daysInPeriod === 1 ? "" : "s"} in selected period`}>
+                      <div className="pattern-bar-pair">
+                        <span className="pattern-bar-spend" style={{ height: `${week.amount > 0 ? Math.max((week.amount / maxWeeklyPattern) * 100, 3) : 0}%` }} />
+                        <i className="pattern-bar-frequency" style={{ height: `${week.transactionCount ? Math.max((week.transactionCount / maxWeeklyFrequency) * 100, 3) : 0}%` }} />
+                      </div>
+                      <small>{index === 0 || index === patterns.weeklyTrend.length - 1 || index % 4 === 0 ? formatDate(week.weekStart).slice(0, 5) : ""}</small>
+                    </div>
+                  ))}
+                </div>
+                <div className="pattern-chart-legend"><span><i className="pattern-legend-spend" />Spend</span><span><i className="pattern-legend-frequency" />Transactions</span></div>
+                <div className="pattern-peaks">
+                  <div className="pattern-peak">
+                    <span>Peak spend week</span>
+                    <strong>{patterns.peakWeek ? `${formatDate(patterns.peakWeek.weekStart)}–${formatDate(patterns.peakWeek.weekEnd)} · ${formatCurrency(patterns.peakWeek.amount, currency, true)}` : "—"}</strong>
+                  </div>
+                  <div className="pattern-peak">
+                    <span>Most transactions</span>
+                    <strong>{patterns.peakFrequencyWeek ? `${formatDate(patterns.peakFrequencyWeek.weekStart)}–${formatDate(patterns.peakFrequencyWeek.weekEnd)} · ${patterns.peakFrequencyWeek.transactionCount}` : "—"}</strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="counterparty-empty"><CalendarRange size={14} /> No expense transactions in this period yet. Import or add expenses to see pace, frequency, and peak periods.</div>
+        )}
+      </section>
+
       <div className="spending-time-grid">
         <section className="panel extras-panel">
           <div className="panel-heading">
@@ -99,6 +189,7 @@ export default function InsightsExtras({ transactions, allTransactions, range, c
                 <strong>{formatCurrency(timeAnalytics.totalTimedSpending, currency)}</strong> across {timeAnalytics.timedTransactions.toLocaleString("en-NG")} timed expenses.
                 {timeAnalytics.untimedTransactions > 0 && ` ${timeAnalytics.untimedTransactions.toLocaleString("en-NG")} expenses have no usable time.`}
                 {" "}{Math.round(timeAnalytics.timeCoverageByAmount * 100)}% of recorded spending is represented.
+                {peakHour && <> Peak hour: <strong>{formatHour(peakHour.hour)}</strong> ({formatCurrency(peakHour.amount, currency, true)}).</>}
               </div>
             </>
           ) : <div className="counterparty-empty"><Clock3 size={14} /> No timed expense transactions in this period. Bank statements that include time of day unlock hourly patterns.</div>}
