@@ -38,7 +38,7 @@ import { buildImportPreview, type ImportDateRange, type ImportMode, type ImportP
 import { getTransferInsights } from "./lib/transactionPatterns";
 import { readValue, writeValue } from "./lib/persistentStore";
 import { applyCategoryRules, categorise, recogniseTransactionParty, refreshCategories, ruleMatches, similarityKey } from "./lib/categorise";
-import { classifyTransaction, getSimilarTransactionCounts } from "./lib/transactionIntelligence";
+import { buildClassificationHistory, classifyTransaction, classifyTransactions, getSimilarTransactionCounts, type ClassificationHistory } from "./lib/transactionIntelligence";
 import { createBackup, normaliseBudgets, normaliseRules, readBackup } from "./lib/backup";
 import { getFeeSummary } from "./lib/analytics";
 import { downloadFile, formatCurrency, formatDate, localIsoDate, newId } from "./lib/format";
@@ -337,6 +337,7 @@ function App() {
     const previous = previousRange(period, range);
     return previous ? calculateTotals(filterByRange(transactions, previous)) : null;
   }, [transactions, period, range]);
+  const classificationHistory = useMemo(() => buildClassificationHistory(transactions), [transactions]);
   const similarTransactionCounts = useMemo(() => getSimilarTransactionCounts(transactions), [transactions]);
 
   const visibleTransactions = useMemo(() => {
@@ -450,7 +451,7 @@ function App() {
   const comparisonAvailable = loaded;
   const importPreview: ImportPreview | null = useMemo(() => pendingImport
     ? buildImportPreview({
-      imported: applyCategoryRules(pendingImport.transactions, rules),
+      imported: classifyTransactions(pendingImport.transactions, rules, classificationHistory),
       existing: transactions,
       diagnostics: pendingImport.diagnosticsAvailable ? pendingImport.diagnostics : undefined,
       skipped: pendingImport.skipped,
@@ -459,12 +460,12 @@ function App() {
       customRange: importCustomRange,
       comparisonAvailable,
     })
-    : null, [pendingImport, transactions, rules, importMode, importMonth, importCustomRange, comparisonAvailable]);
+    : null, [pendingImport, transactions, rules, classificationHistory, importMode, importMonth, importCustomRange, comparisonAvailable]);
 
   const confirmImport = () => {
     if (!pendingImport || !importPreview?.rangeValid) return;
     const imported = importPreview.transactionsInRange;
-    const newTransactions = findNewTransactions(transactions, applyCategoryRules(importPreview.transactionsForConfirmation, rules));
+    const newTransactions = findNewTransactions(transactions, classifyTransactions(importPreview.transactionsForConfirmation, rules, classificationHistory));
     const duplicates = imported.length - newTransactions.length;
     const messages = [...pendingImport.warnings];
     if (importPreview.transactionsOutsideRange > 0) {
@@ -909,7 +910,7 @@ function App() {
                         </div>
                         <button className="subtle-link" onClick={() => goTo("transactions")}>See all <ArrowUpRight size={14} /></button>
                       </div>
-                      <TransactionTable transactions={[...withinPeriod].sort(sortNewestFirst).slice(0, 6)} currency={currency} />
+                      <TransactionTable transactions={[...withinPeriod].sort(sortNewestFirst).slice(0, 6)} currency={currency} rules={rules} classificationHistory={classificationHistory} />
                     </section>
                     <InsightsPanel
                       count={withinPeriod.length}
@@ -987,6 +988,7 @@ function App() {
                       onChangeCategory={changeCategory}
                       similarCounts={similarTransactionCounts}
                       rules={rules}
+                      classificationHistory={classificationHistory}
                       onToggleInternal={toggleInternal}
                       onDelete={deleteTransaction}
                     />
@@ -1045,7 +1047,7 @@ function App() {
             <DataPage
               rules={rules}
               counts={{ transactions: transactions.length, goals: savingsGoals.length, circles: savingsCircles.length, bets: bets.length, budgets: budgets.length }}
-              matchCount={(rule) => transactions.filter((transaction) => ruleMatches({ id: "", category: "Other", createdAt: "", ...rule }, transaction)).length}
+              matchCount={(rule) => transactions.filter((transaction) => ruleMatches(rule, transaction)).length}
               onAddRule={addRule}
               onDeleteRule={(ruleId) => {
                 updateRules(rules.filter((rule) => rule.id !== ruleId));
@@ -1489,6 +1491,7 @@ function TransactionTable({
   onDelete,
   similarCounts,
   rules = [],
+  classificationHistory,
 }: {
   transactions: Transaction[];
   currency: string;
@@ -1498,6 +1501,7 @@ function TransactionTable({
   onDelete?: (transactionId: string) => void;
   similarCounts?: ReadonlyMap<string, number>;
   rules?: CategoryRule[];
+  classificationHistory?: ClassificationHistory;
 }) {
   const editable = Boolean(onChangeCategory || onToggleInternal || onDelete);
   return (
@@ -1508,7 +1512,9 @@ function TransactionTable({
           {transactions.map((transaction) => {
             const isIncome = transaction.direction === "income";
             const party = recogniseTransactionParty(transaction.description);
-            const classification = classifyTransaction(transaction, rules);
+            const classification = classifyTransaction(transaction, rules, classificationHistory);
+            const confidenceTone = classification.confidence >= 0.85 ? "high" : classification.confidence >= 0.6 ? "medium" : "low";
+            const suggestsDifferentCategory = classification.category !== transaction.category && !transaction.categoryLocked && !transaction.manual;
             const similarCount = Math.max(0, (similarCounts?.get(transaction.id) ?? 0) - 1);
             return (
               <tr key={transaction.id} className={transaction.internalTransfer ? "row-internal" : undefined}>
@@ -1522,6 +1528,7 @@ function TransactionTable({
                       <span>{transaction.source}{transaction.manual ? " · added by you" : ""}{transaction.note ? ` · ${transaction.note}` : ""}</span>
                       {party && <span className="transaction-intelligence-label">{party.kind === "merchant" ? "Merchant" : party.kind === "recipient" ? "Recipient" : "Sender"} · {party.name}</span>}
                       {similarCount > 0 && <span className="transaction-intelligence-label">{similarCount} similar transaction{similarCount === 1 ? "" : "s"}</span>}
+                      {suggestsDifferentCategory ? <span className={`classification-confidence classification-confidence--${confidenceTone}`} title={classification.reason} aria-label={"Suggested category " + classification.category + ", confidence " + Math.round(classification.confidence * 100) + " percent. " + classification.reason}>Suggest {classification.category} · {Math.round(classification.confidence * 100)}%</span> : <span className={`classification-confidence classification-confidence--${confidenceTone}`} title={classification.reason} aria-label={"Classification confidence " + Math.round(classification.confidence * 100) + " percent. " + classification.reason}>Confidence {Math.round(classification.confidence * 100)}%</span>}
                       {classification.confidence < 0.5 && <span className="transaction-review-label">Review category</span>}
                       {transaction.internalTransfer && <span className="transaction-review-label">Own money moving · excluded from totals</span>}
                       {transaction.ownAccountCandidate && !transaction.internalTransfer && (

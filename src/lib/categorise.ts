@@ -169,12 +169,28 @@ export function similarityKey(description: string): string {
   return normaliseTransactionDescription(description);
 }
 
-export function ruleMatches(rule: CategoryRule, transaction: Pick<Transaction, "description" | "direction">): boolean {
+export function ruleMatches(rule: Pick<CategoryRule, "pattern" | "direction" | "matchType">, transaction: Pick<Transaction, "description" | "direction">): boolean {
   if (rule.direction && rule.direction !== transaction.direction) return false;
-  const pattern = rule.pattern.trim().toLowerCase();
+  const pattern = rule.pattern.trim().toLowerCase().replace(/\s+/g, " ");
   if (!pattern) return false;
   const description = transaction.description.toLowerCase().replace(/\s+/g, " ");
-  return description.includes(pattern) || similarityKey(transaction.description).includes(pattern);
+  const matchType = rule.matchType ?? "contains";
+  if (matchType === "contains") return description.includes(pattern) || similarityKey(transaction.description).includes(pattern);
+
+  const normalized = normaliseTransactionDescription(transaction.description);
+  const normalizedPattern = normaliseTransactionDescription(rule.pattern);
+  const partyPattern = normalizedPattern.replace(/^(?:merchant|recipient|sender|counterparty)\s+/, "");
+
+  if (matchType === "exact") return normalized === normalizedPattern || description === pattern;
+  if (matchType === "startsWith") return normalized.startsWith(normalizedPattern) || description.startsWith(pattern);
+  if (matchType === "merchant" || matchType === "counterparty") {
+    const party = recogniseTransactionParty(transaction.description);
+    if (!party) return false;
+    if (matchType === "merchant" && party.kind !== "merchant") return false;
+    if (matchType === "counterparty" && party.kind === "merchant") return false;
+    return party.key === partyPattern || party.key.includes(partyPattern);
+  }
+  return description.includes(pattern) || normalized.includes(pattern) || normalized.includes(normalizedPattern);
 }
 
 /**

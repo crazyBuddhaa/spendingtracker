@@ -1,13 +1,21 @@
 import { useRef, useState } from "react";
 import { DatabaseBackup, Download, ListChecks, LockKeyhole, Plus, ShieldCheck, Trash2, Upload, Wand2 } from "lucide-react";
-import { categoryList, type Category, type CategoryRule, type Direction } from "./types";
+import { categoryList, type Category, type CategoryRule, type CategoryRuleMatchType, type Direction } from "./types";
 import { formatDate } from "./lib/format";
 import type { AccessStatus } from "./useAccessAuth";
+
+const ruleMatchTypeLabels: Record<CategoryRuleMatchType, string> = {
+  contains: "Description contains",
+  startsWith: "Description starts with",
+  exact: "Exact normalized description",
+  merchant: "Merchant matches",
+  counterparty: "Recipient or sender matches",
+};
 
 interface DataPageProps {
   rules: CategoryRule[];
   counts: { transactions: number; goals: number; circles: number; bets: number; budgets: number };
-  matchCount: (rule: Pick<CategoryRule, "pattern" | "direction">) => number;
+  matchCount: (rule: Pick<CategoryRule, "pattern" | "direction" | "matchType">) => number;
   onAddRule: (rule: Omit<CategoryRule, "id" | "createdAt">) => void;
   onDeleteRule: (ruleId: string) => void;
   onRefreshCategories: () => void;
@@ -33,15 +41,16 @@ export default function DataPage({
 }: DataPageProps) {
   const restoreInput = useRef<HTMLInputElement>(null);
   const [pattern, setPattern] = useState("");
+  const [matchType, setMatchType] = useState<CategoryRuleMatchType>("contains");
   const [category, setCategory] = useState<Category>("Business");
   const [direction, setDirection] = useState<"" | Direction>("");
   const [markInternal, setMarkInternal] = useState(false);
-  const preview = pattern.trim().length >= 2 ? matchCount({ pattern: pattern.trim().toLowerCase(), direction: direction || undefined }) : null;
+  const preview = pattern.trim().length >= 2 ? matchCount({ pattern: pattern.trim().toLowerCase(), direction: direction || undefined, matchType }) : null;
 
   const submitRule = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (pattern.trim().length < 2) return;
-    onAddRule({ pattern: pattern.trim().toLowerCase(), category, direction: direction || undefined, markInternal: markInternal || undefined });
+    onAddRule({ pattern: pattern.trim().toLowerCase(), category, direction: direction || undefined, matchType, markInternal: markInternal || undefined });
     setPattern("");
     setMarkInternal(false);
   };
@@ -95,9 +104,10 @@ export default function DataPage({
           <div><div className="panel-kicker">CATEGORY RULES</div><h2>Always categorise these payees the same way</h2></div>
           <span className="heading-note"><ListChecks size={13} /> {rules.length} rule{rules.length === 1 ? "" : "s"}</span>
         </div>
-        <p className="panel-note">A rule matches when its text appears in a transaction description. Rules apply to future imports and to history (except categories you set by hand). Tip: changing a category on the Transactions page offers to create a rule for you.</p>
+        <p className="panel-note">Rules can match descriptions, merchants, or recipients/senders. They apply to future imports and unlocked history; the most recently added matching rule wins. Categories you set by hand stay protected.</p>
         <form className="rule-form" onSubmit={submitRule}>
-          <label>Description contains<input value={pattern} onChange={(event) => setPattern(event.target.value)} placeholder="e.g. transfer to kehinde ibukun" maxLength={120} /></label>
+          <label>Match type<select value={matchType} onChange={(event) => setMatchType(event.target.value as CategoryRuleMatchType)}><option value="contains">Description contains</option><option value="startsWith">Description starts with</option><option value="exact">Exact normalized description</option><option value="merchant">Merchant matches</option><option value="counterparty">Recipient or sender matches</option></select></label>
+          <label>{matchType === "merchant" ? "Merchant" : matchType === "counterparty" ? "Recipient or sender" : "Match text"}<input value={pattern} onChange={(event) => setPattern(event.target.value)} placeholder={matchType === "merchant" ? "e.g. Shoprite" : matchType === "counterparty" ? "e.g. Jane Doe" : "e.g. transfer to Jane Doe"} maxLength={120} /></label>
           <label>Category<select value={category} onChange={(event) => setCategory(event.target.value as Category)}>{categoryList.map((item) => <option key={item}>{item}</option>)}</select></label>
           <label>Applies to<select value={direction} onChange={(event) => setDirection(event.target.value as "" | Direction)}><option value="">Money in and out</option><option value="expense">Money out only</option><option value="income">Money in only</option></select></label>
           <label className="rule-check"><input type="checkbox" checked={markInternal} onChange={(event) => setMarkInternal(event.target.checked)} /> Treat as my own money moving (exclude from totals)</label>
@@ -106,11 +116,11 @@ export default function DataPage({
         {rules.length ? (
           <div className="simple-table-wrap">
             <table className="simple-table">
-              <thead><tr><th>WHEN DESCRIPTION CONTAINS</th><th>CATEGORY</th><th>APPLIES TO</th><th>MATCHES</th><th>ADDED</th><th /></tr></thead>
+              <thead><tr><th>MATCH CONDITION</th><th>CATEGORY</th><th>APPLIES TO</th><th>MATCHES</th><th>ADDED</th><th /></tr></thead>
               <tbody>
                 {[...rules].reverse().map((rule) => (
                   <tr key={rule.id}>
-                    <td><strong>“{rule.pattern}”</strong>{rule.markInternal && <small>Excluded from totals</small>}</td>
+                    <td><strong>{ruleMatchTypeLabels[rule.matchType ?? "contains"]}: “{rule.pattern}”</strong>{rule.markInternal && <small>Excluded from totals</small>}</td>
                     <td>{rule.category}</td>
                     <td>{rule.direction === "income" ? "Money in" : rule.direction === "expense" ? "Money out" : "Both"}</td>
                     <td>{matchCount(rule).toLocaleString("en-NG")}</td>
