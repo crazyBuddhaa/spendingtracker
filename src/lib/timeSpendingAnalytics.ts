@@ -1,5 +1,6 @@
 import type { Category, Transaction } from "../types.ts";
 import { counterpartyName } from "./analytics.ts";
+import { calculateTotals, type DateRange } from "./insights.ts";
 
 export type CashflowKind = "income" | "expense" | "refund";
 
@@ -394,5 +395,118 @@ export function getTimePeriodPatterns(
     weekendVsWeekdayAveragePercent: weekday.averagePerDay
       ? Math.round(((weekend.averagePerDay - weekday.averagePerDay) / weekday.averagePerDay) * 10_000) / 100
       : null,
+  };
+}
+
+export interface DateRangeComparisonDefaults {
+  periodA: DateRange;
+  periodB: DateRange;
+}
+
+export interface DateRangeComparisonSummary {
+  start: string;
+  end: string;
+  calendarDays: number;
+  income: number;
+  spending: number;
+  netCashflow: number;
+  expenseTransactions: number;
+  expensesPerWeek: number;
+  timedTransactions: number;
+  timedExpenseCoverage: number | null;
+  dayParts: Array<DayPartSummary & { averagePerDay: number }>;
+  weekdayDays: number;
+  weekdayAveragePerDay: number;
+  weekendDays: number;
+  weekendAveragePerDay: number;
+  sessionsPerWeek: number | null;
+  averageSessionAmount: number | null;
+  incomeDates: number;
+  matchedIncomeDates: number;
+  discretionaryPurchaseRate: number | null;
+  medianDaysToFirstDiscretionaryPurchase: number | null;
+}
+
+/** Defaults to the active date range and the equally long window immediately before it. */
+export function getDefaultDateRangeComparison(
+  range: DateRange,
+  transactions: Transaction[],
+): DateRangeComparisonDefaults {
+  const timestamps = transactions
+    .map((transaction) => parseIsoDate(transaction.date))
+    .filter((timestamp): timestamp is number => timestamp !== null)
+    .sort((a, b) => a - b);
+
+  let start = parseIsoDate(range.start) ?? timestamps[0] ?? null;
+  let end = parseIsoDate(range.end) ?? timestamps[timestamps.length - 1] ?? null;
+  if (start === null || end === null) {
+    return {
+      periodA: { start: null, end: null },
+      periodB: { start: null, end: null },
+    };
+  }
+  if (start > end) [start, end] = [end, start];
+
+  const calendarDays = Math.floor((end - start) / DAY_MS) + 1;
+  const periodBEnd = start - DAY_MS;
+  const periodBStart = periodBEnd - (calendarDays - 1) * DAY_MS;
+  return {
+    periodA: { start: new Date(start).toISOString().slice(0, 10), end: new Date(end).toISOString().slice(0, 10) },
+    periodB: { start: new Date(periodBStart).toISOString().slice(0, 10), end: new Date(periodBEnd).toISOString().slice(0, 10) },
+  };
+}
+
+/** Summarizes recorded cashflow and time-based patterns inside one inclusive date range. */
+export function getDateRangeComparison(
+  transactions: Transaction[],
+  range: DateRange,
+): DateRangeComparisonSummary | null {
+  const start = parseIsoDate(range.start);
+  const end = parseIsoDate(range.end);
+  if (start === null || end === null || start > end || !range.start || !range.end) return null;
+
+  const selected = transactions.filter((transaction) => {
+    const date = parseIsoDate(transaction.date);
+    return date !== null && date >= start && date <= end;
+  });
+  const totals = calculateTotals(selected);
+  const patterns = getTimePeriodPatterns(selected, range);
+  const sessions = getSpendingSessionAnalytics(selected);
+  const firstPurchase = getTimeToFirstDiscretionaryPurchase(selected);
+  const calendarDays = Math.floor((end - start) / DAY_MS) + 1;
+  const expenseTransactions = selected.filter((transaction) =>
+    isExternalExpense(transaction) && Number.isFinite(transaction.amount) && transaction.amount > 0);
+
+  return {
+    start: range.start,
+    end: range.end,
+    calendarDays,
+    income: totals.income,
+    spending: totals.expenses,
+    netCashflow: totals.net,
+    expenseTransactions: expenseTransactions.length,
+    expensesPerWeek: expenseTransactions.length / calendarDays * 7,
+    timedTransactions: patterns.timedTransactions,
+    timedExpenseCoverage: patterns.totalDatedExpenses
+      ? patterns.timedTransactions / patterns.totalDatedExpenses
+      : null,
+    dayParts: patterns.byDayPart.map((part) => ({
+      ...part,
+      averagePerDay: roundAmount(part.amount / calendarDays),
+    })),
+    weekdayDays: patterns.weekday.days,
+    weekdayAveragePerDay: patterns.weekday.averagePerDay,
+    weekendDays: patterns.weekend.days,
+    weekendAveragePerDay: patterns.weekend.averagePerDay,
+    sessionsPerWeek: sessions.timedTransactions
+      ? sessions.sessionCount / calendarDays * 7
+      : null,
+    averageSessionAmount: sessions.sessionCount ? sessions.averageSessionAmount : null,
+    incomeDates: firstPurchase.incomeDates,
+    matchedIncomeDates: firstPurchase.matchedIncomeDates,
+    discretionaryPurchaseRate: firstPurchase.incomeDates
+      ? firstPurchase.matchedIncomeDates / firstPurchase.incomeDates
+      : null,
+    medianDaysToFirstDiscretionaryPurchase: firstPurchase.medianCalendarDays,
   };
 }

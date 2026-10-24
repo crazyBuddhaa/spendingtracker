@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Activity, AlertTriangle, CalendarDays, CalendarRange, Clock3, Download, ListOrdered, Receipt, TrendingDown, TrendingUp, Users } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Activity, AlertTriangle, ArrowLeftRight, CalendarDays, CalendarRange, Clock3, Download, ListOrdered, Receipt, TrendingDown, TrendingUp, Users } from "lucide-react";
 import type { Transaction } from "./types";
 import { getFeeSummary, getMonthlyReport, getSpendingRhythm, getTopCounterparties, monthlyReportToCsv } from "./lib/analytics";
 import type { DateRange } from "./lib/insights";
@@ -9,6 +9,8 @@ import { getSpendingPatternAnalytics } from "./lib/spendingPatterns";
 import { getSpendingForecasts } from "./lib/spendingForecasts";
 import { getSpendingAnomalies, getUnusualSpendingTimes } from "./lib/spendingSignals";
 import {
+  getDateRangeComparison,
+  getDefaultDateRangeComparison,
   getIncomeSpendingTimeline,
   getSpendingSessionAnalytics,
   getTimePeriodPatterns,
@@ -18,6 +20,47 @@ import {
 function formatTimeWindow(startHour: number): string {
   const endHour = (startHour + 2) % 24;
   return `${String(startHour).padStart(2, "0")}:00–${String(endHour).padStart(2, "0")}:59`;
+}
+
+type ComparisonValueFormat = "currency" | "count" | "percent" | "days";
+type ComparisonChangeFormat = "relative" | "currency-delta" | "percentage-points" | "day-delta";
+
+interface ComparisonMetric {
+  label: string;
+  periodA: number | null;
+  periodB: number | null;
+  format: ComparisonValueFormat;
+  change: ComparisonChangeFormat;
+}
+
+function formatComparisonValue(value: number | null, format: ComparisonValueFormat, currency: string): string {
+  if (value === null) return "—";
+  if (format === "currency") return formatCurrency(value, currency, true);
+  if (format === "percent") return `${Math.round(value * 100)}%`;
+  if (format === "days") {
+    return `${value.toLocaleString("en-NG", { maximumFractionDigits: 1 })} day${value === 1 ? "" : "s"}`;
+  }
+  return value.toLocaleString("en-NG", { maximumFractionDigits: 1 });
+}
+
+function formatComparisonChange(metric: ComparisonMetric, currency: string): string {
+  if (metric.periodA === null || metric.periodB === null) return "Not enough data";
+  const difference = metric.periodB - metric.periodA;
+  const sign = difference > 0 ? "+" : difference < 0 ? "−" : "";
+  if (metric.change === "currency-delta") {
+    return difference === 0
+      ? "No change"
+      : `${sign}${formatCurrency(Math.abs(difference), currency, true)}`;
+  }
+  if (metric.change === "percentage-points") {
+    return `${sign}${Math.abs(difference * 100).toFixed(1)} pp`;
+  }
+  if (metric.change === "day-delta") {
+    return difference === 0 ? "No change" : `${sign}${Math.abs(difference).toFixed(1)} days`;
+  }
+  if (difference === 0) return "No change";
+  if (metric.periodA === 0) return metric.periodB === 0 ? "No change" : "From zero";
+  return `${sign}${Math.abs((difference / Math.abs(metric.periodA)) * 100).toFixed(1)}%`;
 }
 
 interface InsightsExtrasProps {
@@ -30,6 +73,8 @@ interface InsightsExtrasProps {
 
 export default function InsightsExtras({ transactions, allTransactions, range, currency, onSearch }: InsightsExtrasProps) {
   const [direction, setDirection] = useState<"expense" | "income">("expense");
+  const [comparisonRanges, setComparisonRanges] = useState(() =>
+    getDefaultDateRangeComparison(range, allTransactions));
   const fees = useMemo(() => getFeeSummary(transactions), [transactions]);
   const counterparties = useMemo(() => getTopCounterparties(transactions, direction, 10), [transactions, direction]);
   const rhythm = useMemo(() => getSpendingRhythm(transactions, range.start, range.end), [transactions, range.start, range.end]);
@@ -61,6 +106,44 @@ export default function InsightsExtras({ transactions, allTransactions, range, c
       ? "Same day"
       : `${firstDiscretionary.medianCalendarDays.toLocaleString("en-NG", { maximumFractionDigits: 1 })} calendar days`;
   const medianSameDayMinutes = firstDiscretionary.medianSameDayMinutes;
+  const comparisonA = useMemo(
+    () => getDateRangeComparison(allTransactions, comparisonRanges.periodA),
+    [allTransactions, comparisonRanges.periodA.start, comparisonRanges.periodA.end],
+  );
+  const comparisonB = useMemo(
+    () => getDateRangeComparison(allTransactions, comparisonRanges.periodB),
+    [allTransactions, comparisonRanges.periodB.start, comparisonRanges.periodB.end],
+  );
+  const comparisonRows: ComparisonMetric[] = comparisonA && comparisonB ? [
+    { label: "Income", periodA: comparisonA.income, periodB: comparisonB.income, format: "currency", change: "relative" },
+    { label: "Spending after refunds", periodA: comparisonA.spending, periodB: comparisonB.spending, format: "currency", change: "relative" },
+    { label: "Net cashflow", periodA: comparisonA.netCashflow, periodB: comparisonB.netCashflow, format: "currency", change: "currency-delta" },
+    { label: "Average spending per day", periodA: comparisonA.spending / comparisonA.calendarDays, periodB: comparisonB.spending / comparisonB.calendarDays, format: "currency", change: "relative" },
+    { label: "Expense transactions per week", periodA: comparisonA.expensesPerWeek, periodB: comparisonB.expensesPerWeek, format: "count", change: "relative" },
+    { label: "Morning spending per day", periodA: comparisonA.timedTransactions ? comparisonA.dayParts.find((part) => part.key === "morning")?.averagePerDay ?? null : null, periodB: comparisonB.timedTransactions ? comparisonB.dayParts.find((part) => part.key === "morning")?.averagePerDay ?? null : null, format: "currency", change: "relative" },
+    { label: "Evening spending per day", periodA: comparisonA.timedTransactions ? comparisonA.dayParts.find((part) => part.key === "evening")?.averagePerDay ?? null : null, periodB: comparisonB.timedTransactions ? comparisonB.dayParts.find((part) => part.key === "evening")?.averagePerDay ?? null : null, format: "currency", change: "relative" },
+    { label: "Weekday spending per day", periodA: comparisonA.weekdayDays ? comparisonA.weekdayAveragePerDay : null, periodB: comparisonB.weekdayDays ? comparisonB.weekdayAveragePerDay : null, format: "currency", change: "relative" },
+    { label: "Weekend spending per day", periodA: comparisonA.weekendDays ? comparisonA.weekendAveragePerDay : null, periodB: comparisonB.weekendDays ? comparisonB.weekendAveragePerDay : null, format: "currency", change: "relative" },
+    { label: "Spending sessions per week", periodA: comparisonA.sessionsPerWeek, periodB: comparisonB.sessionsPerWeek, format: "count", change: "relative" },
+    { label: "Average session amount", periodA: comparisonA.averageSessionAmount, periodB: comparisonB.averageSessionAmount, format: "currency", change: "relative" },
+    { label: "Timed expense coverage", periodA: comparisonA.timedExpenseCoverage, periodB: comparisonB.timedExpenseCoverage, format: "percent", change: "percentage-points" },
+    { label: "Income dates with a discretionary purchase", periodA: comparisonA.discretionaryPurchaseRate, periodB: comparisonB.discretionaryPurchaseRate, format: "percent", change: "relative" },
+    { label: "Median days to first discretionary purchase", periodA: comparisonA.medianDaysToFirstDiscretionaryPurchase, periodB: comparisonB.medianDaysToFirstDiscretionaryPurchase, format: "days", change: "day-delta" },
+  ] : [];
+  const updateComparisonDate = (period: "periodA" | "periodB", edge: "start" | "end", value: string) => {
+    setComparisonRanges((current) => {
+      const updated = { ...current[period], [edge]: value || null };
+      if (updated.start && updated.end && updated.start > updated.end) {
+        if (edge === "start") updated.end = updated.start;
+        else updated.start = updated.end;
+      }
+      return { ...current, [period]: updated };
+    });
+  };
+
+  useEffect(() => {
+    setComparisonRanges(getDefaultDateRangeComparison(range, allTransactions));
+  }, [range.start, range.end, allTransactions]);
 
   return (
     <>
@@ -347,6 +430,66 @@ export default function InsightsExtras({ transactions, allTransactions, range, c
             </p>
           </div>
         </div>
+      </section>
+
+      <section className="panel extras-panel range-comparison-panel">
+        <div className="panel-heading">
+          <div><div className="panel-kicker">DATE-RANGE COMPARISON</div><h2>Compare two periods</h2></div>
+          <ArrowLeftRight size={16} className="muted-icon" />
+        </div>
+        <div className="range-comparison-controls">
+          {([
+            ["periodA", "Period A"],
+            ["periodB", "Period B"],
+          ] as const).map(([key, label]) => (
+            <fieldset className="range-comparison-fields" key={key}>
+              <legend>{label}</legend>
+              <label>
+                From
+                <input
+                  type="date"
+                  value={comparisonRanges[key].start ?? ""}
+                  onChange={(event) => updateComparisonDate(key, "start", event.target.value)}
+                />
+              </label>
+              <label>
+                To
+                <input
+                  type="date"
+                  value={comparisonRanges[key].end ?? ""}
+                  onChange={(event) => updateComparisonDate(key, "end", event.target.value)}
+                />
+              </label>
+            </fieldset>
+          ))}
+        </div>
+        <p className="panel-note">Daily and weekly rates account for different period lengths. Time-of-day and session measures use only expenses with recorded times; discretionary-purchase timing uses categorized Shopping, Entertainment, and Betting expenses. Changes are descriptive, not good-or-bad scores.</p>
+        {comparisonA && comparisonB ? (
+          <div className="range-comparison-scroll">
+            <table className="range-comparison-table">
+              <thead>
+                <tr>
+                  <th scope="col">Measure</th>
+                  <th scope="col">Period A<small>{formatDate(comparisonA.start)} – {formatDate(comparisonA.end)}</small></th>
+                  <th scope="col">Period B<small>{formatDate(comparisonB.start)} – {formatDate(comparisonB.end)}</small></th>
+                  <th scope="col">B vs A</th>
+                </tr>
+              </thead>
+              <tbody>
+                {comparisonRows.map((metric) => (
+                  <tr key={metric.label}>
+                    <th scope="row">{metric.label}</th>
+                    <td>{formatComparisonValue(metric.periodA, metric.format, currency)}</td>
+                    <td>{formatComparisonValue(metric.periodB, metric.format, currency)}</td>
+                    <td>{formatComparisonChange(metric, currency)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="counterparty-empty"><CalendarRange size={14} /> Choose a valid start and end date for both periods to compare them.</div>
+        )}
       </section>
 
       <div className="spending-signal-grid">
