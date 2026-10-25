@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  getDateRangeComparison,
+  getDefaultDateRangeComparison,
   getIncomeSpendingTimeline,
   getSpendingSessionAnalytics,
   getTimePeriodPatterns,
@@ -96,5 +98,62 @@ describe("cashflow and time-based spending patterns", () => {
     assert.equal(result.weekday.averagePerDay, 80);
     assert.equal(result.weekend.averagePerDay, 125);
     assert.equal(result.weekendVsWeekdayAveragePercent, 56.25);
+  });
+
+  it("summarizes two selected periods with normalized spending and time-based metrics", () => {
+    const transactions = [
+      tx({ id: "salary", date: "2026-10-01", time: "09:00", amount: 1000, direction: "income", category: "Income" }),
+      tx({ id: "morning", date: "2026-10-01", time: "10:00", amount: 100 }),
+      tx({ id: "evening-1", date: "2026-10-02", time: "18:00", amount: 50 }),
+      tx({ id: "evening-2", date: "2026-10-02", time: "18:45", amount: 25 }),
+      tx({ id: "weekend", date: "2026-10-03", time: "13:00", amount: 30, category: "Transport" }),
+      tx({ id: "untimed", date: "2026-10-05", amount: 40, category: "Food & groceries", time: undefined }),
+      tx({ id: "refund", date: "2026-10-04", amount: 20, direction: "income", category: "Refunds" }),
+      tx({ id: "internal", date: "2026-10-02", time: "12:00", amount: 5000, internalTransfer: true }),
+      tx({ id: "later", date: "2026-10-10", amount: 200, category: "Bills & utilities" }),
+    ];
+
+    const periodA = getDateRangeComparison(transactions, { start: "2026-10-01", end: "2026-10-07" });
+    const periodB = getDateRangeComparison(transactions, { start: "2026-10-08", end: "2026-10-14" });
+
+    assert.ok(periodA);
+    assert.ok(periodB);
+    assert.equal(periodA.calendarDays, 7);
+    assert.equal(periodA.income, 1000);
+    assert.equal(periodA.spending, 225);
+    assert.equal(periodA.netCashflow, 775);
+    assert.equal(periodA.expenseTransactions, 5);
+    assert.equal(periodA.expensesPerWeek, 5);
+    assert.equal(periodA.timedExpenseCoverage, 0.8);
+    assert.equal(periodA.dayParts.find((part) => part.key === "morning").amount, 100);
+    assert.equal(periodA.dayParts.find((part) => part.key === "evening").averagePerDay, 10.71);
+    assert.equal(periodA.weekdayAveragePerDay, 43);
+    assert.equal(periodA.weekendAveragePerDay, 15);
+    assert.equal(periodA.sessionsPerWeek, 1);
+    assert.equal(periodA.averageSessionAmount, 75);
+    assert.equal(periodA.matchedIncomeDates, 1);
+    assert.equal(periodA.discretionaryPurchaseRate, 1);
+    assert.equal(periodA.medianDaysToFirstDiscretionaryPurchase, 0);
+    assert.equal(periodB.spending, 200);
+    assert.equal(periodB.expenseTransactions, 1);
+    assert.equal(periodB.timedExpenseCoverage, 0);
+  });
+
+  it("defaults to the selected range and the equally long period before it", () => {
+    const transactions = [
+      tx({ id: "first", date: "2026-10-01" }),
+      tx({ id: "last", date: "2026-10-07" }),
+    ];
+    assert.deepEqual(
+      getDefaultDateRangeComparison({ start: "2026-10-01", end: "2026-10-07" }, transactions),
+      {
+        periodA: { start: "2026-10-01", end: "2026-10-07" },
+        periodB: { start: "2026-09-24", end: "2026-09-30" },
+      },
+    );
+    assert.equal(
+      getDateRangeComparison(transactions, { start: "2026-10-08", end: "2026-10-01" }),
+      null,
+    );
   });
 });
