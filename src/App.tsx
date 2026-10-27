@@ -56,6 +56,7 @@ import ClassificationReviewPage from "./ClassificationReviewPage";
 import RecipientProfilesPage from "./RecipientProfilesPage";
 import BillsPage from "./BillsPage";
 import AccountsPage from "./AccountsPage";
+import FinancialIndicatorsPanel from "./FinancialIndicatorsPanel";
 import { DEFAULT_ACCOUNT_PREFERENCES, normaliseAccountPreferences, summariseAccounts } from "./lib/accounts";
 import { normaliseRecurringBills } from "./lib/recurringBills";
 import { useAccessAuth, type AccessStatus } from "./useAccessAuth";
@@ -1403,6 +1404,14 @@ function App() {
                       <div className="insight-note"><Lightbulb size={17} /><p>Money moving between your own wallet and savings pots (OWealth, Spend & Save, Targets) is left out of every total, so the numbers show what actually came in and went out.</p></div>
                     </div>
                   </div>
+                  <FinancialIndicatorsPanel
+                    transactions={transactions}
+                    range={range}
+                    budgets={budgets}
+                    recipientProfiles={recipientProfiles}
+                    currency={currency}
+                    onSearch={searchTransactions}
+                  />
                   <section className="panel trend-panel">
                     <div className="panel-heading"><div><div className="panel-kicker">MONTH BY MONTH</div><h2>Cash flow trend</h2></div><div className="chart-legend"><span><i className="legend-dot income-dot" /> Income</span><span><i className="legend-dot spending-dot" /> Spending</span></div></div>
                     <CashflowChart data={monthly} currency={currency} />
