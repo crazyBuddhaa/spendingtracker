@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, AlertTriangle, ArrowLeftRight, CalendarDays, CalendarRange, Clock3, Download, ListOrdered, Receipt, TrendingDown, TrendingUp, Users } from "lucide-react";
+import { Activity, AlertTriangle, ArrowLeftRight, CalendarDays, CalendarRange, Clock3, Coins, Download, ListOrdered, Receipt, Sparkles, TrendingDown, TrendingUp, Users, Zap } from "lucide-react";
 import type { Transaction } from "./types";
 import { getFeeSummary, getMonthlyReport, getSpendingRhythm, getTopCounterparties, monthlyReportToCsv } from "./lib/analytics";
 import type { DateRange } from "./lib/insights";
@@ -16,6 +16,13 @@ import {
   getTimePeriodPatterns,
   getTimeToFirstDiscretionaryPurchase,
 } from "./lib/timeSpendingAnalytics";
+import {
+  getLifestyleInflationAnalysis,
+  getPaydaySpendingAnalysis,
+  getPossibleImpulseSpending,
+  getSmallExpenseAccumulation,
+  getSpendingContextAnalysis,
+} from "./lib/spendingBehaviorAnalytics";
 
 function formatTimeWindow(startHour: number): string {
   const endHour = (startHour + 2) % 24;
@@ -63,6 +70,11 @@ function formatComparisonChange(metric: ComparisonMetric, currency: string): str
   return `${sign}${Math.abs((difference / Math.abs(metric.periodA)) * 100).toFixed(1)}%`;
 }
 
+function formatBehaviorChange(value: number | null): string {
+  if (value === null) return "Not enough data";
+  return `${value > 0 ? "+" : ""}${value.toFixed(1)}%`;
+}
+
 interface InsightsExtrasProps {
   transactions: Transaction[];
   allTransactions: Transaction[];
@@ -88,6 +100,17 @@ export default function InsightsExtras({ transactions, allTransactions, range, c
   const unusualTimes = useMemo(() => getUnusualSpendingTimes(transactions, allTransactions), [transactions, allTransactions]);
   const anomalies = useMemo(() => getSpendingAnomalies(transactions, allTransactions), [transactions, allTransactions]);
   const forecasts = useMemo(() => getSpendingForecasts(allTransactions), [allTransactions]);
+  const smallExpenses = useMemo(() => getSmallExpenseAccumulation(transactions, range), [transactions, range.start, range.end]);
+  const lifestyleInflation = useMemo(
+    () => getLifestyleInflationAnalysis(allTransactions, range.end),
+    [allTransactions, range.end],
+  );
+  const spendingContexts = useMemo(() => getSpendingContextAnalysis(transactions, range), [transactions, range.start, range.end]);
+  const impulseSpending = useMemo(() => getPossibleImpulseSpending(transactions, range), [transactions, range.start, range.end]);
+  const paydaySpending = useMemo(
+    () => getPaydaySpendingAnalysis(allTransactions, range),
+    [allTransactions, range.start, range.end],
+  );
   const maxWeekday = Math.max(1, ...rhythm.byWeekday.map((day) => day.average));
   const maxCounterparty = Math.max(1, ...counterparties.map((item) => item.amount));
   const maxHourlySpend = Math.max(1, ...timeAnalytics.byHour.map((hour) => hour.amount));
@@ -429,6 +452,150 @@ export default function InsightsExtras({ transactions, allTransactions, range, c
                 : `Weekend daily spending is ${Math.abs(timePeriods.weekendVsWeekdayAveragePercent).toFixed(1)}% ${timePeriods.weekendVsWeekdayAveragePercent > 0 ? "higher" : timePeriods.weekendVsWeekdayAveragePercent < 0 ? "lower" : "the same as"} weekday spending in this period.`}
             </p>
           </div>
+        </div>
+      </section>
+
+      <section className="panel extras-panel behavior-panel">
+        <div className="panel-heading">
+          <div><div className="panel-kicker">SPENDING BEHAVIOR</div><h2>Small habits, timing, and change over time</h2></div>
+          <Sparkles size={16} className="muted-icon" />
+        </div>
+        <div className="behavior-insight-grid">
+          <article className="behavior-insight-card">
+            <div className="behavior-card-heading">
+              <div><div className="panel-kicker">SMALL-EXPENSE ACCUMULATION</div><h3>Where the little payments add up</h3></div>
+              <Coins size={15} className="muted-icon" />
+            </div>
+            {smallExpenses.status === "ready" ? (
+              <>
+                <div className="behavior-primary-stat">
+                  <strong>{formatCurrency(smallExpenses.smallSpend, currency, true)}</strong>
+                  <span>{smallExpenses.smallTransactionCount.toLocaleString("en-NG")} small expenses · {smallExpenses.shareOfSpending.toFixed(1)}% of recorded spend</span>
+                </div>
+                <p className="behavior-card-note">
+                  Small means at or below {formatCurrency(smallExpenses.threshold ?? 0, currency, true)}—your lowest-value quarter threshold across {smallExpenses.transactionCount.toLocaleString("en-NG")} expenses in this period.
+                </p>
+                {smallExpenses.topCategories.length > 0 && (
+                  <div className="behavior-category-list">
+                    {smallExpenses.topCategories.map((item) => (
+                      <div key={item.category}><span>{item.category}<small>{item.count} payment{item.count === 1 ? "" : "s"}</small></span><strong>{formatCurrency(item.amount, currency, true)}</strong></div>
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="behavior-empty">Add at least 8 recorded expenses in the selected period to estimate which smaller payments accumulate.</div>
+            )}
+          </article>
+
+          <article className="behavior-insight-card">
+            <div className="behavior-card-heading">
+              <div><div className="panel-kicker">LIFESTYLE-INFLATION CHECK</div><h3>Are expenses rising faster than income?</h3></div>
+              <TrendingUp size={15} className="muted-icon" />
+            </div>
+            {lifestyleInflation.status !== "insufficient" ? (
+              <>
+                <div className={`behavior-status behavior-status-${lifestyleInflation.status}`}>
+                  {lifestyleInflation.status === "signal"
+                    ? "Lifestyle inflation signal"
+                    : lifestyleInflation.status === "spending-outpaced"
+                      ? "Spending outpaced income"
+                      : "No strong inflation signal"}
+                </div>
+                <div className="behavior-fact-grid">
+                  <div><span>AVERAGE MONTHLY SPENDING</span><strong>{formatBehaviorChange(lifestyleInflation.spendingChangePercent)}</strong><small>{formatCurrency(lifestyleInflation.previousAverageSpending ?? 0, currency, true)} → {formatCurrency(lifestyleInflation.recentAverageSpending ?? 0, currency, true)}</small></div>
+                  <div><span>AVERAGE MONTHLY INCOME</span><strong>{formatBehaviorChange(lifestyleInflation.incomeChangePercent)}</strong><small>{formatCurrency(lifestyleInflation.previousAverageIncome ?? 0, currency, true)} → {formatCurrency(lifestyleInflation.recentAverageIncome ?? 0, currency, true)}</small></div>
+                </div>
+                <p className="behavior-card-note">
+                  {lifestyleInflation.previousPeriod} vs {lifestyleInflation.recentPeriod}; records found in {lifestyleInflation.previousExpenseMonths}/{3} and {lifestyleInflation.recentExpenseMonths}/{3} spending months. This flags a trend, not its cause.
+                </p>
+              </>
+            ) : (
+              <div className="behavior-empty">
+                Need income and expense records in at least 2 of each three-month window. The comparison uses the latest complete three months against the prior three.
+              </div>
+            )}
+          </article>
+
+          <article className="behavior-insight-card">
+            <div className="behavior-card-heading">
+              <div><div className="panel-kicker">SPENDING TRIGGER ANALYSIS</div><h3>What tends to show up on high-spend days?</h3></div>
+              <CalendarRange size={15} className="muted-icon" />
+            </div>
+            {spendingContexts.status === "ready" ? (
+              <>
+                <div className="behavior-primary-stat">
+                  <strong>{spendingContexts.highSpendDays.toLocaleString("en-NG")} high-spend days</strong>
+                  <span>Top-quarter daily totals among {spendingContexts.activeDays.toLocaleString("en-NG")} active days</span>
+                </div>
+                <div className="behavior-category-list">
+                  {spendingContexts.commonHighSpendWeekday && (
+                    <div><span>Most common weekday<small>{spendingContexts.commonHighSpendWeekdayCount} of {spendingContexts.highSpendDays} high-spend days</small></span><strong>{spendingContexts.commonHighSpendWeekday}</strong></div>
+                  )}
+                  {spendingContexts.commonHighSpendDayPart && (
+                    <div><span>Dominant time band<small>Based on timed high-spend days</small></span><strong>{spendingContexts.commonHighSpendDayPart}</strong></div>
+                  )}
+                  {spendingContexts.topCategory && (
+                    <div><span>Top category on those days<small>{spendingContexts.topCategory.count} expenses</small></span><strong>{formatCurrency(spendingContexts.topCategory.amount, currency, true)}</strong></div>
+                  )}
+                </div>
+                <p className="behavior-card-note">
+                  High-spend days are at or above {formatCurrency(spendingContexts.highSpendThreshold ?? 0, currency, true)}. These are recurring timing/category associations, not proof of a personal or emotional trigger.
+                </p>
+              </>
+            ) : (
+              <div className="behavior-empty">Need expenses across at least 8 active days to compare higher-spend days with your own baseline.</div>
+            )}
+          </article>
+
+          <article className="behavior-insight-card">
+            <div className="behavior-card-heading">
+              <div><div className="panel-kicker">POSSIBLE IMPULSE-LIKE SPENDING</div><h3>Rapid discretionary purchase clusters</h3></div>
+              <Zap size={15} className="muted-icon" />
+            </div>
+            <div className="behavior-primary-stat">
+              <strong>{impulseSpending.clusterCount.toLocaleString("en-NG")} possible cluster{impulseSpending.clusterCount === 1 ? "" : "s"}</strong>
+              <span>{formatCurrency(impulseSpending.clusteredSpend, currency, true)} across {impulseSpending.clusteredTransactionCount} purchases</span>
+            </div>
+            <p className="behavior-card-note">
+              A cluster is 2+ Shopping, Entertainment, or Betting expenses within a timed 60-minute session. Usable times cover {impulseSpending.timedCoveragePercent}% of these discretionary transactions.
+              {impulseSpending.status === "limited" ? " Treat this as incomplete evidence." : " Timing alone cannot establish intent."}
+            </p>
+            {impulseSpending.clusters.length > 0 && (
+              <div className="behavior-category-list">
+                {impulseSpending.clusters.slice(0, 3).map((cluster) => (
+                  <div key={`${cluster.date}-${cluster.startMinute}-${cluster.endMinute}`}>
+                    <span>{formatDate(cluster.date)} · {formatMinuteOfDay(cluster.startMinute)}–{formatMinuteOfDay(cluster.endMinute)}<small>{cluster.transactionCount} purchases · {cluster.categories.join(", ")}</small></span>
+                    <strong>{formatCurrency(cluster.amount, currency, true)}</strong>
+                  </div>
+                ))}
+              </div>
+            )}
+          </article>
+
+          <article className="behavior-insight-card">
+            <div className="behavior-card-heading">
+              <div><div className="panel-kicker">PAYDAY SPENDING</div><h3>Spending around recorded income</h3></div>
+              <CalendarDays size={15} className="muted-icon" />
+            </div>
+            {paydaySpending.status === "ready" ? (
+              <>
+                <div className="behavior-primary-stat">
+                  <strong>{paydaySpending.differencePercent === null ? "No baseline spend" : `${formatBehaviorChange(paydaySpending.differencePercent)} per day`}</strong>
+                  <span>on income dates and the next {paydaySpending.windowDays} days vs other days</span>
+                </div>
+                <div className="behavior-fact-grid">
+                  <div><span>INCOME-WINDOW AVERAGE</span><strong>{formatCurrency(paydaySpending.paydayAveragePerDay, currency, true)}</strong><small>{paydaySpending.paydayCyclesWithSpending} income dates with spending</small></div>
+                  <div><span>OTHER-DAY AVERAGE</span><strong>{formatCurrency(paydaySpending.baselineAveragePerDay, currency, true)}</strong><small>{paydaySpending.baselineDays} comparison days</small></div>
+                </div>
+              </>
+            ) : (
+              <div className="behavior-empty">
+                Need spending after at least 2 recorded income dates and 7 non-window days in this period for a fair comparison.
+              </div>
+            )}
+            <p className="behavior-card-note">The income window includes the income date and the following three calendar days. This is a timing comparison, not proof that income caused the spending.</p>
+          </article>
         </div>
       </section>
 
