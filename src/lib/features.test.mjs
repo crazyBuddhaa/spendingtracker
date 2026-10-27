@@ -557,15 +557,19 @@ describe("storage and backups", () => {
       rules: [{ id: "r", pattern: "abc", category: "Business", createdAt: "2026-10-19" }],
       budgets: [{ category: "Betting", monthlyLimit: 5000 }],
       recipientProfiles: [{ id: "recipient:a", kind: "recipient", name: "Ada", aliases: ["ADA O."], relationship: "Family", category: "Rent & housing", note: "Landlord" }],
+      incomeSourceOverrides: { "acme limited": "employment" },
     };
     const restored = readBackup(createBackup(data));
     assert.deepEqual(restored.transactions, data.transactions);
     assert.deepEqual(restored.rules, [{ ...data.rules[0], direction: undefined, markInternal: undefined }]);
     assert.deepEqual(restored.budgets, data.budgets);
     assert.deepEqual(restored.recipientProfiles, data.recipientProfiles);
+    assert.deepEqual(restored.incomeSourceOverrides, data.incomeSourceOverrides);
     const legacyBackup = JSON.parse(createBackup(data));
     delete legacyBackup.recipientProfiles;
+    delete legacyBackup.incomeSourceOverrides;
     assert.deepEqual(readBackup(JSON.stringify(legacyBackup)).recipientProfiles, []);
+    assert.deepEqual(readBackup(JSON.stringify(legacyBackup)).incomeSourceOverrides, {});
     assert.equal(readBackup("{\"format\":\"something-else\"}"), null);
     assert.equal(readBackup("not json"), null);
     assert.deepEqual(normaliseRules([{ id: "x", pattern: "  ", category: "Business" }]), []);

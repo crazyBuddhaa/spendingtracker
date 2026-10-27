@@ -14,6 +14,7 @@ export type IncomeSourceType =
   | "other";
 
 export type ClassificationConfidence = "high" | "medium" | "low";
+export type IncomeSourceOverrides = Record<string, IncomeSourceType>;
 
 export const incomeSourceLabels: Record<IncomeSourceType, string> = {
   employment: "Employment",
@@ -25,6 +26,25 @@ export const incomeSourceLabels: Record<IncomeSourceType, string> = {
   other: "Other / unclear",
 };
 
+const incomeSourceTypes = new Set<IncomeSourceType>(Object.keys(incomeSourceLabels) as IncomeSourceType[]);
+
+export function incomeSourceIdentity(name: string): string {
+  return name.trim().toLocaleLowerCase().replace(/\s+/g, " ").slice(0, 160);
+}
+
+export function normaliseIncomeSourceOverrides(value: unknown): IncomeSourceOverrides {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const result: IncomeSourceOverrides = {};
+  for (const [source, type] of Object.entries(value)) {
+    const key = incomeSourceIdentity(source);
+    if (key && key !== "unidentified source" && !["__proto__", "constructor", "prototype"].includes(key)
+      && typeof type === "string" && incomeSourceTypes.has(type as IncomeSourceType)) {
+      result[key] = type as IncomeSourceType;
+    }
+  }
+  return result;
+}
+
 export interface IncomeSourceGroup {
   key: string;
   name: string;
@@ -35,6 +55,8 @@ export interface IncomeSourceGroup {
   lastDate: string;
   share: number;
   confidence: ClassificationConfidence;
+  manuallySet: boolean;
+  canOverride: boolean;
   reason: string;
 }
 
@@ -207,7 +229,9 @@ function lowerConfidence(a: ClassificationConfidence, b: ClassificationConfidenc
 export function getIncomeSourceBreakdown(
   transactions: Transaction[],
   profiles: RecipientProfile[] = [],
+  overrides: IncomeSourceOverrides = {},
 ): IncomeSourceBreakdown {
+  const safeOverrides = normaliseIncomeSourceOverrides(overrides);
   const groups = new Map<string, IncomeSourceGroup>();
   const typeTotals = new Map<IncomeSourceType, { amount: number; count: number }>();
   let total = 0;
@@ -222,9 +246,19 @@ export function getIncomeSourceBreakdown(
       continue;
     }
 
-    const classification = classifyIncomeSource(transaction);
     const name = sourceNameFor(transaction, profiles);
-    const key = `${classification.type}:${name.toLocaleLowerCase()}`;
+    const identity = incomeSourceIdentity(name);
+    const canOverride = identity !== "unidentified source";
+    const override = canOverride ? safeOverrides[identity] : undefined;
+    const classification = override
+      ? {
+          type: override,
+          confidence: "high" as const,
+          manuallySet: true,
+          reason: "You set this source label manually.",
+        }
+      : { ...classifyIncomeSource(transaction), manuallySet: false };
+    const key = identity;
     const current = groups.get(key) ?? {
       key,
       name,
@@ -235,12 +269,15 @@ export function getIncomeSourceBreakdown(
       lastDate: transaction.date,
       share: 0,
       confidence: classification.confidence,
+      manuallySet: classification.manuallySet,
+      canOverride,
       reason: classification.reason,
     };
     current.amount += transaction.amount;
     current.count += 1;
     current.lastDate = current.lastDate > transaction.date ? current.lastDate : transaction.date;
     current.confidence = lowerConfidence(current.confidence, classification.confidence);
+    current.manuallySet = current.manuallySet || classification.manuallySet;
     groups.set(key, current);
 
     const typeTotal = typeTotals.get(classification.type) ?? { amount: 0, count: 0 };
@@ -489,6 +526,7 @@ export function getFinancialIndicatorAnalysis(
   budgets: Budget[],
   profiles: RecipientProfile[] = [],
   today = new Date(),
+  incomeSourceOverrides: IncomeSourceOverrides = {},
 ): FinancialIndicatorAnalysis {
   const selected = transactions.filter((transaction) => isInRange(transaction.date, range));
   const latestDate = selected.map((transaction) => transaction.date).filter(isValidIsoDate).sort().at(-1);
@@ -497,7 +535,7 @@ export function getFinancialIndicatorAnalysis(
   const behavior = getFinancialBehaviorIndicators(selected);
   const leaks = getFinancialLeakAnalysis(transactions, range, profiles);
   const budget = getBudgetDeviationAnalysis(transactions, budgets, month, today);
-  const incomeSources = getIncomeSourceBreakdown(selected, profiles);
+  const incomeSources = getIncomeSourceBreakdown(selected, profiles, incomeSourceOverrides);
   return {
     month,
     behavior,

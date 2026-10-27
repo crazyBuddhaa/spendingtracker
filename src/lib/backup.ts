@@ -6,6 +6,7 @@ import { normaliseSavingsCircles } from "./savingsCircles.ts";
 import { normaliseSavingsGoals } from "./savings.ts";
 import { parseStoredTransactions, serializeTransactions } from "./transactionStorage.ts";
 import { normaliseRecipientProfiles } from "./recipientProfiles.ts";
+import { normaliseIncomeSourceOverrides, type IncomeSourceOverrides } from "./financialIndicators.ts";
 
 export const BACKUP_FORMAT = "spendwise.backup.v1";
 
@@ -19,6 +20,7 @@ export interface BackupData {
   recipientProfiles?: RecipientProfile[];
   recurringBills?: RecurringBill[];
   accountPreferences?: AccountPreferences;
+  incomeSourceOverrides?: IncomeSourceOverrides;
 }
 
 const validCategories = new Set<string>(categoryList);
@@ -70,6 +72,7 @@ export function createBackup(data: BackupData, now = new Date()): string {
     recipientProfiles: normaliseRecipientProfiles(data.recipientProfiles),
     recurringBills: normaliseRecurringBills(data.recurringBills),
     accountPreferences: normaliseAccountPreferences(data.accountPreferences),
+    incomeSourceOverrides: normaliseIncomeSourceOverrides(data.incomeSourceOverrides),
   });
 }
 
@@ -93,5 +96,6 @@ export function readBackup(text: string): BackupData | null {
     recipientProfiles: normaliseRecipientProfiles(backup.recipientProfiles),
     recurringBills: normaliseRecurringBills(backup.recurringBills),
     accountPreferences: normaliseAccountPreferences(backup.accountPreferences),
+    incomeSourceOverrides: normaliseIncomeSourceOverrides(backup.incomeSourceOverrides),
   };
 }

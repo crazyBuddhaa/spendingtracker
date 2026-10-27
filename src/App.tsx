@@ -46,6 +46,7 @@ import { buildClassificationHistory, classifyTransaction, classifyTransactions, 
 import { detectRecurringRecipients, getClassificationReviewQueue, reclassifyHistoricalTransactions } from "./lib/transactionReview";
 import { createBackup, normaliseBudgets, normaliseRules, readBackup } from "./lib/backup";
 import { getFeeSummary } from "./lib/analytics";
+import { normaliseIncomeSourceOverrides, type IncomeSourceOverrides, type IncomeSourceType } from "./lib/financialIndicators";
 import { downloadFile, formatCurrency, formatDate, localIsoDate, newId } from "./lib/format";
 import SavingsPage from "./SavingsPage";
 import BettingPage from "./BettingPage";
@@ -103,6 +104,7 @@ const PERIOD_STORAGE_KEY = "spendwise.period.v1";
 const BILLS_STORAGE_KEY = "spendwise.recurring-bills.v1";
 const ACCOUNTS_STORAGE_KEY = "spendwise.account-preferences.v1";
 const OPENING_BALANCE_STORAGE_KEY = "spendwise.projection-opening-balance.v1";
+const INCOME_SOURCE_OVERRIDES_STORAGE_KEY = "spendwise.income-source-overrides.v1";
 const currency = "NGN";
 
 type Page = "overview" | "accounts" | "transactions" | "review" | "bills" | "insights" | "recipients" | "budgets" | "savings" | "betting" | "data";
@@ -261,6 +263,9 @@ function App() {
   const [rules, setRules] = useState<CategoryRule[]>(() => readJson(RULES_STORAGE_KEY, normaliseRules, []));
   const [recipientProfiles, setRecipientProfiles] = useState<RecipientProfile[]>(() => readJson(RECIPIENT_PROFILES_STORAGE_KEY, normaliseRecipientProfiles, []));
   const [budgets, setBudgets] = useState<Budget[]>(() => readJson(BUDGETS_STORAGE_KEY, normaliseBudgets, []));
+  const [incomeSourceOverrides, setIncomeSourceOverrides] = useState<IncomeSourceOverrides>(() =>
+    readJson(INCOME_SOURCE_OVERRIDES_STORAGE_KEY, normaliseIncomeSourceOverrides, {}),
+  );
   const [recurringBills, setRecurringBills] = useState<RecurringBill[]>(() => readJson(BILLS_STORAGE_KEY, normaliseRecurringBills, []));
   const [accountPreferences, setAccountPreferences] = useState<AccountPreferences>(() => readJson(ACCOUNTS_STORAGE_KEY, normaliseAccountPreferences, DEFAULT_ACCOUNT_PREFERENCES));
   const [projectionOpeningBalance, setProjectionOpeningBalance] = useState<number>(() => readJson(OPENING_BALANCE_STORAGE_KEY, (value) => typeof value === "number" && Number.isFinite(value) ? value : 0, 0));
@@ -429,6 +434,17 @@ function App() {
   const updateBudgets = (next: Budget[]) => {
     setBudgets(next);
     if (!saveJson(BUDGETS_STORAGE_KEY, next)) notify("Could not save your budgets in this browser.");
+  };
+
+  const updateIncomeSourceOverride = (sourceKey: string, type: IncomeSourceType | null) => {
+    const next = { ...incomeSourceOverrides };
+    if (type === null) delete next[sourceKey];
+    else Object.defineProperty(next, sourceKey, { value: type, enumerable: true, configurable: true, writable: true });
+    const normalised = normaliseIncomeSourceOverrides(next);
+    setIncomeSourceOverrides(normalised);
+    if (!saveJson(INCOME_SOURCE_OVERRIDES_STORAGE_KEY, normalised)) {
+      notify("Could not save the income-source label in this browser. Download a backup before closing this tab.");
+    }
   };
 
   const updateRecurringBills = (next: RecurringBill[]) => {
@@ -846,7 +862,7 @@ function App() {
 
   const exportBackup = () => {
     downloadFile(
-      createBackup({ transactions, savingsGoals, savingsCircles, bets, rules, budgets, recipientProfiles, recurringBills, accountPreferences }),
+      createBackup({ transactions, savingsGoals, savingsCircles, bets, rules, budgets, recipientProfiles, recurringBills, accountPreferences, incomeSourceOverrides }),
       `spendwise-backup-${localIsoDate()}.json`,
       "application/json",
     );
@@ -859,7 +875,7 @@ function App() {
       notify("That file is not a Spendwise backup.");
       return;
     }
-    if (!window.confirm(`Replace everything in this browser with the backup (${backup.transactions.length.toLocaleString("en-NG")} transactions, ${backup.savingsGoals.length} goals, ${backup.bets.length} bets, ${backup.rules.length} rules, ${backup.budgets.length} budgets, ${backup.recipientProfiles?.length ?? 0} recipient profiles)?`)) return;
+    if (!window.confirm(`Replace everything in this browser with the backup (${backup.transactions.length.toLocaleString("en-NG")} transactions, ${backup.savingsGoals.length} goals, ${backup.bets.length} bets, ${backup.rules.length} rules, ${backup.budgets.length} budgets, ${backup.recipientProfiles?.length ?? 0} recipient profiles, ${Object.keys(backup.incomeSourceOverrides ?? {}).length} income-source labels)?`)) return;
     setTransactions(backup.transactions);
     updateSavingsGoals(backup.savingsGoals);
     updateSavingsCircles(backup.savingsCircles);
@@ -867,6 +883,10 @@ function App() {
     updateRules(backup.rules);
     updateBudgets(backup.budgets);
     updateRecipientProfiles(backup.recipientProfiles ?? []);
+    setIncomeSourceOverrides(backup.incomeSourceOverrides ?? {});
+    if (!saveJson(INCOME_SOURCE_OVERRIDES_STORAGE_KEY, backup.incomeSourceOverrides ?? {})) {
+      notify("The backup was restored, but income-source labels could not be saved in this browser.");
+    }
     updateRecurringBills(backup.recurringBills ?? []);
     updateAccountPreferences(backup.accountPreferences ?? DEFAULT_ACCOUNT_PREFERENCES);
     setPeriod("all");
@@ -1409,6 +1429,8 @@ function App() {
                     range={range}
                     budgets={budgets}
                     recipientProfiles={recipientProfiles}
+                    incomeSourceOverrides={incomeSourceOverrides}
+                    onUpdateIncomeSourceOverride={updateIncomeSourceOverride}
                     currency={currency}
                     onSearch={searchTransactions}
                   />

@@ -6,6 +6,7 @@ import {
   getFinancialIndicatorAnalysis,
   getFinancialLeakAnalysis,
   getIncomeSourceBreakdown,
+  normaliseIncomeSourceOverrides,
 } from "./financialIndicators.ts";
 
 const tx = (overrides) => ({
@@ -52,6 +53,36 @@ describe("financial indicators", () => {
     assert.equal(result.groups.find((item) => item.type === "business")?.confidence, "medium");
     assert.equal(result.groups.find((item) => item.type === "investment")?.amount, 300);
     assert.equal(result.byType.reduce((sum, item) => sum + item.amount, 0), 7300);
+  });
+
+  it("applies a saved user correction by normalized source name and validates stored overrides", () => {
+    const transactions = [
+      tx({ id: "other-1", description: "One-off credit", direction: "income", category: "Income", amount: 200 }),
+      tx({ id: "other-2", description: "one-off  credit", direction: "income", category: "Income", amount: 300 }),
+    ];
+    const overrides = normaliseIncomeSourceOverrides({
+      "  ONE-OFF   CREDIT ": "business",
+      "unknown source": "not-a-source-type",
+      "   ": "employment",
+      "Unidentified source": "employment",
+    });
+    assert.deepEqual(overrides, { "one-off credit": "business" });
+    const result = getIncomeSourceBreakdown(transactions, [], overrides);
+    assert.equal(result.groups.length, 1);
+    assert.equal(result.groups[0].type, "business");
+    assert.equal(result.groups[0].manuallySet, true);
+    assert.equal(result.groups[0].reason, "You set this source label manually.");
+  });
+
+  it("does not let a generic unidentified-source label override unrelated payers", () => {
+    const transactions = [
+      tx({ id: "blank-a", description: "", direction: "income", category: "Income", amount: 100 }),
+      tx({ id: "blank-b", description: "", direction: "income", category: "Income", amount: 150 }),
+    ];
+    const result = getIncomeSourceBreakdown(transactions, [], { "unidentified source": "business" });
+    assert.equal(result.groups[0].type, "other");
+    assert.equal(result.groups[0].canOverride, false);
+    assert.equal(result.groups[0].manuallySet, false);
   });
 
   it("detects repeated lower-value outflows and recurring payments without calling them fraud", () => {

@@ -1,7 +1,7 @@
 import { Activity, AlertTriangle, Banknote, Lightbulb, Repeat, Target, TrendingDown, Wallet } from "lucide-react";
 import type { Budget, RecipientProfile, Transaction } from "./types";
 import type { DateRange } from "./lib/insights";
-import { getFinancialIndicatorAnalysis, incomeSourceLabels } from "./lib/financialIndicators";
+import { getFinancialIndicatorAnalysis, incomeSourceLabels, type IncomeSourceOverrides, type IncomeSourceType } from "./lib/financialIndicators";
 import { formatCurrency, formatDate, formatMonth } from "./lib/format";
 
 interface FinancialIndicatorsPanelProps {
@@ -9,6 +9,8 @@ interface FinancialIndicatorsPanelProps {
   range: DateRange;
   budgets: Budget[];
   recipientProfiles: RecipientProfile[];
+  incomeSourceOverrides: IncomeSourceOverrides;
+  onUpdateIncomeSourceOverride: (sourceKey: string, type: IncomeSourceType | null) => void;
   currency: string;
   onSearch: (query: string) => void;
 }
@@ -38,10 +40,12 @@ export default function FinancialIndicatorsPanel({
   range,
   budgets,
   recipientProfiles,
+  incomeSourceOverrides,
+  onUpdateIncomeSourceOverride,
   currency,
   onSearch,
 }: FinancialIndicatorsPanelProps) {
-  const analysis = getFinancialIndicatorAnalysis(transactions, range, budgets, recipientProfiles);
+  const analysis = getFinancialIndicatorAnalysis(transactions, range, budgets, recipientProfiles, undefined, incomeSourceOverrides);
   const { behavior, leaks, budget, incomeSources } = analysis;
   const spendingRatio = behavior.spendingToIncomePercent;
   const concernTone = spendingRatio !== null && spendingRatio >= 100 ? "metric-attention" : spendingRatio !== null && spendingRatio >= 80 ? "metric-watch" : "";
@@ -192,12 +196,33 @@ export default function FinancialIndicatorsPanel({
               </div>
               <div className="financial-list">
                 {incomeSources.groups.slice(0, 5).map((item) => (
-                  <button key={item.key} className="financial-list-row" onClick={() => onSearch(item.name)} title="Show matching transactions">
-                    <span><strong>{item.name}</strong><small>{item.typeLabel} · {item.count} record{item.count === 1 ? "" : "s"} · {item.confidence} confidence</small></span>
-                    <strong>{formatCurrency(item.amount, currency, true)}<small> · {item.share.toFixed(1)}%</small></strong>
-                  </button>
+                  <div key={item.key} className="financial-list-row financial-income-source-row">
+                    <button className="financial-source-link" onClick={() => onSearch(item.name)} title="Show matching transactions">
+                      <strong>{item.name}</strong>
+                      <small>{item.typeLabel} · {item.count} record{item.count === 1 ? "" : "s"} · {item.manuallySet ? "you set this" : `${item.confidence} confidence`}</small>
+                    </button>
+                    <div className="financial-source-controls">
+                      <strong>{formatCurrency(item.amount, currency, true)}<small> · {item.share.toFixed(1)}%</small></strong>
+                      {item.canOverride ? (
+                        <select
+                          value={incomeSourceOverrides[item.key] ?? "auto"}
+                          aria-label={`Correct ${item.name} income source label`}
+                          onChange={(event) => onUpdateIncomeSourceOverride(
+                            item.key,
+                            event.target.value === "auto" ? null : event.target.value as IncomeSourceType,
+                          )}
+                        >
+                          <option value="auto">Automatic · {item.typeLabel}</option>
+                          {Object.entries(incomeSourceLabels).map(([type, label]) => (
+                            <option key={type} value={type}>{label}</option>
+                          ))}
+                        </select>
+                      ) : <small>Source name needed to correct</small>}
+                    </div>
+                  </div>
                 ))}
               </div>
+              <p className="financial-card-note">Corrections are saved in this browser and included in downloaded backups. Choose “Automatic” to remove a correction.</p>
               {incomeSources.excludedOwnAccountCandidates > 0 && (
                 <p className="financial-card-note">{incomeSources.excludedOwnAccountCandidates} possible own-account transfer{incomeSources.excludedOwnAccountCandidates === 1 ? " was" : "s were"} left out of this source breakdown.</p>
               )}

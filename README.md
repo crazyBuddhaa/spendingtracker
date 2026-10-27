@@ -51,7 +51,7 @@ Transfers to or from your own name (in any order, at least two name parts, inclu
 
 ## Insights, budgets and reports
 
-- **Financial behaviour indicators** summarize period cashflow, spending against income, repeated lower-value outflows, recurring costs, budget pace, and estimated income-source mix. Each insight shows the rule and transaction evidence behind it; source labels are inferred from narration/category and never change a transaction.
+- **Financial behaviour indicators** summarize period cashflow, spending against income, repeated lower-value outflows, recurring costs, budget pace, and estimated income-source mix. Each insight shows the rule and transaction evidence behind it; source labels are inferred from narration/category and never change a transaction. Income-source labels can be corrected per source and reset to automatic; those local overrides are included in backups.
 - Cash-flow chart that follows the selected period; spending mix (click a category to see its transactions).
 - Top payees and sources of money in, bank fees and levies, average daily spend and the heaviest weekday.
 - **Monthly report** (money in, money out after refunds, net, betting, fees, top category) with CSV export.
