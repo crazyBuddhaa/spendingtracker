@@ -77,6 +77,33 @@ export interface Budget {
   monthlyLimit: number;
 }
 
+export type BillFrequency = "weekly" | "monthly" | "yearly";
+
+/** A locally managed recurring commitment. Projections never create transactions automatically. */
+export interface RecurringBill {
+  id: string;
+  name: string;
+  amount: number;
+  direction: Direction;
+  category: Category;
+  account: string;
+  currency: string;
+  frequency: BillFrequency;
+  nextDueDate: string;
+  paused?: boolean;
+  note?: string;
+}
+
+/** Per-account native currencies and optional manual rates to one display currency. */
+export interface AccountPreferences {
+  accountCurrencies: Record<string, string>;
+  displayCurrency: string;
+  showConverted: boolean;
+  rates: Record<string, number>;
+}
+
+export const supportedCurrencies = ["NGN", "USD", "GBP", "EUR", "GHS", "KES", "ZAR", "CAD"] as const;
+
 export interface ImportResult {
   transactions: Transaction[];
   skipped: number;

@@ -4,6 +4,7 @@ import {
   ArrowLeftRight,
   ArrowUpRight,
   BarChart3,
+  CalendarDays,
   Check,
   ChevronDown,
   ClipboardCheck,
@@ -53,6 +54,10 @@ import DataPage from "./DataPage";
 import InsightsExtras from "./InsightsExtras";
 import ClassificationReviewPage from "./ClassificationReviewPage";
 import RecipientProfilesPage from "./RecipientProfilesPage";
+import BillsPage from "./BillsPage";
+import AccountsPage from "./AccountsPage";
+import { DEFAULT_ACCOUNT_PREFERENCES, normaliseAccountPreferences, summariseAccounts } from "./lib/accounts";
+import { normaliseRecurringBills } from "./lib/recurringBills";
 import { useAccessAuth, type AccessStatus } from "./useAccessAuth";
 import { normaliseSavingsGoals } from "./lib/savings";
 import { normaliseSavingsCircles } from "./lib/savingsCircles";
@@ -71,6 +76,7 @@ import {
 } from "./lib/insights";
 import {
   categoryList,
+  type AccountPreferences,
   type BetCategory,
   type BetRecord,
   type Budget,
@@ -79,6 +85,7 @@ import {
   type Direction,
   type ImportDiagnostics,
   type RecipientProfile,
+  type RecurringBill,
   type SavingsCircle,
   type SavingsContribution,
   type SavingsGoal,
@@ -92,9 +99,12 @@ const RULES_STORAGE_KEY = "spendwise.rules.v1";
 const BUDGETS_STORAGE_KEY = "spendwise.budgets.v1";
 const RECIPIENT_PROFILES_STORAGE_KEY = "spendwise.recipient-profiles.v1";
 const PERIOD_STORAGE_KEY = "spendwise.period.v1";
+const BILLS_STORAGE_KEY = "spendwise.recurring-bills.v1";
+const ACCOUNTS_STORAGE_KEY = "spendwise.account-preferences.v1";
+const OPENING_BALANCE_STORAGE_KEY = "spendwise.projection-opening-balance.v1";
 const currency = "NGN";
 
-type Page = "overview" | "transactions" | "review" | "insights" | "recipients" | "budgets" | "savings" | "betting" | "data";
+type Page = "overview" | "accounts" | "transactions" | "review" | "bills" | "insights" | "recipients" | "budgets" | "savings" | "betting" | "data";
 
 interface PendingStatementImport {
   transactions: Transaction[];
@@ -107,8 +117,10 @@ interface PendingStatementImport {
 
 const pageTitles: Record<Page, string> = {
   overview: "Overview",
+  accounts: "Accounts",
   transactions: "Transactions",
   review: "Classification review",
+  bills: "Bills & cash flow",
   insights: "Insights",
   recipients: "Recipients",
   budgets: "Budgets",
@@ -248,6 +260,9 @@ function App() {
   const [rules, setRules] = useState<CategoryRule[]>(() => readJson(RULES_STORAGE_KEY, normaliseRules, []));
   const [recipientProfiles, setRecipientProfiles] = useState<RecipientProfile[]>(() => readJson(RECIPIENT_PROFILES_STORAGE_KEY, normaliseRecipientProfiles, []));
   const [budgets, setBudgets] = useState<Budget[]>(() => readJson(BUDGETS_STORAGE_KEY, normaliseBudgets, []));
+  const [recurringBills, setRecurringBills] = useState<RecurringBill[]>(() => readJson(BILLS_STORAGE_KEY, normaliseRecurringBills, []));
+  const [accountPreferences, setAccountPreferences] = useState<AccountPreferences>(() => readJson(ACCOUNTS_STORAGE_KEY, normaliseAccountPreferences, DEFAULT_ACCOUNT_PREFERENCES));
+  const [projectionOpeningBalance, setProjectionOpeningBalance] = useState<number>(() => readJson(OPENING_BALANCE_STORAGE_KEY, (value) => typeof value === "number" && Number.isFinite(value) ? value : 0, 0));
   const [period, setPeriod] = useState<Period>(storedPeriod.period);
   const [customRange, setCustomRange] = useState<DateRange>(storedPeriod.custom);
   const [activePage, setActivePage] = useState<Page>("overview");
@@ -347,6 +362,7 @@ function App() {
   }, [range, dataBounds]);
   const monthly = useMemo(() => getMonthlySeries(transactions, chartRange), [transactions, chartRange]);
   const sources = useMemo(() => [...new Set(transactions.map((transaction) => transaction.source))].sort(), [transactions]);
+  const accountSummaries = useMemo(() => summariseAccounts(transactions, accountPreferences), [transactions, accountPreferences]);
   const previousTotals = useMemo(() => {
     const previous = previousRange(period, range);
     return previous ? calculateTotals(filterByRange(transactions, previous)) : null;
@@ -412,6 +428,21 @@ function App() {
   const updateBudgets = (next: Budget[]) => {
     setBudgets(next);
     if (!saveJson(BUDGETS_STORAGE_KEY, next)) notify("Could not save your budgets in this browser.");
+  };
+
+  const updateRecurringBills = (next: RecurringBill[]) => {
+    setRecurringBills(next);
+    if (!saveJson(BILLS_STORAGE_KEY, next)) notify("Could not save recurring items in this browser.");
+  };
+
+  const updateAccountPreferences = (next: AccountPreferences) => {
+    setAccountPreferences(next);
+    if (!saveJson(ACCOUNTS_STORAGE_KEY, next)) notify("Could not save account display preferences in this browser.");
+  };
+
+  const updateProjectionOpeningBalance = (value: number) => {
+    setProjectionOpeningBalance(value);
+    if (!saveJson(OPENING_BALANCE_STORAGE_KEY, value)) notify("Could not save the projection opening balance in this browser.");
   };
 
   const importFiles = async (files: FileList | File[]) => {
@@ -622,6 +653,29 @@ function App() {
       : `Category confirmed as ${decision === "accept" ? suggestion.category : target.category}.`);
   };
 
+  const resolveBulkReview = (transactionIds: string[], decision: "accept" | "confirm") => {
+    const ids = new Set(transactionIds);
+    let changed = 0;
+    setTransactions((current) => current.map((transaction) => {
+      if (!ids.has(transaction.id)) return transaction;
+      const suggestion = classifyTransaction(transaction, rules, classificationHistory, recipientProfiles);
+      if (decision === "accept" && suggestion.category === transaction.category) return transaction;
+      changed += 1;
+      return {
+        ...transaction,
+        category: decision === "accept" ? suggestion.category : transaction.category,
+        categoryLocked: true,
+        rejectedSuggestion: undefined,
+      };
+    }));
+    notify(`${changed.toLocaleString("en-NG")} review decision${changed === 1 ? "" : "s"} confirmed.`);
+  };
+
+  const acceptSuggestionAndCreateRule = (transactionId: string, rule: Omit<CategoryRule, "id" | "createdAt">) => {
+    resolveReviewCandidate(transactionId, "accept");
+    addRule(rule);
+  };
+
   const addRule = (rule: Omit<CategoryRule, "id" | "createdAt">) => {
     const created: CategoryRule = { ...rule, id: newId("rule"), createdAt: localIsoDate() };
     updateRules([...rules, created]);
@@ -710,6 +764,25 @@ function App() {
     notify("Profile removed. Unlocked transactions returned to their remaining rules and history.");
   };
 
+  /* ---------------------------------------------- recurring planning */
+
+  const saveRecurringBill = (bill: RecurringBill) => {
+    const exists = recurringBills.some((item) => item.id === bill.id);
+    updateRecurringBills(exists ? recurringBills.map((item) => item.id === bill.id ? bill : item) : [...recurringBills, bill]);
+    notify(`“${bill.name}” ${exists ? "updated" : "added to the recurring calendar"}.`);
+  };
+
+  const deleteRecurringBill = (billId: string) => {
+    const bill = recurringBills.find((item) => item.id === billId);
+    if (!bill || !window.confirm(`Delete “${bill.name}” from the recurring calendar? Existing transactions are unchanged.`)) return;
+    updateRecurringBills(recurringBills.filter((item) => item.id !== billId));
+    notify("Recurring item deleted.");
+  };
+
+  const toggleRecurringBill = (billId: string) => {
+    updateRecurringBills(recurringBills.map((bill) => bill.id === billId ? { ...bill, paused: !bill.paused || undefined } : bill));
+  };
+
   /* ---------------------------------------------- savings and betting */
 
   const createBetRecord = (bet: Omit<BetRecord, "id">) => {
@@ -772,7 +845,7 @@ function App() {
 
   const exportBackup = () => {
     downloadFile(
-      createBackup({ transactions, savingsGoals, savingsCircles, bets, rules, budgets, recipientProfiles }),
+      createBackup({ transactions, savingsGoals, savingsCircles, bets, rules, budgets, recipientProfiles, recurringBills, accountPreferences }),
       `spendwise-backup-${localIsoDate()}.json`,
       "application/json",
     );
@@ -793,6 +866,8 @@ function App() {
     updateRules(backup.rules);
     updateBudgets(backup.budgets);
     updateRecipientProfiles(backup.recipientProfiles ?? []);
+    updateRecurringBills(backup.recurringBills ?? []);
+    updateAccountPreferences(backup.accountPreferences ?? DEFAULT_ACCOUNT_PREFERENCES);
     setPeriod("all");
     notify("Backup restored.");
   };
@@ -873,8 +948,10 @@ function App() {
         <div className="nav-label">MENU</div>
         <nav className="primary-nav" aria-label="Main navigation">
           <NavButton page="overview" active={activePage} onClick={goTo} icon={<LayoutDashboard size={18} />} />
+          <NavButton page="accounts" active={activePage} onClick={goTo} icon={<Landmark size={18} />} count={sources.length || undefined} />
           <NavButton page="transactions" active={activePage} onClick={goTo} icon={<ArrowLeftRight size={18} />} count={transactions.length} />
           <NavButton page="review" active={activePage} onClick={goTo} icon={<ClipboardCheck size={18} />} count={classificationReviewQueue.length} />
+          <NavButton page="bills" active={activePage} onClick={goTo} icon={<CalendarDays size={18} />} count={recurringBills.length || undefined} />
           <NavButton page="insights" active={activePage} onClick={goTo} icon={<BarChart3 size={18} />} />
           <NavButton page="recipients" active={activePage} onClick={goTo} icon={<Users size={18} />} count={recipientProfiles.length || undefined} />
           <NavButton page="budgets" active={activePage} onClick={goTo} icon={<Target size={18} />} count={budgets.length || undefined} />
@@ -915,7 +992,7 @@ function App() {
             </section>
           )}
 
-          {!loaded && (activePage === "overview" || activePage === "transactions" || activePage === "review" || activePage === "insights" || activePage === "recipients") && (
+          {!loaded && (activePage === "overview" || activePage === "accounts" || activePage === "transactions" || activePage === "review" || activePage === "bills" || activePage === "insights" || activePage === "recipients") && (
             <div className="loading-state"><LoaderCircle className="spin" size={20} /> Loading your history…</div>
           )}
 
@@ -972,6 +1049,17 @@ function App() {
                       tint="blue"
                     />
                   </div>
+
+                  {accountSummaries.length > 1 && (
+                    <section className="overview-accounts" aria-label="Account activity summary">
+                      <div className="overview-accounts-heading"><span>ACCOUNT VISIBILITY</span><button className="subtle-link" onClick={() => goTo("accounts")}>All accounts <ArrowUpRight size={13} /></button></div>
+                      <div className="overview-account-list">{accountSummaries.slice(0, 4).map((account) => (
+                        <button key={account.name} onClick={() => { setPeriod("all"); searchTransactions(""); setSourceFilter(account.name); }}>
+                          <span className="account-mini">{initialLetter(account.name)}</span><span><strong>{account.name}</strong><small>{account.count} transactions · {account.currency}</small></span><strong>{formatCurrency(account.net, account.currency, true)}</strong>
+                        </button>
+                      ))}</div>
+                    </section>
+                  )}
 
                   {allOwnCandidates > 0 && (
                     <section className="review-banner">
@@ -1049,6 +1137,19 @@ function App() {
               )}
               <div className="page-footnote"><ShieldCheck size={14} /> Your financial records stay in this browser and are never uploaded.</div>
             </>
+          )}
+
+          {loaded && activePage === "accounts" && (
+            <AccountsPage
+              transactions={transactions}
+              preferences={accountPreferences}
+              onChange={updateAccountPreferences}
+              onOpenAccount={(account) => {
+                setPeriod("all");
+                searchTransactions("");
+                setSourceFilter(account);
+              }}
+            />
           )}
 
           {loaded && activePage === "transactions" && (
@@ -1148,14 +1249,31 @@ function App() {
             <ClassificationReviewPage
               candidates={classificationReviewQueue}
               recurringRecipients={recurringRecipients}
+              transactions={transactions}
               currency={currency}
               onAcceptSuggestion={(transactionId) => resolveReviewCandidate(transactionId, "accept")}
+              onAcceptAndCreateRule={acceptSuggestionAndCreateRule}
               onRejectSuggestion={(transactionId) => resolveReviewCandidate(transactionId, "reject")}
               onConfirmCurrent={(transactionId) => resolveReviewCandidate(transactionId, "confirm")}
+              onBulkDecision={resolveBulkReview}
+              onChooseCategory={changeCategory}
               onOpenRecipient={(name) => {
                 setPeriod("all");
                 searchTransactions(name);
               }}
+            />
+          )}
+
+          {loaded && activePage === "bills" && (
+            <BillsPage
+              bills={recurringBills}
+              accounts={sources}
+              preferences={accountPreferences}
+              startingBalance={projectionOpeningBalance}
+              onStartingBalanceChange={updateProjectionOpeningBalance}
+              onSave={saveRecurringBill}
+              onDelete={deleteRecurringBill}
+              onTogglePause={toggleRecurringBill}
             />
           )}
 
@@ -1217,7 +1335,7 @@ function App() {
             <DataPage
               rules={rules}
               transactions={transactions}
-              counts={{ transactions: transactions.length, goals: savingsGoals.length, circles: savingsCircles.length, bets: bets.length, budgets: budgets.length, profiles: recipientProfiles.length }}
+              counts={{ transactions: transactions.length, goals: savingsGoals.length, circles: savingsCircles.length, bets: bets.length, budgets: budgets.length, profiles: recipientProfiles.length, bills: recurringBills.length }}
               matchCount={(rule) => transactions.filter((transaction) => ruleMatches(rule, transaction)).length}
               onAddRule={addRule}
               onDeleteRule={(ruleId) => {
