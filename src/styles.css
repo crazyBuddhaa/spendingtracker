@@ -1086,3 +1086,247 @@ a.icon-button { text-decoration: none; }
 }
 @media (max-width: 1050px) and (min-width: 761px) { .recipient-summary { grid-template-columns: repeat(3,minmax(0,1fr)); } }
 @media (max-width: 420px) { .recipient-summary { grid-template-columns: minmax(0,1fr); } }
+
+
+/* ---------------------------------------------------------------- planning, accounts, and focused review */
+:root {
+  --mist-100: oklch(96% 0.018 175);
+  --mist-300: oklch(86% 0.045 175);
+  --mist-700: oklch(43% 0.065 175);
+  --surface-review: var(--mist-100);
+  --accent-planning: var(--mist-700);
+  --border-planning: var(--mist-300);
+}
+.sidebar { overflow-y: auto; }
+.sidebar-bottom { padding-top: 18px; }
+.metric-value,.account-money strong,.bill-metrics strong,.projection-heading h2,.account-overview-strip strong { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+.form-error { margin: 0; color: #a44438; font-size: 10px; line-height: 1.5; }
+
+/* Overview account peek */
+.overview-accounts { margin: -2px 0 15px; padding: 12px 14px; border: 1px solid #e2ebe7; border-radius: 10px; background: #f7faf9; }
+.overview-accounts-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; color: #71847b; font-size: 8px; font-weight: 700; letter-spacing: .8px; }
+.overview-account-list { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 8px; }
+.overview-account-list > button { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 8px; min-width: 0; padding: 8px; border: 0; border-radius: 7px; background: transparent; text-align: left; cursor: pointer; transition: background .15s ease; }
+.overview-account-list > button:hover { background: #edf4f0; }
+.overview-account-list > button > span:nth-child(2) { display: grid; min-width: 0; gap: 3px; }
+.overview-account-list strong { overflow: hidden; color: #3b4d43; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.overview-account-list small { color: #85938b; font-size: 8px; }
+.overview-account-list > button > strong { font-size: 10px; font-variant-numeric: tabular-nums; }
+
+/* Focused classification review */
+.review-stat-strip { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; margin-bottom: 14px; }
+.review-stat-strip > button { display: grid; gap: 5px; padding: 13px 15px; border: 1px solid #e4ebe7; border-radius: 9px; background: #fff; text-align: left; cursor: pointer; transition: border-color .15s ease, background .15s ease; }
+.review-stat-strip > button:hover,.review-stat-strip > button.active { border-color: #b7cec3; background: #f5faf7; }
+.review-stat-strip span { color: #819087; font-size: 8px; font-weight: 700; letter-spacing: .7px; }
+.review-stat-strip strong { color: #2f4539; font: 700 20px "Manrope",sans-serif; }
+.review-stat-strip small { color: #8b9890; font-size: 9px; }
+.review-panel-title { align-items: center; }
+.review-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 13px 0 10px; }
+.review-tools .search-field { flex: 1; min-width: 220px; }
+.review-bulk-bar { position: sticky; top: 73px; z-index: 4; display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin-bottom: 8px; padding: 9px 10px; border: 1px solid #cbded3; border-radius: 8px; background: #f4faf6; box-shadow: 0 5px 16px #203a2910; }
+.review-bulk-bar > strong { color: #2e5a42; font-size: 10px; }
+.review-bulk-bar > span { margin-right: auto; color: #73867a; font-size: 9px; }
+.review-bulk-bar .button { min-height: 31px; font-size: 9px; }
+.review-select-all { display: flex; align-items: center; gap: 7px; padding: 8px 2px; color: #74847a; font-size: 9px; cursor: pointer; }
+.review-select-all input,.review-row-check { width: 15px; height: 15px; accent-color: #367858; cursor: pointer; }
+.review-queue-item { grid-template-columns: 20px minmax(200px,1fr) minmax(230px,.9fr) auto; gap: 11px; margin: 0 -7px; padding: 13px 7px; border-radius: 7px; }
+.review-queue-item.is-selected { background: #f5faf7; }
+.review-row-check { align-self: start; margin-top: 7px; }
+.review-queue-category .category-select { max-width: 120px; }
+.review-queue-actions { max-width: 300px; }
+.review-queue-actions .button-text { color: #8a655d; }
+.rule-composer { width: min(100%,550px); max-height: calc(100dvh - 36px); overflow-y: auto; }
+.rule-composer > p { color: #7b8980; font-size: 10px; line-height: 1.55; }
+.rule-source-transaction { display: grid; gap: 5px; margin: 13px 0; padding: 11px 12px; border-left: 1px solid #9dbdac; background: #f5f9f6; }
+.rule-source-transaction strong { overflow-wrap: anywhere; color: #3c4f43; font-size: 10px; }
+.rule-source-transaction span { color: #819087; font-size: 9px; }
+.rule-live-preview { display: grid; gap: 5px; padding: 12px; border: 1px solid #dfe9e3; border-radius: 8px; background: #f7faf8; }
+.rule-live-preview > span { color: #7e8e84; font-size: 8px; font-weight: 700; letter-spacing: .7px; }
+.rule-live-preview > strong { color: #315d44; font-size: 13px; }
+.rule-live-preview p { margin: 0; color: #677b6e; font-size: 9px; line-height: 1.5; }
+.rule-live-preview small { overflow: hidden; color: #86948b; font-size: 8px; line-height: 1.5; }
+.rule-composer-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* Accounts */
+.accounts-page,.bills-page { display: grid; gap: 14px; }
+.accounts-page .page-heading,.bills-page .page-heading { margin-bottom: 10px; }
+.account-overview-strip { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); border: 1px solid #dfe9e4; border-radius: 10px; background: #f5f9f7; }
+.account-overview-strip > div { display: grid; gap: 5px; padding: 15px 18px; border-left: 1px solid #dfe9e4; }
+.account-overview-strip > div:first-child { border-left: 0; }
+.account-overview-strip span,.bill-metrics span { color: #768a7e; font-size: 8px; font-weight: 700; letter-spacing: .8px; }
+.account-overview-strip strong { color: #2d4538; font: 700 20px "Manrope",sans-serif; }
+.account-overview-strip small { color: #7f9186; font-size: 9px; }
+.account-display-settings { display: flex; align-items: center; flex-wrap: wrap; gap: 14px 22px; padding: 12px 16px; }
+.account-settings-title { display: flex; align-items: center; gap: 10px; margin-right: auto; color: #517261; }
+.account-settings-title > div { display: grid; gap: 3px; }
+.account-settings-title strong { color: #3b5144; font-size: 10px; }
+.account-settings-title span { color: #84948a; font-size: 9px; }
+.account-display-settings > label:not(.account-convert-toggle) { display: flex; align-items: center; gap: 7px; color: #6f8176; font-size: 9px; }
+.account-display-settings select { height: 32px; padding: 0 8px; border: 1px solid #dfe7e1; border-radius: 6px; color: #42594a; background: #fff; font-size: 10px; }
+.account-convert-toggle { display: flex; align-items: center; gap: 7px; color: #536a5b; font-size: 10px; cursor: pointer; }
+.account-convert-toggle input { width: 15px; height: 15px; accent-color: #367858; }
+.accounts-directory { padding: 17px 18px 10px; }
+.account-list { margin-top: 12px; }
+.account-list-header,.account-row { display: grid; grid-template-columns: minmax(230px,1.25fr) repeat(3,minmax(110px,.75fr)) minmax(160px,.9fr); align-items: center; gap: 12px; }
+.account-list-header { padding: 8px 4px; border-bottom: 1px solid #e8eeea; color: #92a097; font-size: 8px; font-weight: 700; letter-spacing: .6px; }
+.account-row { padding: 14px 4px; border-bottom: 1px solid #edf1ee; }
+.account-row:last-child { border-bottom: 0; }
+.account-identity { display: grid; grid-template-columns: auto minmax(0,1fr) 62px; align-items: center; gap: 9px; min-width: 0; }
+.account-monogram { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 8px; color: #3e7256; background: #eaf3ed; font-size: 11px; font-weight: 700; }
+.account-identity > div { display: grid; min-width: 0; gap: 4px; }
+.account-identity strong { overflow: hidden; color: #3a4d41; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.account-identity span { color: #89978e; font-size: 8px; }
+.account-identity select { width: 62px; height: 28px; padding: 0 4px; border: 1px solid #e2e9e4; border-radius: 5px; color: #5c7163; background: #fff; font-size: 9px; }
+.account-money { display: grid; gap: 4px; }
+.account-money > span { display: none; color: #8a998f; font-size: 8px; }
+.account-money strong { color: #46594c; font-size: 10px; white-space: nowrap; }
+.account-money small { color: #819087; font-size: 8px; }
+.account-row-actions { display: grid; justify-items: end; gap: 5px; }
+.account-row-actions .button { padding: 4px; font-size: 9px; }
+.account-row-actions label { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 4px; color: #7e8e84; font-size: 8px; }
+.account-row-actions input { width: 70px; height: 27px; padding: 0 5px; border: 1px solid #dfe7e1; border-radius: 5px; color: #42594a; background: #fff; font-size: 9px; }
+.account-footnote { display: flex; align-items: flex-start; gap: 8px; padding: 0 4px; color: #819087; font-size: 9px; line-height: 1.5; }
+.account-footnote svg { flex: 0 0 auto; }
+
+/* Recurring calendar and cash flow */
+.bill-metrics { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
+.bill-metrics > div { display: grid; gap: 6px; padding: 14px 16px; border: 1px solid #e4ebe7; border-radius: 10px; background: #fff; }
+.bill-metrics strong { color: #2d4538; font: 700 19px "Manrope",sans-serif; }
+.bill-metrics small { color: #87968c; font-size: 9px; }
+.bills-calendar-layout { display: grid; grid-template-columns: minmax(0,1.8fr) minmax(240px,.7fr); gap: 14px; }
+.bill-calendar-panel { min-width: 0; padding: 17px 18px 13px; }
+.bill-calendar-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 13px; }
+.bill-calendar-toolbar h2,.bill-day-panel h2 { margin: 0; color: #30473a; font: 700 15px "Manrope",sans-serif; }
+.calendar-nav { display: flex; align-items: center; gap: 2px; }
+.calendar-nav .button { min-height: 30px; font-size: 9px; }
+.bill-calendar { display: grid; grid-template-columns: repeat(7,minmax(0,1fr)); border-top: 1px solid #e7ede9; border-left: 1px solid #e7ede9; }
+.bill-weekday { padding: 7px 4px; border-right: 1px solid #e7ede9; border-bottom: 1px solid #e7ede9; color: #87978d; background: #f8faf8; font-size: 8px; font-weight: 700; text-align: center; text-transform: uppercase; }
+.bill-day { display: grid; grid-template-rows: auto 1fr; gap: 5px; min-width: 0; min-height: 88px; padding: 7px 5px; border: 0; border-right: 1px solid #e7ede9; border-bottom: 1px solid #e7ede9; background: #fff; text-align: left; cursor: pointer; transition: background .15s ease; }
+.bill-day:hover { background: #f6faf7; }
+.bill-day.selected { background: #edf6f0; box-shadow: inset 0 0 0 1px #8fb39e; }
+.bill-day.outside { background: #fafbfa; }
+.bill-day.outside .bill-day-number { color: #b0bab3; }
+.bill-day-number { display: grid; place-items: center; width: 21px; height: 21px; border-radius: 50%; color: #5b6d61; font-size: 9px; }
+.bill-day.today .bill-day-number { color: #fff; background: #377b58; font-weight: 700; }
+.bill-day-events { display: grid; align-content: start; gap: 3px; min-width: 0; }
+.bill-event-dot { display: flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; color: #6b7a70; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+.bill-event-dot i { width: 5px; height: 5px; flex: 0 0 5px; border-radius: 50%; background: #d58b6f; }
+.bill-event-dot.income i { background: #4c9670; }
+.bill-event-more { color: #84948a; font-size: 7px; }
+.bill-calendar-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 10px; color: #87958b; font-size: 8px; }
+.bill-calendar-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.bill-calendar-legend span:last-child { margin-left: auto; }
+.bill-calendar-legend i { width: 6px; height: 6px; border-radius: 50%; background: #d58b6f; }
+.bill-calendar-legend i.income { background: #4c9670; }
+.bill-day-panel { align-self: start; min-height: 280px; padding: 17px 16px 13px; }
+.bill-day-panel h2 { margin: 6px 0 13px; }
+.selected-bill-list { display: grid; }
+.selected-bill { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 8px; padding: 11px 0; border-top: 1px solid #edf1ee; }
+.selected-bill > strong { grid-column: 2; color: #45594b; font-size: 10px; }
+.selected-bill > div { display: grid; gap: 4px; }
+.selected-bill > div strong { color: #3d5144; font-size: 10px; }
+.selected-bill > div span { color: #89978e; font-size: 8px; text-transform: capitalize; }
+.bill-direction-icon { display: grid; place-items: center; width: 29px; height: 29px; border-radius: 8px; color: #b36f55; background: #faefeb; }
+.bill-direction-icon.income { color: #397b58; background: #eaf4ed; }
+.bill-day-empty { display: grid; justify-items: center; gap: 8px; padding: 35px 5px; color: #86a091; text-align: center; }
+.bill-day-empty strong { color: #53675a; font-size: 10px; }
+.bill-day-empty span { color: #8b998f; font-size: 9px; line-height: 1.5; }
+.bill-day-add { width: 100%; margin-top: 10px; }
+.cash-projection-panel { padding: 17px 18px 12px; }
+.projection-heading { align-items: center; }
+.projection-heading h2 { margin: 0 0 5px; color: #2e4b3a; font: 700 19px "Manrope",sans-serif; }
+.projection-heading p { margin: 0; max-width: 570px; color: #839188; font-size: 9px; line-height: 1.5; }
+.projection-controls { display: flex; align-items: flex-end; gap: 9px; }
+.projection-controls > label { display: grid; gap: 5px; color: #7e8f84; font-size: 8px; }
+.projection-controls input { width: 130px; height: 34px; padding: 0 8px; border: 1px solid #dfe7e1; border-radius: 6px; color: #42594a; background: #fff; font-size: 10px; }
+.projection-chart-wrap { margin-top: 10px; }
+.projection-chart { display: block; width: 100%; height: 190px; overflow: visible; }
+.projection-zero { stroke: #cbd7cf; stroke-width: 1; stroke-dasharray: 4 4; }
+.projection-area { fill: #dcebe2; opacity: .55; }
+.projection-line { fill: none; stroke: #377b58; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+.projection-point { stroke: #fff; stroke-width: 2; fill: #4c9670; }
+.projection-point.expense { fill: #d58b6f; }
+.projection-warning { margin: 5px 0 0; padding: 9px 11px; border-radius: 7px; color: #7c683d; background: #faf6ea; font-size: 9px; line-height: 1.5; }
+.recurring-bills-panel { padding: 17px 18px 9px; }
+.recurring-bill-list { margin-top: 10px; }
+.recurring-bill-row { display: grid; grid-template-columns: minmax(190px,1.3fr) repeat(3,minmax(105px,.75fr)) auto; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid #edf1ee; }
+.recurring-bill-row.paused { opacity: .62; }
+.recurring-bill-name { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.recurring-bill-name > div { display: grid; min-width: 0; gap: 4px; }
+.recurring-bill-name strong { overflow: hidden; color: #3b5042; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.recurring-bill-name span,.recurring-bill-row > div:not(.recurring-bill-name):not(.recurring-bill-actions) > span { color: #89978e; font-size: 8px; }
+.recurring-bill-row > div:not(.recurring-bill-name):not(.recurring-bill-actions) { display: grid; gap: 4px; }
+.recurring-bill-row > div:not(.recurring-bill-name):not(.recurring-bill-actions) > strong { color: #506257; font-size: 9px; text-transform: capitalize; }
+.recurring-bill-actions { display: flex; gap: 2px; }
+.bill-modal { width: min(100%,540px); max-height: calc(100dvh - 36px); overflow-y: auto; }
+.bill-modal > p { color: #7e8d83; font-size: 10px; line-height: 1.55; }
+
+@media (max-width: 1200px) {
+  .review-queue-item { grid-template-columns: 20px minmax(190px,1fr) minmax(200px,.85fr); }
+  .review-queue-actions { grid-column: 2 / -1; max-width: none; justify-content: flex-start; }
+  .account-list-header { display: none; }
+  .account-row { grid-template-columns: minmax(220px,1.2fr) repeat(3,minmax(95px,.7fr)); }
+  .account-row-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; }
+  .account-money > span { display: block; }
+}
+@media (max-width: 1000px) {
+  .overview-account-list { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .bills-calendar-layout { grid-template-columns: minmax(0,1fr); }
+  .bill-day-panel { min-height: 0; }
+  .selected-bill-list { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0 14px; }
+  .projection-heading { align-items: flex-start; flex-direction: column; }
+  .recurring-bill-row { grid-template-columns: minmax(180px,1.2fr) repeat(2,minmax(100px,.7fr)) auto; }
+  .recurring-bill-row > div:nth-child(4) { display: none; }
+}
+@media (max-width: 760px) {
+  .review-stat-strip,.bill-metrics { gap: 7px; }
+  .review-stat-strip > button,.bill-metrics > div { padding: 11px; }
+  .review-stat-strip strong,.bill-metrics strong { font-size: 16px; }
+  .review-tools { align-items: stretch; }
+  .review-tools .search-field { min-width: 100%; }
+  .review-bulk-bar { top: 64px; }
+  .review-bulk-bar > span { width: 100%; }
+  .review-queue-item { grid-template-columns: 20px minmax(0,1fr); }
+  .review-queue-category,.review-queue-actions { grid-column: 2; }
+  .review-queue-actions { padding-left: 0; }
+  .account-overview-strip { grid-template-columns: minmax(0,1fr); }
+  .account-overview-strip > div { padding: 12px 14px; border-left: 0; border-top: 1px solid #dfe9e4; }
+  .account-overview-strip > div:first-child { border-top: 0; }
+  .account-settings-title { width: 100%; }
+  .account-row { grid-template-columns: repeat(3,minmax(0,1fr)); gap: 11px; }
+  .account-identity { grid-column: 1 / -1; }
+  .account-row-actions { align-items: flex-end; flex-wrap: wrap; }
+  .bill-calendar-panel { padding: 14px 10px 11px; }
+  .bill-day { min-height: 69px; padding: 5px 3px; }
+  .bill-event-dot { font-size: 0; }
+  .bill-event-dot i { width: 6px; height: 6px; flex-basis: 6px; }
+  .bill-calendar-legend span:last-child { display: none; }
+  .projection-controls { width: 100%; align-items: stretch; flex-direction: column; }
+  .projection-controls input { width: 100%; }
+  .projection-controls .segmented { align-self: flex-start; }
+  .recurring-bill-row { grid-template-columns: minmax(0,1fr) auto; gap: 9px; }
+  .recurring-bill-name { grid-column: 1 / -1; }
+  .recurring-bill-row > div:nth-child(3),.recurring-bill-row > div:nth-child(4) { display: none; }
+  .recurring-bill-actions { grid-column: 2; grid-row: 2; }
+}
+@media (max-width: 520px) {
+  .overview-account-list { grid-template-columns: minmax(0,1fr); }
+  .review-stat-strip { grid-template-columns: minmax(0,1fr); }
+  .review-stat-strip > button { grid-template-columns: minmax(0,1fr) auto; align-items: center; }
+  .review-stat-strip small { grid-column: 1 / -1; }
+  .review-stat-strip strong { grid-column: 2; grid-row: 1; }
+  .review-queue-category { align-items: flex-start; flex-direction: column; }
+  .review-queue-arrow { display: none; }
+  .review-queue-actions .button { flex: 1; }
+  .bill-metrics { grid-template-columns: minmax(0,1fr); }
+  .bill-metrics > div { grid-template-columns: minmax(0,1fr) auto; align-items: center; }
+  .bill-metrics small { grid-column: 1 / -1; }
+  .selected-bill-list { grid-template-columns: minmax(0,1fr); }
+  .account-money strong { font-size: 9px; }
+  .account-display-settings { align-items: flex-start; }
+  .account-display-settings > label:not(.account-convert-toggle) { align-items: flex-start; flex-direction: column; }
+  .rule-composer-actions .button { flex: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,*::before,*::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}

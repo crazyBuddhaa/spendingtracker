@@ -15,7 +15,7 @@ const ruleMatchTypeLabels: Record<CategoryRuleMatchType, string> = {
 interface DataPageProps {
   rules: CategoryRule[];
   transactions: Transaction[];
-  counts: { transactions: number; goals: number; circles: number; bets: number; budgets: number; profiles: number };
+  counts: { transactions: number; goals: number; circles: number; bets: number; budgets: number; profiles: number; bills: number };
   matchCount: (rule: Pick<CategoryRule, "pattern" | "direction" | "matchType">) => number;
   onAddRule: (rule: Omit<CategoryRule, "id" | "createdAt">) => void;
   onDeleteRule: (ruleId: string) => void;
@@ -80,7 +80,7 @@ export default function DataPage({
         <section className="panel data-card">
           <div className="data-card-icon"><DatabaseBackup size={18} /></div>
           <h2>Backup and restore</h2>
-          <p>One file with your {counts.transactions.toLocaleString("en-NG")} transactions, {counts.profiles} recipient profile{counts.profiles === 1 ? "" : "s"}, {counts.goals} savings goal{counts.goals === 1 ? "" : "s"}, {counts.circles} circle{counts.circles === 1 ? "" : "s"}, {counts.bets} bet record{counts.bets === 1 ? "" : "s"}, {counts.budgets} budget{counts.budgets === 1 ? "" : "s"}, and {rules.length} rule{rules.length === 1 ? "" : "s"}. Restoring replaces what is in this browser.</p>
+          <p>One file with your {counts.transactions.toLocaleString("en-NG")} transactions, {counts.profiles} recipient profile{counts.profiles === 1 ? "" : "s"}, {counts.goals} savings goal{counts.goals === 1 ? "" : "s"}, {counts.circles} circle{counts.circles === 1 ? "" : "s"}, {counts.bets} bet record{counts.bets === 1 ? "" : "s"}, {counts.budgets} budget{counts.budgets === 1 ? "" : "s"}, {rules.length} rule{rules.length === 1 ? "" : "s"}, and {counts.bills} recurring item{counts.bills === 1 ? "" : "s"}. Account display preferences are included too. Restoring replaces what is in this browser.</p>
           <div className="data-actions">
             <button className="button button-primary" onClick={onExportBackup}><Download size={14} /> Download backup</button>
             <button className="button button-secondary" onClick={() => restoreInput.current?.click()}><Upload size={14} /> Restore from file</button>

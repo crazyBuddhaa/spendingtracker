@@ -25,7 +25,7 @@ For the clearest results, export statements with separate **Debit** and **Credit
 These are flexible column mappings, not certified parsers for every bank export. PDF layouts vary by bank, so review imported rows and totals. Some text-based PDF tables may still need to be exported as CSV or Excel.
 
 `sample-data/demo-transactions.csv` is fictional and can be used to try the import flow.
-The initial version displays amounts in NGN and assumes imported statements use the same currency; it does not perform foreign-exchange conversion.
+Existing dashboard reports display amounts in NGN and assume imported statements use that currency. The Accounts page can additionally label each account's native currency and show optional equivalents using manually entered fixed rates; it does not fetch live exchange rates or alter imported amounts.
 
 ### OPay statements
 
@@ -40,6 +40,14 @@ Transfers to or from your own name (in any order, at least two name parts, inclu
 - **Exclude/include** any transaction from totals, **delete** it, or **add** a manual entry (cash spending or cash sales).
 - **Periods**: last 30/90 days, this month, last month, last 12 months, this year, all time, or custom dates. When a period has no data the app shows where your history starts and ends.
 - **Re-categorise history** (Data & rules) re-runs the latest categorisation over transactions imported with an older version, without touching categories you picked by hand.
+- **Classification review** focuses on low-confidence and conflicting suggestions. Search and filter the queue, select a batch to confirm or accept, or adjust a category inline. **Accept & create rule** opens an editable match composer with a live preview of matching history and the number of unlocked categories that will change. Manual entries and hand-picked categories stay protected.
+
+## Accounts, recurring bills and cash flow
+
+- **Accounts** compares native money in, money out, net activity, transaction counts, and latest activity across accounts. Net activity is calculated from saved transactions, not a live bank balance.
+- Each account can have its own display currency. Optional converted totals use fixed rates you enter yourself, such as `1 USD = 1500 NGN`; missing rates are shown explicitly rather than guessed. Changing a currency label never changes the underlying imported amounts.
+- **Bills & cash flow** provides a month calendar for weekly, monthly, and yearly recurring expenses or income. Add, edit, pause, resume, or delete items and inspect occurrences by day.
+- The 30/60/90-day projection starts from an opening balance you enter and applies recurring items to a daily running balance. It excludes variable spending and one-off transactions, skips items without a usable conversion rate, and never creates transactions or initiates payments.
 
 ## Insights, budgets and reports
 
@@ -59,7 +67,7 @@ Transfers to or from your own name (in any order, at least two name parts, inclu
 
 ## Backups
 
-**Data & rules → Download backup** saves transactions, goals, circles, bets, recipient profiles, rules and budgets in one JSON file. **Restore from file** replaces what is in the browser.
+**Data & rules → Download backup** saves transactions, goals, circles, bets, recipient profiles, rules, budgets, recurring items, and account display preferences in one JSON file. **Restore from file** replaces what is in the browser. Older backups without the newer optional fields remain supported.
 
 ## Cloudflare Access sign-in
 
@@ -88,7 +96,7 @@ Betting analytics include all-record stake and return totals, resolved net and R
 
 ## Privacy and scope
 
-CSV, Excel, text-based PDF, and saved betting-page parsing run in the browser. Transactions are saved in that browser's IndexedDB (multi-year statements outgrow `localStorage`; data from older versions is moved over automatically), and savings goals, bets, rules, recipient profiles, and budgets in `localStorage`. Financial records and source files are not sent to a server. Cloudflare Access, when enabled, verifies sign-in identity only. Clearing browser data removes the saved history. The app does not request bank logins or connect to bank APIs. Direct bank feeds require a supported open-banking provider and a separate server-side integration.
+CSV, Excel, text-based PDF, and saved betting-page parsing run in the browser. Transactions are saved in that browser's IndexedDB (multi-year statements outgrow `localStorage`; data from older versions is moved over automatically), and savings goals, bets, rules, recipient profiles, budgets, recurring items, account display preferences, and projection settings in `localStorage`. Financial records and source files are not sent to a server. Cloudflare Access, when enabled, verifies sign-in identity only. Clearing browser data removes the saved history. The app does not request bank logins or connect to bank APIs. Direct bank feeds require a supported open-banking provider and a separate server-side integration.
 
 ## Stack
 

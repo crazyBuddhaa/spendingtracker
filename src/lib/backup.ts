@@ -1,4 +1,6 @@
-import { categoryList, type BetRecord, type Budget, type Category, type CategoryRule, type RecipientProfile, type SavingsCircle, type SavingsGoal, type Transaction } from "../types.ts";
+import { categoryList, type AccountPreferences, type BetRecord, type Budget, type Category, type CategoryRule, type RecipientProfile, type RecurringBill, type SavingsCircle, type SavingsGoal, type Transaction } from "../types.ts";
+import { normaliseAccountPreferences } from "./accounts.ts";
+import { normaliseRecurringBills } from "./recurringBills.ts";
 import { normaliseBets } from "./sportyBetImport.ts";
 import { normaliseSavingsCircles } from "./savingsCircles.ts";
 import { normaliseSavingsGoals } from "./savings.ts";
@@ -15,6 +17,8 @@ export interface BackupData {
   rules: CategoryRule[];
   budgets: Budget[];
   recipientProfiles?: RecipientProfile[];
+  recurringBills?: RecurringBill[];
+  accountPreferences?: AccountPreferences;
 }
 
 const validCategories = new Set<string>(categoryList);
@@ -64,6 +68,8 @@ export function createBackup(data: BackupData, now = new Date()): string {
     rules: data.rules,
     budgets: data.budgets,
     recipientProfiles: normaliseRecipientProfiles(data.recipientProfiles),
+    recurringBills: normaliseRecurringBills(data.recurringBills),
+    accountPreferences: normaliseAccountPreferences(data.accountPreferences),
   });
 }
 
@@ -85,5 +91,7 @@ export function readBackup(text: string): BackupData | null {
     rules: normaliseRules(backup.rules),
     budgets: normaliseBudgets(backup.budgets),
     recipientProfiles: normaliseRecipientProfiles(backup.recipientProfiles),
+    recurringBills: normaliseRecurringBills(backup.recurringBills),
+    accountPreferences: normaliseAccountPreferences(backup.accountPreferences),
   };
 }
