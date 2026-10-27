@@ -38,6 +38,24 @@ function readLocal(key: string): string | null {
   }
 }
 
+let persistenceRequested = false;
+
+/**
+ * Asks the browser not to evict saved data when the device runs low on space.
+ * Browsers may grant this silently or ignore it; a failed request is harmless.
+ */
+export async function requestPersistentStorage(): Promise<boolean> {
+  if (persistenceRequested) return false;
+  persistenceRequested = true;
+  try {
+    if (typeof navigator === "undefined" || !navigator.storage?.persist) return false;
+    if (navigator.storage.persisted && await navigator.storage.persisted()) return true;
+    return await navigator.storage.persist();
+  } catch {
+    return false;
+  }
+}
+
 /** Reads a value. A value still in localStorage from an older version is moved into IndexedDB. */
 export async function readValue(key: string): Promise<string | null> {
   const db = await openDb();

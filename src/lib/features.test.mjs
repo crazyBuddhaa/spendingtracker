@@ -14,7 +14,7 @@ import {
   findRecurringTransportPayments,
   suggestBudget,
 } from "./analytics.ts";
-import { parseStoredTransactions, serializeTransactions } from "./transactionStorage.ts";
+import { inspectStoredTransactions, parseStoredTransactions, serializeTransactions } from "./transactionStorage.ts";
 import { buildImportPreview } from "./importPreview.ts";
 import { buildClassificationHistory, classifyTransaction, classifyTransactions, getSimilarTransactionCounts } from "./transactionIntelligence.ts";
 import { detectRecurringRecipients, getClassificationReviewQueue, reclassifyHistoricalTransactions } from "./transactionReview.ts";
@@ -548,6 +548,23 @@ describe("storage and backups", () => {
     assert.equal(transaction.internalTransfer, true);
   });
 
+  it("reports damaged saved history instead of silently dropping it", () => {
+    assert.deepEqual(inspectStoredTransactions(null), { status: "empty", transactions: [], dropped: 0 });
+    assert.equal(inspectStoredTransactions("[]").status, "empty");
+
+    const corrupt = inspectStoredTransactions("{not json");
+    assert.equal(corrupt.status, "corrupt");
+    assert.match(corrupt.reason, /valid JSON/);
+    assert.equal(parseStoredTransactions("{not json").length, 0);
+
+    const stored = JSON.parse(serializeTransactions([tx({ id: "keep" })]));
+    stored.records.push(["broken"]);
+    const partial = inspectStoredTransactions(JSON.stringify(stored));
+    assert.equal(partial.status, "ok");
+    assert.equal(partial.transactions.length, 1);
+    assert.equal(partial.dropped, 1);
+  });
+
   it("creates and restores full backups and rejects other files", () => {
     const data = {
       transactions: [tx({ id: "b1", note: "x" })],
@@ -558,6 +575,7 @@ describe("storage and backups", () => {
       budgets: [{ category: "Betting", monthlyLimit: 5000 }],
       recipientProfiles: [{ id: "recipient:a", kind: "recipient", name: "Ada", aliases: ["ADA O."], relationship: "Family", category: "Rent & housing", note: "Landlord" }],
       incomeSourceOverrides: { "acme limited": "employment" },
+      projectionOpeningBalance: 125000,
     };
     const restored = readBackup(createBackup(data));
     assert.deepEqual(restored.transactions, data.transactions);
@@ -565,11 +583,14 @@ describe("storage and backups", () => {
     assert.deepEqual(restored.budgets, data.budgets);
     assert.deepEqual(restored.recipientProfiles, data.recipientProfiles);
     assert.deepEqual(restored.incomeSourceOverrides, data.incomeSourceOverrides);
+    assert.equal(restored.projectionOpeningBalance, 125000);
     const legacyBackup = JSON.parse(createBackup(data));
     delete legacyBackup.recipientProfiles;
     delete legacyBackup.incomeSourceOverrides;
+    delete legacyBackup.projectionOpeningBalance;
     assert.deepEqual(readBackup(JSON.stringify(legacyBackup)).recipientProfiles, []);
     assert.deepEqual(readBackup(JSON.stringify(legacyBackup)).incomeSourceOverrides, {});
+    assert.equal(readBackup(JSON.stringify(legacyBackup)).projectionOpeningBalance, 0);
     assert.equal(readBackup("{\"format\":\"something-else\"}"), null);
     assert.equal(readBackup("not json"), null);
     assert.deepEqual(normaliseRules([{ id: "x", pattern: "  ", category: "Business" }]), []);

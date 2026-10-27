@@ -76,7 +76,47 @@ const headerAliases = {
   type: ["type", "transaction type", "direction", "dr/cr", "debit/credit", "credit/debit"],
 } as const;
 
-function readCsvRecords(input: string): string[][] {
+/**
+ * Detects the delimiter from the first line that contains one outside quotes.
+ * Excel writes semicolon-separated CSV in many locales and some bank portals export tabs.
+ */
+function detectDelimiter(input: string): string {
+  const candidates = [",", ";", "\t"];
+  const counts = new Map<string, number>(candidates.map((candidate) => [candidate, 0]));
+  let quoted = false;
+  let sawDelimiter = false;
+
+  for (let i = 0; i < input.length; i += 1) {
+    const char = input[i];
+    if (char === '"') {
+      if (quoted && input[i + 1] === '"') i += 1;
+      else quoted = !quoted;
+      continue;
+    }
+    if (quoted) continue;
+    if (char === "\n" || char === "\r") {
+      if (sawDelimiter) break;
+      continue;
+    }
+    if (counts.has(char)) {
+      counts.set(char, (counts.get(char) ?? 0) + 1);
+      sawDelimiter = true;
+    }
+  }
+
+  let best = ",";
+  let bestCount = 0;
+  for (const candidate of candidates) {
+    const count = counts.get(candidate) ?? 0;
+    if (count > bestCount) {
+      best = candidate;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+function readCsvRecords(input: string, delimiter = ","): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
   let field = "";
@@ -91,7 +131,7 @@ function readCsvRecords(input: string): string[][] {
       } else {
         quoted = !quoted;
       }
-    } else if (char === "," && !quoted) {
+    } else if (char === delimiter && !quoted) {
       row.push(field.trim());
       field = "";
     } else if ((char === "\n" || char === "\r") && !quoted) {
@@ -200,26 +240,72 @@ function validDate(year: number, month: number, day: number): string | null {
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
-function parseAmount(value: string): number | null {
-  const cleaned = value
+/**
+ * Reads a money cell. When the file uses a decimal comma ("1.234,56"), the
+ * decimal separator is detected per value so mixed exports still parse.
+ */
+function parseAmount(value: string, decimalComma = false): number | null {
+  let cleaned = value
     .replace(/[₦$€£]/g, "")
     .replace(/^(?:NGN|N)\s*/i, "")
     .replace(/\b(?:NGN|USD|EUR|GBP)\b/gi, "")
-    .replace(/,/g, "")
+    .replace(/\s/g, "")
     .trim();
   if (!cleaned) return null;
+
   const parenthesized = /^\(.*\)$/.test(cleaned);
-  const parsed = Number(cleaned.replace(/[()]/g, "").replace(/\s/g, ""));
+  cleaned = cleaned.replace(/[()]/g, "").replace(/[^\d.,+-]/g, "");
+
+  const lastComma = cleaned.lastIndexOf(",");
+  const lastDot = cleaned.lastIndexOf(".");
+  if (lastComma >= 0 && lastDot >= 0) {
+    if (lastComma > lastDot) {
+      // 1.234,56 → dot is a thousands separator, comma is the decimal mark.
+      cleaned = `${cleaned.slice(0, lastComma).replace(/[.,]/g, "")}.${cleaned.slice(lastComma + 1)}`;
+    } else {
+      cleaned = cleaned.replace(/,/g, "");
+    }
+  } else if (lastComma >= 0) {
+    const fraction = cleaned.slice(lastComma + 1);
+    const onlyComma = cleaned.indexOf(",") === lastComma;
+    // In comma-decimal files "1234,56" is money; "1,234" stays a thousands group.
+    if (decimalComma && onlyComma && /^\d{1,2}$/.test(fraction)) {
+      cleaned = `${cleaned.slice(0, lastComma).replace(/,/g, "")}.${fraction}`;
+    } else {
+      cleaned = cleaned.replace(/,/g, "");
+    }
+  }
+
+  if (!cleaned) return null;
+  const parsed = Number(cleaned);
   if (!Number.isFinite(parsed)) return null;
   return parenthesized ? -Math.abs(parsed) : parsed;
 }
 
+/**
+ * Infers income vs spending from free text. Counterparty phrasing is checked
+ * before generic words, so "Payment from ACME" is not read as an outgoing bill.
+ */
 function inferDirection(type: string, description: string): Direction {
-  const marker = `${type} ${description}`.toLowerCase();
-  if (/\b(debit|withdraw|paid out|money out|purchase|payment|pos|transfer to|sent)\b/.test(marker)) {
+  const marker = `${type} ${description}`.toLowerCase().replace(/\s+/g, " ");
+
+  // Paying money onto a credit card is an outflow, even though it says "credit".
+  if (/\b(?:credit card (?:payment|repayment|settlement)|card (?:payment|repayment))\b/.test(marker)) {
     return "expense";
   }
-  if (/\b(credit|deposit|salary|income|refund|cashback|received|transfer from|interest)\b/.test(marker)) {
+  if (
+    /\b(?:payment|transfer|deposit|credit)\s+(?:from|in)\b/.test(marker) ||
+    /\b(?:inward|incoming)\b/.test(marker) ||
+    /\breceived\b/.test(marker)
+  ) {
+    return "income";
+  }
+  if (
+    /\b(?:debit|dr|withdraw(?:al)?|paid out|money out|purchase|pos|atm|transfer to|paid to|sent to|payment to)\b/.test(marker)
+  ) {
+    return "expense";
+  }
+  if (/\b(?:credit|cr|deposit|salary|income|refund|cashback|interest|reversal|dividend|reimburs\w*)\b/.test(marker)) {
     return "income";
   }
   return "expense";
@@ -240,7 +326,14 @@ function parseTime(value: string): string | undefined {
 }
 
 function sourceName(fileName: string): string {
-  const baseName = fileName.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim();
+  const baseName = fileName
+    .replace(/\.[^.]+$/, "")
+    .replace(/[_-]+/g, " ")
+    // Downloaded copies get " (1)" or " - Copy" appended; they are the same account.
+    .replace(/\s*\(\d+\)\s*$/, "")
+    .replace(/\s+(?:copy|kopie)(?:\s*\d+)?$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
   const normalized = baseName.toLowerCase();
   if (/\bopay\b/.test(normalized)) return "OPay";
   if (/\baccess\s*bank\b/.test(normalized) || /\baccess\b/.test(normalized)) return "Access Bank";
@@ -259,7 +352,9 @@ function stableId(date: string, description: string, amount: number, source: str
 }
 
 export function parseTransactionsCsv(text: string, fileName: string, options: CsvParseOptions = {}): ImportResult {
-  const rows = readCsvRecords(text);
+  const delimiter = detectDelimiter(text);
+  const decimalComma = delimiter !== ",";
+  const rows = readCsvRecords(text, delimiter);
   if (rows.length < 2) {
     return {
       transactions: [],
@@ -327,9 +422,9 @@ export function parseTransactionsCsv(text: string, fileName: string, options: Cs
     const debitText = map.debit >= 0 ? row[map.debit] ?? "" : "";
     const creditText = map.credit >= 0 ? row[map.credit] ?? "" : "";
     const amountText = map.amount >= 0 ? row[map.amount] ?? "" : "";
-    const debit = parseAmount(debitText);
-    const credit = parseAmount(creditText);
-    const rawAmount = map.amount >= 0 ? parseAmount(amountText) : null;
+    const debit = parseAmount(debitText, decimalComma);
+    const credit = parseAmount(creditText, decimalComma);
+    const rawAmount = map.amount >= 0 ? parseAmount(amountText, decimalComma) : null;
     const type = map.type >= 0 ? row[map.type] ?? "" : "";
     scannedRows += 1;
     if (!dateText.trim()) missingDateRows += 1;

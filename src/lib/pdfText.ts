@@ -105,6 +105,30 @@ function hasDate(value: string): boolean {
   return /\b(?:\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[/. -]\d{1,2}[/. -]\d{2,4}|\d{1,2}[-/ ][A-Za-z]{3,9}[-/ ]\d{2,4})\b/.test(value);
 }
 
+const noisePatterns = [
+  /^page \d+(?: of \d+)?$/,
+  /^of \d+$/,
+  // Only totals lines, not descriptions that happen to start with "Total".
+  /^(?:grand )?total\s*[:=]/,
+  /^(?:grand )?total (?:withdrawals?|deposits?|debits?|credits?|transactions?|amount|payments?|charges?|fees?|spent|in|out|balance)\b/,
+  /^(?:opening|closing) balance\b/,
+  /^(?:brought|carried) forward\b/,
+  /^balance (?:brought|carried) forward\b/,
+  /^(?:statement )?continued\b/,
+  /^statement of account\b/,
+];
+
+/**
+ * Footers and repeated page headers sit below the table but have no date, so they
+ * would otherwise be appended to the previous transaction's description.
+ */
+function isNoiseLine(line: PdfLine): boolean {
+  const text = normalise(line.text).replace(/[:|]+$/g, "").trim();
+  if (!text) return true;
+  if (noisePatterns.some((pattern) => pattern.test(text))) return true;
+  return /^date\b/.test(text) && /\b(?:description|details|narration|particulars)\b/.test(text);
+}
+
 function csvCell(value: string): string {
   return `"${value.replace(/"/g, '""')}"`;
 }
@@ -144,6 +168,7 @@ export function parsePdfPages(
       columns = headerColumns(lines[headerIndex]);
       if (records.length === 0) records.push(columns.map((column) => column.label));
       for (const line of lines.slice(headerIndex + 1)) {
+        if (isNoiseLine(line)) continue;
         const values = valuesForLine(line, columns);
         const dateIndex = columns.findIndex((column) => column.key === "date");
         const descriptionIndex = columns.findIndex((column) => column.key === "description");
@@ -156,6 +181,7 @@ export function parsePdfPages(
       }
     } else if (columns.length > 0) {
       for (const line of lines) {
+        if (isNoiseLine(line)) continue;
         const values = valuesForLine(line, columns);
         const dateIndex = columns.findIndex((column) => column.key === "date");
         const descriptionIndex = columns.findIndex((column) => column.key === "description");

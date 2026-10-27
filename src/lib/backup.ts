@@ -21,6 +21,8 @@ export interface BackupData {
   recurringBills?: RecurringBill[];
   accountPreferences?: AccountPreferences;
   incomeSourceOverrides?: IncomeSourceOverrides;
+  /** Starting balance used by the cash-flow projection on the Bills page. */
+  projectionOpeningBalance?: number;
 }
 
 const validCategories = new Set<string>(categoryList);
@@ -73,7 +75,12 @@ export function createBackup(data: BackupData, now = new Date()): string {
     recurringBills: normaliseRecurringBills(data.recurringBills),
     accountPreferences: normaliseAccountPreferences(data.accountPreferences),
     incomeSourceOverrides: normaliseIncomeSourceOverrides(data.incomeSourceOverrides),
+    projectionOpeningBalance: finiteOrZero(data.projectionOpeningBalance),
   });
+}
+
+function finiteOrZero(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 /** Parses a backup file; returns null when the file is not a Spendwise backup. */
@@ -97,5 +104,6 @@ export function readBackup(text: string): BackupData | null {
     recurringBills: normaliseRecurringBills(backup.recurringBills),
     accountPreferences: normaliseAccountPreferences(backup.accountPreferences),
     incomeSourceOverrides: normaliseIncomeSourceOverrides(backup.incomeSourceOverrides),
+    projectionOpeningBalance: finiteOrZero(backup.projectionOpeningBalance),
   };
 }

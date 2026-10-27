@@ -185,6 +185,51 @@ describe("transaction storage and review helpers", () => {
     assert.equal(findNewTransactions([...legacyExisting, ...added], imported).length, 0);
   });
 
+  it("reads counterparty wording before generic payment words", () => {
+    const result = parseTransactionsCsv(
+      "date,description,amount\n2026-10-01,Payment from CLIENT ACME,50000\n2026-10-02,Credit payment received,15000\n2026-10-03,Credit card payment,10000\n2026-10-04,Payment to ACME Supplies,2500",
+      "statement.csv",
+    );
+
+    assert.deepEqual(
+      result.transactions.map((transaction) => transaction.direction),
+      ["income", "income", "expense", "expense"],
+    );
+  });
+
+  it("reads semicolon exports that use a decimal comma", () => {
+    const result = parseTransactionsCsv(
+      "Date;Description;Amount;Type\n16/10/2026;Groceries;1.234,56;Debit\n17/10/2026;Salary;250000,00;Credit",
+      "european-bank.csv",
+    );
+
+    assert.equal(result.transactions.length, 2);
+    assert.equal(result.transactions[0].amount, 1234.56);
+    assert.equal(result.transactions[0].direction, "expense");
+    assert.equal(result.transactions[1].amount, 250000);
+    assert.equal(result.transactions[1].direction, "income");
+  });
+
+  it("reads tab-separated exports", () => {
+    const result = parseTransactionsCsv(
+      "Date\tDescription\tDebit\tCredit\n16/10/2026\tFuel\t8000\t",
+      "bank.tsv",
+    );
+
+    assert.equal(result.transactions.length, 1);
+    assert.equal(result.transactions[0].description, "Fuel");
+    assert.equal(result.transactions[0].amount, 8000);
+  });
+
+  it("does not treat a renamed copy of the same file as a new account", () => {
+    const text = "date,description,debit,credit\n2026-10-01,Market,1200,";
+    const original = parseTransactionsCsv(text, "GTBank statement.csv").transactions;
+    const copy = parseTransactionsCsv(text, "GTBank statement (1).csv").transactions;
+
+    assert.equal(copy[0].source, "GTBank statement");
+    assert.equal(findNewTransactions(original, copy).length, 0);
+  });
+
   it("round-trips compact local transaction storage and review flags", () => {
     const transactions = parseTransactionsCsv(
       "date,description,debit,credit\n2026-10-01,Transfer to Test User | bank,12000,",
@@ -253,6 +298,25 @@ describe("statement file imports", () => {
     assert.equal(result.transactions[0].direction, "expense");
     assert.equal(result.transactions[0].amount, 1250);
     assert.equal(result.transactions[0].category, "Food & groceries");
+  });
+
+  it("ignores totals and page footers after the transaction table", () => {
+    const item = (str, x, y) => ({ str, transform: [1, 0, 0, 1, x, y] });
+    const result = parsePdfPages([[
+      item("Date", 20, 700),
+      item("Narration", 100, 700),
+      item("Debit", 350, 700),
+      item("Credit", 445, 700),
+      item("16/10/2026", 20, 680),
+      item("POS purchase", 100, 680),
+      item("1,250.00", 350, 680),
+      item("Total withdrawals: 1,250.00", 100, 640),
+      item("Page 1 of 2", 100, 630),
+      item("Closing balance 12,345.00", 100, 620),
+    ]], "access_bank.pdf");
+
+    assert.equal(result.transactions.length, 1);
+    assert.equal(result.transactions[0].description, "POS purchase");
   });
 
   it("explains when a PDF has no selectable text", () => {
