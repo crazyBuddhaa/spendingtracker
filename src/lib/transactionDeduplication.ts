@@ -1,11 +1,22 @@
 import type { Transaction } from "../types.ts";
 
+/** Treats "GTBank", "gtbank (1)" and "GTBank - Copy" as the same statement source. */
+function normaliseAccountLabel(source: string): string {
+  return source
+    .toLowerCase()
+    .replace(/\s*\(\d+\)\s*$/, "")
+    .replace(/\s+(?:copy|kopie)(?:\s*\d+)?$/, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function transactionKey(transaction: Transaction): string {
   return [
     transaction.date,
-    transaction.description.toLowerCase(),
+    transaction.description.toLowerCase().replace(/\s+/g, " ").trim(),
     transaction.amount.toFixed(2),
-    transaction.source,
+    normaliseAccountLabel(transaction.source),
   ].join("|");
 }
 

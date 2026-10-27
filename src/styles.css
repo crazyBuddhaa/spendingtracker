@@ -247,6 +247,20 @@ h1 { margin: 9px 0 5px; color: #25352c; font: 700 24px "Manrope", sans-serif; le
 .import-notice-copy { min-width: 0; }
 .import-notice-copy strong { color: #725c2f; font-size: 10px; }
 .import-notice-copy p { margin: 5px 0 0; color: #827657; font-size: 9px; line-height: 1.5; }
+.storage-notice { align-items: flex-start; border-color: #f0d5c3; background: #fff7f1; }
+.storage-notice .import-notice-copy b { color: #8a5a33; }
+.storage-notice-actions { display: grid; gap: 8px; flex: none; align-content: start; }
+
+.crash-screen { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: #f6f7f4; }
+.crash-card { width: min(560px,100%); padding: 30px; border: 1px solid #e9ece7; border-radius: 16px; background: #fff; box-shadow: 0 18px 45px rgba(38,56,44,.08); }
+.crash-icon { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 12px; color: #a8622f; background: #fff3e8; }
+.crash-card h1 { margin: 16px 0 8px; color: #24382f; font: 800 23px "Manrope",sans-serif; letter-spacing: -.6px; }
+.crash-card p { margin: 0; color: #5f6d63; font-size: 13px; line-height: 1.6; }
+.crash-card .crash-note { margin-top: 10px; color: #317a60; }
+.crash-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
+.crash-details { margin-top: 18px; color: #7d8981; font-size: 11px; }
+.crash-details summary { cursor: pointer; }
+.crash-details pre { overflow-x: auto; margin: 8px 0 0; padding: 10px; border-radius: 8px; background: #f6f8f5; color: #4a5a4f; }
 .category-chart-layout--large { min-height: 270px; justify-content: center; gap: 38px; }
 .category-chart-layout--large .donut-wrap { width: 205px; height: 205px; flex-basis: 205px; }
 .category-chart-layout--large .donut-chart { width: 205px; height: 205px; }

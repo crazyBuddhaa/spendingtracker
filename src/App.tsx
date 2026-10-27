@@ -35,11 +35,11 @@ import {
 } from "lucide-react";
 import { transactionsToCsv } from "./lib/csv";
 import { parseStatementFile } from "./lib/statementImport";
-import { parseStoredTransactions, serializeTransactions, TRANSACTIONS_STORAGE_KEY } from "./lib/transactionStorage";
+import { inspectStoredTransactions, serializeTransactions, TRANSACTIONS_STORAGE_KEY } from "./lib/transactionStorage";
 import { findNewTransactions } from "./lib/transactionDeduplication";
 import { buildImportPreview, type ImportDateRange, type ImportMode, type ImportPreview } from "./lib/importPreview";
 import { getTransferInsights } from "./lib/transactionPatterns";
-import { readValue, writeValue } from "./lib/persistentStore";
+import { readValue, requestPersistentStorage, writeValue } from "./lib/persistentStore";
 import { applyCategoryRules, categorise, ruleMatches, similarityKey } from "./lib/categorise";
 import { normaliseRecipientProfiles, resolveTransactionParty } from "./lib/recipientProfiles";
 import { buildClassificationHistory, classifyTransaction, classifyTransactions, getSimilarTransactionCounts, type ClassificationHistory } from "./lib/transactionIntelligence";
@@ -107,6 +107,21 @@ const OPENING_BALANCE_STORAGE_KEY = "spendwise.projection-opening-balance.v1";
 const INCOME_SOURCE_OVERRIDES_STORAGE_KEY = "spendwise.income-source-overrides.v1";
 const currency = "NGN";
 
+const storageLabels: Record<string, string> = {
+  [TRANSACTIONS_STORAGE_KEY]: "Transaction history",
+  [SAVINGS_STORAGE_KEY]: "Savings goals",
+  [CIRCLES_STORAGE_KEY]: "Contribution circles",
+  [BETS_STORAGE_KEY]: "Betting records",
+  [RULES_STORAGE_KEY]: "Category rules",
+  [BUDGETS_STORAGE_KEY]: "Budgets",
+  [RECIPIENT_PROFILES_STORAGE_KEY]: "Recipient profiles",
+  [PERIOD_STORAGE_KEY]: "Selected period",
+  [BILLS_STORAGE_KEY]: "Recurring items",
+  [ACCOUNTS_STORAGE_KEY]: "Account preferences",
+  [OPENING_BALANCE_STORAGE_KEY]: "Projection opening balance",
+  [INCOME_SOURCE_OVERRIDES_STORAGE_KEY]: "Income-source labels",
+};
+
 type Page = "overview" | "accounts" | "transactions" | "review" | "bills" | "insights" | "recipients" | "budgets" | "savings" | "betting" | "data";
 
 interface PendingStatementImport {
@@ -164,9 +179,22 @@ const categoryColors: Record<Category, string> = {
 };
 
 function readJson<T>(key: string, normalise: (value: unknown) => T, fallback: T): T {
+  let raw: string | null = null;
   try {
-    return normalise(JSON.parse(localStorage.getItem(key) ?? "null"));
+    raw = localStorage.getItem(key);
+    if (raw === null) {
+      storageIssues.delete(key);
+      return fallback;
+    }
+    const value = normalise(JSON.parse(raw));
+    storageIssues.delete(key);
+    return value;
   } catch {
+    storageIssues.set(key, {
+      key,
+      raw,
+      reason: "This saved value could not be read, so defaults are shown instead.",
+    });
     return fallback;
   }
 }
@@ -177,6 +205,28 @@ function saveJson(key: string, value: unknown): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+interface StorageIssue {
+  key: string;
+  /** The value exactly as it was stored, for a recovery download. */
+  raw: string | null;
+  reason: string;
+}
+
+const storageIssues = new Map<string, StorageIssue>();
+
+function collectStorageIssues(): StorageIssue[] {
+  return [...storageIssues.values()];
+}
+
+function parseRawValue(raw: string | null): unknown {
+  if (raw === null) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
   }
 }
 
@@ -269,6 +319,8 @@ function App() {
   const [recurringBills, setRecurringBills] = useState<RecurringBill[]>(() => readJson(BILLS_STORAGE_KEY, normaliseRecurringBills, []));
   const [accountPreferences, setAccountPreferences] = useState<AccountPreferences>(() => readJson(ACCOUNTS_STORAGE_KEY, normaliseAccountPreferences, DEFAULT_ACCOUNT_PREFERENCES));
   const [projectionOpeningBalance, setProjectionOpeningBalance] = useState<number>(() => readJson(OPENING_BALANCE_STORAGE_KEY, (value) => typeof value === "number" && Number.isFinite(value) ? value : 0, 0));
+  const [storageReport, setStorageReport] = useState<StorageIssue[]>(() => collectStorageIssues());
+  const writesBlocked = useRef(storageReport.length > 0);
   const [period, setPeriod] = useState<Period>(storedPeriod.period);
   const [customRange, setCustomRange] = useState<DateRange>(storedPeriod.custom);
   const [activePage, setActivePage] = useState<Page>("overview");
@@ -308,7 +360,23 @@ function App() {
     let cancelled = false;
     void readValue(TRANSACTIONS_STORAGE_KEY).then((value) => {
       if (cancelled) return;
-      setTransactions(parseStoredTransactions(value ?? "[]"));
+      if (value !== null) void requestPersistentStorage();
+      const inspection = inspectStoredTransactions(value ?? null);
+      setTransactions(inspection.transactions);
+      if (inspection.reason || inspection.dropped > 0) {
+        // Stop saving until the user decides, otherwise the next save would overwrite
+        // records that might still be recoverable.
+        writesBlocked.current = true;
+        setStorageReport((current) => [
+          ...current.filter((issue) => issue.key !== TRANSACTIONS_STORAGE_KEY),
+          {
+            key: TRANSACTIONS_STORAGE_KEY,
+            raw: value ?? null,
+            reason: inspection.reason
+              ?? `${inspection.dropped.toLocaleString("en-NG")} saved transaction${inspection.dropped === 1 ? "" : "s"} could not be read.`,
+          },
+        ]);
+      }
       setLoaded(true);
     });
     return () => {
@@ -323,15 +391,17 @@ function App() {
       return;
     }
     const timer = window.setTimeout(() => {
+      if (writesBlocked.current) return;
       void writeValue(TRANSACTIONS_STORAGE_KEY, serializeTransactions(transactions)).then((ok) => {
-        if (!ok) notify("Could not save to this browser. Download a backup from Data & rules before closing this tab.");
+        if (ok) void requestPersistentStorage();
+        else notify("Could not save to this browser. Download a backup from Data & rules before closing this tab.");
       });
     }, 250);
     return () => window.clearTimeout(timer);
   }, [transactions, loaded, notify]);
 
   useEffect(() => {
-    saveJson(PERIOD_STORAGE_KEY, { period, custom: customRange });
+    persistJson(PERIOD_STORAGE_KEY, { period, custom: customRange });
   }, [period, customRange]);
 
   useEffect(() => {
@@ -405,35 +475,42 @@ function App() {
 
   const access = useAccessAuth();
 
+  // Never overwrite a value we could not read until the user has had a chance to
+  // download it; the storage banner explains the pause.
+  const persistJson = (key: string, value: unknown): boolean => {
+    if (writesBlocked.current) return true;
+    return saveJson(key, value);
+  };
+
   const updateSavingsGoals = (next: SavingsGoal[]) => {
     setSavingsGoals(next);
-    if (!saveJson(SAVINGS_STORAGE_KEY, next)) notify("Could not save your goals in this browser. Download a backup before closing this tab.");
+    if (!persistJson(SAVINGS_STORAGE_KEY, next)) notify("Could not save your goals in this browser. Download a backup before closing this tab.");
   };
 
   const updateSavingsCircles = (next: SavingsCircle[]) => {
     setSavingsCircles(next);
-    if (!saveJson(CIRCLES_STORAGE_KEY, next)) notify("Could not save contribution circles in this browser. Download a backup before closing this tab.");
+    if (!persistJson(CIRCLES_STORAGE_KEY, next)) notify("Could not save contribution circles in this browser. Download a backup before closing this tab.");
   };
 
   const updateBets = (next: BetRecord[]) => {
     setBets(next);
-    if (!saveJson(BETS_STORAGE_KEY, next)) notify("Could not save betting records in this browser. Download a backup before closing this tab.");
+    if (!persistJson(BETS_STORAGE_KEY, next)) notify("Could not save betting records in this browser. Download a backup before closing this tab.");
   };
 
   const updateRules = (next: CategoryRule[]) => {
     setRules(next);
-    if (!saveJson(RULES_STORAGE_KEY, next)) notify("Could not save your rules in this browser.");
+    if (!persistJson(RULES_STORAGE_KEY, next)) notify("Could not save your rules in this browser.");
   };
 
   const updateRecipientProfiles = (next: RecipientProfile[]) => {
     const normalised = normaliseRecipientProfiles(next);
     setRecipientProfiles(normalised);
-    if (!saveJson(RECIPIENT_PROFILES_STORAGE_KEY, normalised)) notify("Could not save recipient profiles in this browser.");
+    if (!persistJson(RECIPIENT_PROFILES_STORAGE_KEY, normalised)) notify("Could not save recipient profiles in this browser.");
   };
 
   const updateBudgets = (next: Budget[]) => {
     setBudgets(next);
-    if (!saveJson(BUDGETS_STORAGE_KEY, next)) notify("Could not save your budgets in this browser.");
+    if (!persistJson(BUDGETS_STORAGE_KEY, next)) notify("Could not save your budgets in this browser.");
   };
 
   const updateIncomeSourceOverride = (sourceKey: string, type: IncomeSourceType | null) => {
@@ -442,27 +519,31 @@ function App() {
     else Object.defineProperty(next, sourceKey, { value: type, enumerable: true, configurable: true, writable: true });
     const normalised = normaliseIncomeSourceOverrides(next);
     setIncomeSourceOverrides(normalised);
-    if (!saveJson(INCOME_SOURCE_OVERRIDES_STORAGE_KEY, normalised)) {
+    if (!persistJson(INCOME_SOURCE_OVERRIDES_STORAGE_KEY, normalised)) {
       notify("Could not save the income-source label in this browser. Download a backup before closing this tab.");
     }
   };
 
   const updateRecurringBills = (next: RecurringBill[]) => {
     setRecurringBills(next);
-    if (!saveJson(BILLS_STORAGE_KEY, next)) notify("Could not save recurring items in this browser.");
+    if (!persistJson(BILLS_STORAGE_KEY, next)) notify("Could not save recurring items in this browser.");
   };
 
   const updateAccountPreferences = (next: AccountPreferences) => {
     setAccountPreferences(next);
-    if (!saveJson(ACCOUNTS_STORAGE_KEY, next)) notify("Could not save account display preferences in this browser.");
+    if (!persistJson(ACCOUNTS_STORAGE_KEY, next)) notify("Could not save account display preferences in this browser.");
   };
 
   const updateProjectionOpeningBalance = (value: number) => {
     setProjectionOpeningBalance(value);
-    if (!saveJson(OPENING_BALANCE_STORAGE_KEY, value)) notify("Could not save the projection opening balance in this browser.");
+    if (!persistJson(OPENING_BALANCE_STORAGE_KEY, value)) notify("Could not save the projection opening balance in this browser.");
   };
 
   const importFiles = async (files: FileList | File[]) => {
+    if (writesBlocked.current) {
+      notify("Download the unreadable saved data or discard it before importing new statements.");
+      return;
+    }
     if (!loaded) return;
     const statementFiles = Array.from(files).filter((file) => /\.(csv|xls|xlsx|pdf)$/i.test(file.name));
     if (statementFiles.length === 0) {
@@ -773,7 +854,9 @@ function App() {
   };
 
   const deleteRecipientProfile = (profileId: string) => {
-    const nextProfiles = recipientProfiles.filter((profile) => profile.id !== profileId);
+    const profile = recipientProfiles.find((item) => item.id === profileId);
+    if (!window.confirm(`Remove${profile ? ` “${profile.name}”` : " this recipient profile"}? Unlocked transactions will be recategorised from the remaining rules and history.`)) return;
+    const nextProfiles = recipientProfiles.filter((item) => item.id !== profileId);
     updateRecipientProfiles(nextProfiles);
     const history = buildClassificationHistory(transactions, nextProfiles);
     const result = reclassifyHistoricalTransactions(transactions, rules, history, {}, nextProfiles);
@@ -812,6 +895,7 @@ function App() {
   };
 
   const deleteBetRecord = (betId: string) => {
+    if (!window.confirm("Delete this bet record? This cannot be undone.")) return;
     updateBets(bets.filter((bet) => bet.id !== betId));
     notify("Bet record deleted.");
   };
@@ -831,7 +915,9 @@ function App() {
   };
 
   const deleteSavingsGoal = (goalId: string) => {
-    updateSavingsGoals(savingsGoals.filter((goal) => goal.id !== goalId));
+    const goal = savingsGoals.find((item) => item.id === goalId);
+    if (!window.confirm(`Delete the savings goal${goal ? ` “${goal.name}”` : ""} and its contribution history? This cannot be undone.`)) return;
+    updateSavingsGoals(savingsGoals.filter((item) => item.id !== goalId));
     notify("Savings goal deleted.");
   };
 
@@ -845,7 +931,9 @@ function App() {
   };
 
   const deleteSavingsCircle = (circleId: string) => {
-    updateSavingsCircles(savingsCircles.filter((circle) => circle.id !== circleId));
+    const circle = savingsCircles.find((item) => item.id === circleId);
+    if (!window.confirm(`Delete the contribution circle${circle ? ` “${circle.name}”` : ""} and its local history? This cannot be undone.`)) return;
+    updateSavingsCircles(savingsCircles.filter((item) => item.id !== circleId));
     notify("Contribution circle and its local history deleted.");
   };
 
@@ -862,14 +950,59 @@ function App() {
 
   const exportBackup = () => {
     downloadFile(
-      createBackup({ transactions, savingsGoals, savingsCircles, bets, rules, budgets, recipientProfiles, recurringBills, accountPreferences, incomeSourceOverrides }),
+      createBackup({ transactions, savingsGoals, savingsCircles, bets, rules, budgets, recipientProfiles, recurringBills, accountPreferences, incomeSourceOverrides, projectionOpeningBalance }),
       `spendwise-backup-${localIsoDate()}.json`,
       "application/json",
     );
     notify("Backup downloaded. Keep it somewhere safe — it contains your full history.");
   };
 
+  const downloadStorageRecovery = () => {
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      note: "Raw Spendwise browser data captured because some values could not be read.",
+      entries: storageReport.map((issue) => ({
+        store: storageLabels[issue.key] ?? issue.key,
+        key: issue.key,
+        reason: issue.reason,
+        value: parseRawValue(issue.raw),
+      })),
+    };
+    downloadFile(
+      JSON.stringify(payload, null, 2),
+      `spendwise-recovery-${localIsoDate()}.json`,
+      "application/json",
+    );
+    notify("Raw saved data downloaded for recovery.");
+  };
+
+  const discardStorageIssues = () => {
+    if (!window.confirm("Discard the unreadable saved data and continue? Affected records will be replaced next time Spendwise saves. Download the raw data first if you may want to recover them.")) return;
+    storageIssues.clear();
+    writesBlocked.current = false;
+    setStorageReport([]);
+    // Write what is currently on screen so edits made during the pause survive and
+    // the same warning does not return on reload.
+    saveJson(SAVINGS_STORAGE_KEY, savingsGoals);
+    saveJson(CIRCLES_STORAGE_KEY, savingsCircles);
+    saveJson(BETS_STORAGE_KEY, bets);
+    saveJson(RULES_STORAGE_KEY, rules);
+    saveJson(RECIPIENT_PROFILES_STORAGE_KEY, recipientProfiles);
+    saveJson(BUDGETS_STORAGE_KEY, budgets);
+    saveJson(INCOME_SOURCE_OVERRIDES_STORAGE_KEY, incomeSourceOverrides);
+    saveJson(BILLS_STORAGE_KEY, recurringBills);
+    saveJson(ACCOUNTS_STORAGE_KEY, accountPreferences);
+    saveJson(OPENING_BALANCE_STORAGE_KEY, projectionOpeningBalance);
+    saveJson(PERIOD_STORAGE_KEY, { period, custom: customRange });
+    void writeValue(TRANSACTIONS_STORAGE_KEY, serializeTransactions(transactions));
+    notify("Unreadable data discarded. Saving is on again.");
+  };
+
   const restoreBackup = async (file: File) => {
+    if (writesBlocked.current) {
+      notify("Download the unreadable saved data or discard it before restoring a backup.");
+      return;
+    }
     const backup = readBackup(await file.text());
     if (!backup) {
       notify("That file is not a Spendwise backup.");
@@ -884,11 +1017,12 @@ function App() {
     updateBudgets(backup.budgets);
     updateRecipientProfiles(backup.recipientProfiles ?? []);
     setIncomeSourceOverrides(backup.incomeSourceOverrides ?? {});
-    if (!saveJson(INCOME_SOURCE_OVERRIDES_STORAGE_KEY, backup.incomeSourceOverrides ?? {})) {
+    if (!persistJson(INCOME_SOURCE_OVERRIDES_STORAGE_KEY, backup.incomeSourceOverrides ?? {})) {
       notify("The backup was restored, but income-source labels could not be saved in this browser.");
     }
     updateRecurringBills(backup.recurringBills ?? []);
     updateAccountPreferences(backup.accountPreferences ?? DEFAULT_ACCOUNT_PREFERENCES);
+    updateProjectionOpeningBalance(backup.projectionOpeningBalance ?? 0);
     setPeriod("all");
     notify("Backup restored.");
   };
@@ -1010,6 +1144,22 @@ function App() {
                 {importWarnings.map((warning, index) => <p key={`${index}-${warning}`}>{warning}</p>)}
               </div>
               <button className="icon-button" onClick={() => setImportWarnings([])} aria-label="Dismiss import notes"><X size={16} /></button>
+            </section>
+          )}
+
+          {storageReport.length > 0 && (
+            <section className="import-notice storage-notice" role="alert">
+              <div className="import-notice-copy">
+                <strong>Some saved data could not be read</strong>
+                <p>Saving is paused so these records are not overwritten. Download the raw copy first if you may want to recover it.</p>
+                {storageReport.map((issue) => (
+                  <p key={issue.key}><b>{storageLabels[issue.key] ?? issue.key}:</b> {issue.reason}</p>
+                ))}
+              </div>
+              <div className="storage-notice-actions">
+                <button className="button button-secondary" onClick={downloadStorageRecovery}><Download size={15} /> Download raw data</button>
+                <button className="button button-primary" onClick={discardStorageIssues}>Discard &amp; continue</button>
+              </div>
             </section>
           )}
 

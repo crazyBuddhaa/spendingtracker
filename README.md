@@ -9,6 +9,8 @@ npm install
 npm run dev
 ```
 
+`xlsx` is pinned to SheetJS's CDN tarball rather than the npm registry, and recent npm versions refuse remote tarballs by default. The checked-in `.npmrc` sets `allow-remote=all`; if your npm reports `EALLOWREMOTE`, run `npm install --allow-remote=all` or add that line to your user config.
+
 Build and test:
 
 ```sh
@@ -68,7 +70,9 @@ Transfers to or from your own name (in any order, at least two name parts, inclu
 
 ## Backups
 
-**Data & rules → Download backup** saves transactions, goals, circles, bets, recipient profiles, rules, budgets, recurring items, and account display preferences in one JSON file. **Restore from file** replaces what is in the browser. Older backups without the newer optional fields remain supported.
+**Data & rules → Download backup** saves transactions, goals, circles, bets, recipient profiles, rules, budgets, recurring items, account display preferences, income-source labels, and the projection opening balance in one JSON file. **Restore from file** replaces what is in the browser. Older backups without the newer optional fields remain supported.
+
+If a saved value cannot be read, Spendwise pauses saving and shows a banner offering a raw recovery download before you discard it.
 
 ## Cloudflare Access sign-in
 
@@ -97,7 +101,7 @@ Betting analytics include all-record stake and return totals, resolved net and R
 
 ## Privacy and scope
 
-CSV, Excel, text-based PDF, and saved betting-page parsing run in the browser. Transactions are saved in that browser's IndexedDB (multi-year statements outgrow `localStorage`; data from older versions is moved over automatically), and savings goals, bets, rules, recipient profiles, budgets, recurring items, account display preferences, and projection settings in `localStorage`. Financial records and source files are not sent to a server. Cloudflare Access, when enabled, verifies sign-in identity only. Clearing browser data removes the saved history. The app does not request bank logins or connect to bank APIs. Direct bank feeds require a supported open-banking provider and a separate server-side integration.
+CSV, Excel, text-based PDF, and saved betting-page parsing run in the browser. Transactions are saved in that browser's IndexedDB (multi-year statements outgrow `localStorage`; data from older versions is moved over automatically), and savings goals, bets, rules, recipient profiles, budgets, recurring items, account display preferences, and projection settings in `localStorage`. Spendwise asks the browser for persistent storage after the first successful load or save so it is less likely to be evicted. Financial records and source files are not sent to a server. Cloudflare Access, when enabled, verifies sign-in identity only. Clearing browser data removes the saved history. The app does not request bank logins or connect to bank APIs. Direct bank feeds require a supported open-banking provider and a separate server-side integration.
 
 ## Stack
 
