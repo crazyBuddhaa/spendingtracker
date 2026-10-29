@@ -3,7 +3,7 @@ import { ArrowDownLeft, ArrowUpRight, ChevronDown, FileText, LockKeyhole, Trendi
 import type { DateRange, Period } from "../lib/insights";
 import { pageTitles, periodOptions, type Change, type Page } from "../app/constants";
 
-function NavButton({ page, active, onClick, icon, count }: { page: Page; active: Page; onClick: (page: Page) => void; icon: React.ReactNode; count?: number }) {
+export function NavButton({ page, active, onClick, icon, count }: { page: Page; active: Page; onClick: (page: Page) => void; icon: React.ReactNode; count?: number }) {
   return (
     <button className={active === page ? "nav-item active" : "nav-item"} onClick={() => onClick(page)} aria-current={active === page ? "page" : undefined}>
       {icon}<span>{pageTitles[page]}</span>
@@ -12,7 +12,7 @@ function NavButton({ page, active, onClick, icon, count }: { page: Page; active:
   );
 }
 
-function PeriodSelect({
+export function PeriodSelect({
   value,
   custom,
   bounds,
@@ -50,7 +50,7 @@ function PeriodSelect({
   );
 }
 
-function MetricCard({
+export function MetricCard({
   label,
   amount,
   change,
@@ -79,7 +79,7 @@ function MetricCard({
   );
 }
 
-function EmptyState({ onImport, onDemo }: { onImport: () => void; onDemo: () => void }) {
+export function EmptyState({ onImport, onDemo }: { onImport: () => void; onDemo: () => void }) {
   return (
     <section className="empty-state">
       <div className="empty-art">

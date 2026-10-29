@@ -4,7 +4,7 @@ import { categoryColors } from "../app/constants";
 import type { getCategoryTotals, MonthTotal } from "../lib/insights";
 import type { Category } from "../types";
 
-function CashflowChart({ data, currency }: { data: MonthTotal[]; currency: string }) {
+export function CashflowChart({ data, currency }: { data: MonthTotal[]; currency: string }) {
   if (!data.length) return <div className="chart-empty"><BarChart3 size={17} />No months to chart yet</div>;
   const maxValue = Math.max(...data.flatMap((item) => [item.income, item.expenses]), 1);
   const chartHeight = 190;
@@ -45,7 +45,7 @@ function CashflowChart({ data, currency }: { data: MonthTotal[]; currency: strin
   );
 }
 
-function CategoryChart({
+export function CategoryChart({
   categories,
   currency,
   large = false,

@@ -5,7 +5,7 @@ import { formatCurrency } from "../lib/format";
 import type { calculateTotals, getCategoryTotals } from "../lib/insights";
 import type { Transaction } from "../types";
 
-function TransferReviewPanel({
+export function TransferReviewPanel({
   insights,
   currency,
   pendingCount,
@@ -57,7 +57,7 @@ function TransferReviewPanel({
   );
 }
 
-function InsightsPanel({
+export function InsightsPanel({
   count,
   topCategory,
   biggest,
@@ -91,11 +91,11 @@ function InsightsPanel({
   );
 }
 
-function InsightDetail({ icon, title, value, detail, tone }: { icon: React.ReactNode; title: string; value: string; detail: string; tone: string }) {
+export function InsightDetail({ icon, title, value, detail, tone }: { icon: React.ReactNode; title: string; value: string; detail: string; tone: string }) {
   return <div className="insight-detail-card"><span className={`insight-detail-icon ${tone}`}>{icon}</span><div className="insight-detail-copy"><span>{title}</span><strong>{value}</strong><p>{detail}</p></div></div>;
 }
 
-function summarySentence(
+export function summarySentence(
   totals: ReturnType<typeof calculateTotals>,
   topCategory: ReturnType<typeof getCategoryTotals>[number] | undefined,
   currency: string,

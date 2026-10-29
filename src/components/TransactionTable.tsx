@@ -5,7 +5,7 @@ import { formatDate } from "../lib/format";
 import { initialLetter } from "../app/constants";
 import { categoryList, type Category, type CategoryRule, type RecipientProfile, type Transaction } from "../types";
 
-function TransactionTable({
+export function TransactionTable({
   transactions,
   currency,
   showSource = false,

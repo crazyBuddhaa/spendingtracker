@@ -4,7 +4,7 @@ import { EmptyState, MetricCard, NavButton, PeriodSelect } from "./components/Ap
 import { CashflowChart, CategoryChart } from "./components/DashboardCharts";
 import { TransactionTable } from "./components/TransactionTable";
 import { InsightDetail, InsightsPanel, summarySentence, TransferReviewPanel } from "./components/InsightWidgets";
-import { initialLetter, pageTitles, relativeChange, sortNewestFirst, type Change, type Page } from "./app/constants";
+import { initialLetter, pageTitles, relativeChange, periodOptions, sortNewestFirst, type Page } from "./app/constants";
 import {
   ArrowDownLeft,
   ArrowLeftRight,

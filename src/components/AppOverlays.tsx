@@ -7,7 +7,7 @@ import type { AccessStatus } from "../useAccessAuth";
 import type { ImportDateRange, ImportMode, ImportPreview } from "../lib/importPreview";
 import { categoryList, type Category, type Direction, type Transaction } from "../types";
 
-function ImportPreviewModal({
+export function ImportPreviewModal({
   preview,
   mode,
   month,
@@ -144,7 +144,7 @@ function ImportPreviewModal({
   );
 }
 
-function AddTransactionModal({
+export function AddTransactionModal({
   currency,
   sources,
   onClose,
@@ -213,7 +213,7 @@ function AddTransactionModal({
   );
 }
 
-function PrivacyModal({ email, onClose }: { email: string | null; onClose: () => void }) {
+export function PrivacyModal({ email, onClose }: { email: string | null; onClose: () => void }) {
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className="privacy-modal" role="dialog" aria-modal="true" aria-labelledby="privacy-heading">
@@ -231,7 +231,7 @@ function PrivacyModal({ email, onClose }: { email: string | null; onClose: () =>
   );
 }
 
-function AccessCard({ status, onSignIn, onDetails }: { status: AccessStatus; onSignIn: () => void; onDetails: () => void }) {
+export function AccessCard({ status, onSignIn, onDetails }: { status: AccessStatus; onSignIn: () => void; onDetails: () => void }) {
   const checking = status.state === "checking";
   const title = checking
     ? "Checking sign-in"
