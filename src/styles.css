@@ -1461,6 +1461,40 @@ button.financial-list-row:hover { background: #f7faf7; }
 .reconcile-report-label small { grid-column: 2; color: #8a948d; font-size: 11.5px; }
 .reconcile-report-value { font-size: 14.5px; font-variant-numeric: tabular-nums; }
 .transfer-link-list { margin-top: 6px; }
+/* -------- investments (own model) -------- */
+.inv-asset-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.inv-asset { border: 1px solid #e4ebe6; border-radius: 14px; background: #fbfdfc; padding: 13px 15px; display: grid; gap: 10px; }
+.inv-asset-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.inv-asset-head > strong { font-size: 15px; color: #23322a; }
+.inv-asset-head-meta { display: inline-flex; align-items: center; gap: 8px; color: #72806f; font-size: 12px; }
+.inv-type-tag { font-style: normal; padding: 2px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 700; letter-spacing: .03em; background: #e8f0fb; color: #33548a; }
+.inv-type-crypto { background: #fdf3e0; color: #86622a; }
+.inv-type-bonds--treasury-bills { background: #eef4e9; color: #4c713a; }
+.inv-type-fixed-savings { background: #e7f2ee; color: #2d5a45; }
+.inv-type-real-estate { background: #fdeae6; color: #8f3d2c; }
+.inv-type-etfs--mutual-funds { background: #eeeafb; color: #5a4899; }
+.inv-action { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; }
+.inv-action-buy { background: #fdeae6; color: #8f3d2c; }
+.inv-action-sell, .inv-action-income { background: #e7f2ee; color: #2d5a45; }
+.inv-action-fee { background: #f0eee7; color: #6f6752; }
+.inv-asset-facts { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.inv-asset-facts > div { border: 1px solid #e9efe9; border-radius: 10px; padding: 8px 10px; background: #fff; }
+.inv-asset-facts dt { font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase; color: #8a948d; margin-bottom: 3px; }
+.inv-asset-facts dd { margin: 0; font-size: 13.5px; color: #23322a; }
+.inv-value-block { display: grid; gap: 6px; }
+.inv-value-current { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin: 0; color: #47534a; font-size: 12.5px; }
+.inv-value-current strong { font-size: 13.5px; }
+.inv-value-current em { font-style: normal; color: #8a948d; }
+.inv-value-current--unset { color: #8a948d; }
+.inv-value-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.inv-value-form input { width: 190px; }
+@media (max-width: 900px) {
+  .inv-asset-grid { grid-template-columns: minmax(0, 1fr); }
+  .inv-asset-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 520px) {
+  .inv-asset-facts { grid-template-columns: minmax(0, 1fr); }
+}
 @media (max-width: 900px) {
   .form-grid { grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
   .reconcile-snapshot-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }

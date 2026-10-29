@@ -61,6 +61,7 @@ import { normaliseIncomeSourceOverrides, type IncomeSourceOverrides, type Income
 import { downloadFile, formatCurrency, formatDate, localIsoDate, newId } from "./lib/format";
 import SavingsPage from "./SavingsPage";
 import BettingPage from "./BettingPage";
+import InvestmentsPage from "./InvestmentsPage";
 import BudgetsPage from "./BudgetsPage";
 import DataPage from "./DataPage";
 import ReconcilePage from "./components/ReconcilePage";
@@ -76,6 +77,8 @@ import { useAccessAuth } from "./useAccessAuth";
 import { normaliseSavingsGoals } from "./lib/savings";
 import { normaliseSavingsCircles } from "./lib/savingsCircles";
 import { normaliseBets } from "./lib/sportyBetImport";
+import { normaliseInvestments, type InvestmentStore } from "./lib/investments";
+import { investmentActionLabels } from "./types";
 import { parseBettingFile } from "./lib/bettingFileImport";
 import {
   calculateTotals,
@@ -99,6 +102,7 @@ import {
   type ImportDiagnostics,
   type MutationEntry,
   type MutationKind,
+  type InvestmentRecord,
   type RecipientProfile,
   type RecurringBill,
   type SavingsCircle,
@@ -121,6 +125,7 @@ const OPENING_BALANCE_STORAGE_KEY = "spendwise.projection-opening-balance.v1";
 const INCOME_SOURCE_OVERRIDES_STORAGE_KEY = "spendwise.income-source-overrides.v1";
 const SNAPSHOTS_STORAGE_KEY = "spendwise.statement-snapshots.v1";
 const AUDIT_LOG_STORAGE_KEY = "spendwise.mutation-log.v1";
+const INVESTMENTS_STORAGE_KEY = "spendwise.investments.v1";
 const currency = "NGN";
 
 const storageLabels: Record<string, string> = {
@@ -138,6 +143,7 @@ const storageLabels: Record<string, string> = {
   [INCOME_SOURCE_OVERRIDES_STORAGE_KEY]: "Income-source labels",
   [SNAPSHOTS_STORAGE_KEY]: "Statement comparisons",
   [AUDIT_LOG_STORAGE_KEY]: "Audit trail",
+  [INVESTMENTS_STORAGE_KEY]: "Investment ledger",
 };
 
 
@@ -264,6 +270,8 @@ function App() {
   const [savingsGoals, setSavingsGoals] = useState<SavingsGoal[]>(() => readJson(SAVINGS_STORAGE_KEY, normaliseSavingsGoals, []));
   const [savingsCircles, setSavingsCircles] = useState<SavingsCircle[]>(() => readJson(CIRCLES_STORAGE_KEY, normaliseSavingsCircles, []));
   const [bets, setBets] = useState<BetRecord[]>(() => readJson(BETS_STORAGE_KEY, normaliseBets, []));
+  const [investmentStore, setInvestmentStore] = useState<InvestmentStore>(() =>
+    readJson(INVESTMENTS_STORAGE_KEY, normaliseInvestments, { records: [], valuations: [] }));
   const [rules, setRules] = useState<CategoryRule[]>(() => readJson(RULES_STORAGE_KEY, normaliseRules, []));
   const [recipientProfiles, setRecipientProfiles] = useState<RecipientProfile[]>(() => readJson(RECIPIENT_PROFILES_STORAGE_KEY, normaliseRecipientProfiles, []));
   const [budgets, setBudgets] = useState<Budget[]>(() => readJson(BUDGETS_STORAGE_KEY, normaliseBudgets, []));
@@ -993,6 +1001,59 @@ function App() {
     notify("Bet record deleted.");
   };
 
+  /* ------------------------------------------ investments (own model) */
+
+  const updateInvestments = (next: InvestmentStore) => {
+    setInvestmentStore(next);
+    if (!persistJson(INVESTMENTS_STORAGE_KEY, next)) notify("Could not save the investment ledger in this browser. Download a backup before closing this tab.");
+  };
+
+  const createInvestmentRecord = (record: Omit<InvestmentRecord, "id">) => {
+    const created: InvestmentRecord = { ...record, id: newId("inv") };
+    updateInvestments({ records: [...investmentStore.records, created], valuations: investmentStore.valuations });
+    recordMutation("add", `Investment event recorded: ${investmentActionLabels[created.action]} ${created.asset} — ${formatCurrency(created.amount, currency)} (${formatDate(created.date)}, ${created.broker}).`, {
+      evidence: "Investment events live in their own ledger and never change bank-transaction totals.",
+    });
+    notify("Investment event recorded.");
+  };
+
+  const deleteInvestmentRecord = (recordId: string) => {
+    const record = investmentStore.records.find((row) => row.id === recordId);
+    if (!record) return;
+    updateInvestments({
+      records: investmentStore.records.filter((row) => row.id !== recordId),
+      valuations: investmentStore.valuations,
+    });
+    recordMutation("delete", `Investment event deleted: ${record.asset} — ${formatCurrency(record.amount, currency)} (${formatDate(record.date)}).`, {
+      evidence: "Only this ledger row was removed; sibling events and value marks for other assets were untouched.",
+    });
+    notify("Investment event deleted.");
+  };
+
+  const setAssetValuation = (asset: string, marketValue: number, asOf: string) => {
+    const key = asset.toLowerCase();
+    const existing = investmentStore.valuations.find((valuation) => valuation.asset.toLowerCase() === key && valuation.asOf === asOf);
+    const valuations = existing
+      ? investmentStore.valuations.map((valuation) => valuation.id === existing.id ? { ...valuation, marketValue } : valuation)
+      : [...investmentStore.valuations, { id: newId("val"), asset, marketValue, asOf }];
+    updateInvestments({ records: investmentStore.records, valuations });
+    recordMutation("update", `Current value marked for ${asset}: ${formatCurrency(marketValue, currency)} as of ${formatDate(asOf)}.`, {
+      evidence: "Value marks are manual; the app does not fetch live prices.",
+    });
+    notify(`Value mark saved for ${asset}.`);
+  };
+
+  const clearAssetValuation = (asset: string) => {
+    updateInvestments({
+      records: investmentStore.records,
+      valuations: investmentStore.valuations.filter((valuation) => valuation.asset.toLowerCase() !== asset.toLowerCase()),
+    });
+    recordMutation("delete", `Value marks cleared for ${asset}.`, {
+      evidence: "Recorded events for the asset are untouched.",
+    });
+    notify(`Value marks cleared for ${asset}.`);
+  };
+
   const createSavingsGoal = (name: string, targetAmount: number, startingAmount: number) => {
     const id = newId("goal");
     const date = localIsoDate();
@@ -1043,7 +1104,7 @@ function App() {
 
   const exportBackup = () => {
     downloadFile(
-      createBackup({ transactions, savingsGoals, savingsCircles, bets, rules, budgets, recipientProfiles, recurringBills, accountPreferences, incomeSourceOverrides, projectionOpeningBalance, statementSnapshots, mutationLog: auditLog }),
+      createBackup({ transactions, savingsGoals, savingsCircles, bets, rules, budgets, recipientProfiles, recurringBills, accountPreferences, incomeSourceOverrides, projectionOpeningBalance, statementSnapshots, mutationLog: auditLog, investments: investmentStore }),
       `spendwise-backup-${localIsoDate()}.json`,
       "application/json",
     );
@@ -1088,6 +1149,7 @@ function App() {
     saveJson(OPENING_BALANCE_STORAGE_KEY, projectionOpeningBalance);
     saveJson(SNAPSHOTS_STORAGE_KEY, statementSnapshots);
     saveJson(AUDIT_LOG_STORAGE_KEY, auditLog);
+    saveJson(INVESTMENTS_STORAGE_KEY, investmentStore);
     saveJson(PERIOD_STORAGE_KEY, { period, custom: customRange });
     void writeValue(TRANSACTIONS_STORAGE_KEY, serializeTransactions(transactions));
     notify("Unreadable data discarded. Saving is on again.");
@@ -1119,6 +1181,7 @@ function App() {
     updateAccountPreferences(backup.accountPreferences ?? DEFAULT_ACCOUNT_PREFERENCES);
     updateProjectionOpeningBalance(backup.projectionOpeningBalance ?? 0);
     updateStatementSnapshots(backup.statementSnapshots ?? []);
+    updateInvestments(backup.investments ?? { records: [], valuations: [] });
     recordMutation("restore", `Backup restored: ${backup.transactions.length.toLocaleString("en-NG")} transactions replaced the previous ${transactions.length.toLocaleString("en-NG")} in this browser.`, {
       evidence: "The full backup content replaced local data at your confirmation.",
     });
@@ -1225,7 +1288,11 @@ function App() {
             <div className="nav-group-label" id="nav-group-activity">Activity</div>
             <NavButton page="accounts" active={activePage} onClick={goTo} icon={<Landmark size={18} />} count={sources.length || undefined} />
             <NavButton page="transactions" active={activePage} onClick={goTo} icon={<ArrowLeftRight size={18} />} count={transactions.length} />
+          </div>
+          <div className="nav-group" role="group" aria-labelledby="nav-group-classifier">
+            <div className="nav-group-label" id="nav-group-classifier">Classifier</div>
             <NavButton page="review" active={activePage} onClick={goTo} icon={<ClipboardCheck size={18} />} count={classificationReviewQueue.length} />
+            <NavButton page="recipients" active={activePage} onClick={goTo} icon={<Users size={18} />} count={recipientProfiles.length || undefined} />
           </div>
           <div className="nav-group" role="group" aria-labelledby="nav-group-planning">
             <div className="nav-group-label" id="nav-group-planning">Planning</div>
@@ -1236,12 +1303,15 @@ function App() {
           <div className="nav-group" role="group" aria-labelledby="nav-group-analysis">
             <div className="nav-group-label" id="nav-group-analysis">Analysis</div>
             <NavButton page="insights" active={activePage} onClick={goTo} icon={<BarChart3 size={18} />} />
-            <NavButton page="recipients" active={activePage} onClick={goTo} icon={<Users size={18} />} count={recipientProfiles.length || undefined} />
+            <NavButton page="reconcile" active={activePage} onClick={goTo} icon={<ShieldCheck size={18} />} count={reconcileIssueCount || undefined} />
+          </div>
+          <div className="nav-group" role="group" aria-labelledby="nav-group-models">
+            <div className="nav-group-label" id="nav-group-models">Asset models</div>
             <NavButton page="betting" active={activePage} onClick={goTo} icon={<Ticket size={18} />} count={bets.length || undefined} />
+            <NavButton page="investments" active={activePage} onClick={goTo} icon={<TrendingUp size={18} />} count={investmentStore.records.length || undefined} />
           </div>
           <div className="nav-group" role="group" aria-labelledby="nav-group-tools">
             <div className="nav-group-label" id="nav-group-tools">Tools</div>
-            <NavButton page="reconcile" active={activePage} onClick={goTo} icon={<ShieldCheck size={18} />} count={reconcileIssueCount || undefined} />
             <NavButton page="data" active={activePage} onClick={goTo} icon={<DatabaseBackup size={18} />} count={rules.length || undefined} />
           </div>
         </nav>
@@ -1651,6 +1721,18 @@ function App() {
               onCreateCircle={createSavingsCircle}
               onUpdateCircle={updateSavingsCircle}
               onDeleteCircle={deleteSavingsCircle}
+            />
+          )}
+
+          {activePage === "investments" && (
+            <InvestmentsPage
+              records={investmentStore.records}
+              valuations={investmentStore.valuations}
+              currency={currency}
+              onAddRecord={createInvestmentRecord}
+              onDeleteRecord={deleteInvestmentRecord}
+              onSetValuation={setAssetValuation}
+              onClearValuation={clearAssetValuation}
             />
           )}
 
