@@ -764,7 +764,7 @@ export default function InsightsExtras({ transactions, allTransactions, range, c
           <div><div className="panel-kicker">ALL MONTHS</div><h2>Monthly report</h2></div>
           <button className="button button-secondary" disabled={!report.length} onClick={() => downloadFile(monthlyReportToCsv(report), "spendwise-monthly-report.csv", "text/csv;charset=utf-8")}><Download size={14} /> Export CSV</button>
         </div>
-        <p className="panel-note">Spending is shown after refunds; your own transfers between accounts and savings pots are left out.</p>
+        <p className="panel-note">Money out includes transfers to other people and is shown after refunds. Moves between your own accounts and savings pots are left out.</p>
         {report.length ? (
           <div className="simple-table-wrap report-table-wrap">
             <table className="simple-table report-table">

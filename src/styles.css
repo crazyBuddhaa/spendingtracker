@@ -135,6 +135,7 @@ h1 { margin: 9px 0 5px; color: #25352c; font: 700 24px "Manrope", sans-serif; le
 .category-amount { color: #47554c; font-weight: 600; white-space: nowrap; }
 .category-share { color: #a2aaa4; text-align: right; }
 .chart-empty { display: flex; align-items: center; gap: 7px; color: #a0a9a2; font-size: 10px; }
+.breakdown-note { margin: 10px 0 0; padding-top: 8px; border-top: 1px solid #f0f2ef; color: #7c877f; font-size: 9px; line-height: 1.5; }
 .subtle-link { display: inline-flex; align-items: center; gap: 4px; padding: 3px 0; border: 0; color: #397957; background: transparent; font-size: 9px; font-weight: 700; white-space: nowrap; cursor: pointer; }
 .subtle-link:hover { color: #215a3d; }
 

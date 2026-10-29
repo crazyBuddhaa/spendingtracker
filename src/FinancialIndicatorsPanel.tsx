@@ -75,7 +75,7 @@ export default function FinancialIndicatorsPanel({
         <Metric
           label="NET CASHFLOW"
           value={behavior.income > 0 || behavior.spending > 0 ? formatCurrency(behavior.net, currency, true) : "No activity"}
-          detail={`${behavior.transactionCount.toLocaleString("en-NG")} income and expense records in the selected period`}
+          detail={`${behavior.transactionCount.toLocaleString("en-NG")} records · ${formatCurrency(behavior.moneyOut, currency, true)} money out`}
           tone={behavior.net < 0 ? "metric-attention" : ""}
         />
         <Metric

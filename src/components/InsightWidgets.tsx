@@ -105,6 +105,6 @@ export function summarySentence(
   const rate = Math.round(totals.savingsRate);
   const start = rate >= 0
     ? `You kept ${rate}% of the ${formatCurrency(totals.income, currency)} that came in`
-    : `You spent ${formatCurrency(totals.expenses - totals.income, currency)} more than came in`;
+    : `You paid out ${formatCurrency(totals.expenses - totals.income, currency)} more than came in`;
   return `${start}${topCategory ? `, and ${topCategory.category.toLowerCase()} was your largest spending area at ${formatCurrency(topCategory.amount, currency)}.` : "."}`;
 }

@@ -10,12 +10,23 @@ export interface DateRange {
 
 export interface Totals {
   income: number;
+  /** Total money out: spending plus transfers to other people and accounts. */
   expenses: number;
   net: number;
   savingsRate: number;
   transactionCount: number;
   /** Refunds and reversals; they reduce spending instead of counting as income. */
   refunds: number;
+  /** Genuine spending: expenses excluding transfers, after refunds. */
+  spending: number;
+  /** Money sent to other people or external accounts (category "Transfers"). */
+  transfersOut: number;
+  /** Money received from other people or external accounts (category "Transfers"). */
+  transfersIn: number;
+  /** Internal-transfer legs excluded from every total. */
+  internalTransfersOut: number;
+  internalTransfersIn: number;
+  internalTransferCount: number;
 }
 
 export interface CategoryTotal {
@@ -118,31 +129,60 @@ export function getMonthlySeries(transactions: Transaction[], range: DateRange):
     cursor.setMonth(cursor.getMonth() + 1);
   }
   const byMonth = new Map(months.map((month) => [month.month, month]));
+  const spending = new Map<string, number>();
+  const transfers = new Map<string, number>();
+  const refunds = new Map<string, number>();
   for (const transaction of filterByRange(transactions, range)) {
     if (transaction.internalTransfer) continue;
-    const month = byMonth.get(transaction.date.slice(0, 7));
-    if (!month) continue;
-    if (transaction.direction === "income" && transaction.category === "Refunds") month.expenses -= transaction.amount;
-    else if (transaction.direction === "income") month.income += transaction.amount;
-    else month.expenses += transaction.amount;
+    const key = transaction.date.slice(0, 7);
+    if (!byMonth.has(key)) continue;
+    if (transaction.direction === "income") {
+      if (transaction.category === "Refunds") refunds.set(key, (refunds.get(key) ?? 0) + transaction.amount);
+      else byMonth.get(key)!.income += transaction.amount;
+    } else if (transaction.category === "Transfers") {
+      transfers.set(key, (transfers.get(key) ?? 0) + transaction.amount);
+    } else {
+      spending.set(key, (spending.get(key) ?? 0) + transaction.amount);
+    }
   }
-  for (const month of months) month.expenses = Math.max(month.expenses, 0);
+  for (const month of months) {
+    const netSpending = Math.max((spending.get(month.month) ?? 0) - (refunds.get(month.month) ?? 0), 0);
+    month.expenses = netSpending + (transfers.get(month.month) ?? 0);
+  }
   return months;
 }
 
 export function calculateTotals(transactions: Transaction[]): Totals {
   let income = 0;
-  let grossExpenses = 0;
+  let grossSpending = 0;
+  let transfersOut = 0;
+  let transfersIn = 0;
   let refunds = 0;
   let transactionCount = 0;
+  let internalTransfersOut = 0;
+  let internalTransfersIn = 0;
+  let internalTransferCount = 0;
   for (const transaction of transactions) {
-    if (transaction.internalTransfer) continue;
+    if (transaction.internalTransfer) {
+      internalTransferCount += 1;
+      if (transaction.direction === "expense") internalTransfersOut += transaction.amount;
+      else internalTransfersIn += transaction.amount;
+      continue;
+    }
     transactionCount += 1;
-    if (transaction.direction === "expense") grossExpenses += transaction.amount;
-    else if (transaction.category === "Refunds") refunds += transaction.amount;
-    else income += transaction.amount;
+    if (transaction.direction === "expense") {
+      if (transaction.category === "Transfers") transfersOut += transaction.amount;
+      else grossSpending += transaction.amount;
+    } else if (transaction.category === "Refunds") {
+      refunds += transaction.amount;
+    } else {
+      income += transaction.amount;
+      if (transaction.category === "Transfers") transfersIn += transaction.amount;
+    }
   }
-  const expenses = Math.max(grossExpenses - refunds, 0);
+  // Refunds only offset genuine spending; they do not hide transfers to other people.
+  const spending = Math.max(grossSpending - refunds, 0);
+  const expenses = spending + transfersOut;
   return {
     income,
     expenses,
@@ -150,17 +190,43 @@ export function calculateTotals(transactions: Transaction[]): Totals {
     savingsRate: income > 0 ? ((income - expenses) / income) * 100 : 0,
     transactionCount,
     refunds,
+    spending,
+    transfersOut,
+    transfersIn,
+    internalTransfersOut,
+    internalTransfersIn,
+    internalTransferCount,
   };
 }
 
 export function getCategoryTotals(transactions: Transaction[]): CategoryTotal[] {
   const map = new Map<Category, { amount: number; count: number }>();
+  let grossSpending = 0;
+  let refunds = 0;
+  let refundCount = 0;
   for (const transaction of transactions) {
-    if (transaction.direction !== "expense" || transaction.internalTransfer) continue;
+    if (transaction.internalTransfer) continue;
+    if (transaction.direction === "income") {
+      if (transaction.category === "Refunds") {
+        refunds += transaction.amount;
+        refundCount += 1;
+      }
+      continue;
+    }
+    if (transaction.category !== "Transfers") grossSpending += transaction.amount;
     const current = map.get(transaction.category) ?? { amount: 0, count: 0 };
     current.amount += transaction.amount;
     current.count += 1;
     map.set(transaction.category, current);
+  }
+  // A refund is not a spending category; show it as a credit so the breakdown still
+  // adds up to the same money-out figure as the dashboard cards.
+  const refundOffset = Math.min(refunds, grossSpending);
+  if (refundOffset > 0) {
+    const current = map.get("Refunds") ?? { amount: 0, count: 0 };
+    current.amount -= refundOffset;
+    current.count += refundCount;
+    map.set("Refunds", current);
   }
   const total = [...map.values()].reduce((sum, entry) => sum + entry.amount, 0);
   return [...map.entries()]
@@ -186,21 +252,32 @@ export function getMonthlyTotals(transactions: Transaction[], count = 6, now = n
     });
   }
   const totalsByMonth = new Map(months.map((month) => [month.month, month]));
+  const spending = new Map<string, number>();
+  const transfers = new Map<string, number>();
+  const refunds = new Map<string, number>();
   for (const transaction of transactions) {
     if (transaction.internalTransfer) continue;
-    const month = totalsByMonth.get(transaction.date.slice(0, 7));
-    if (!month) continue;
-    if (transaction.direction === "income" && transaction.category === "Refunds") month.expenses -= transaction.amount;
-    else if (transaction.direction === "income") month.income += transaction.amount;
-    else month.expenses += transaction.amount;
+    const key = transaction.date.slice(0, 7);
+    if (!totalsByMonth.has(key)) continue;
+    if (transaction.direction === "income") {
+      if (transaction.category === "Refunds") refunds.set(key, (refunds.get(key) ?? 0) + transaction.amount);
+      else totalsByMonth.get(key)!.income += transaction.amount;
+    } else if (transaction.category === "Transfers") {
+      transfers.set(key, (transfers.get(key) ?? 0) + transaction.amount);
+    } else {
+      spending.set(key, (spending.get(key) ?? 0) + transaction.amount);
+    }
   }
-  for (const month of months) month.expenses = Math.max(month.expenses, 0);
+  for (const month of months) {
+    const netSpending = Math.max((spending.get(month.month) ?? 0) - (refunds.get(month.month) ?? 0), 0);
+    month.expenses = netSpending + (transfers.get(month.month) ?? 0);
+  }
   return months;
 }
 
 export function largestExpense(transactions: Transaction[]): Transaction | undefined {
   return transactions
-    .filter((transaction) => transaction.direction === "expense" && !transaction.internalTransfer)
+    .filter((transaction) => transaction.direction === "expense" && !transaction.internalTransfer && transaction.category !== "Transfers")
     .sort((a, b) => b.amount - a.amount)[0];
 }
 

@@ -4,7 +4,7 @@ import { EmptyState, MetricCard, NavButton, PeriodSelect } from "./components/Ap
 import { CashflowChart, CategoryChart } from "./components/DashboardCharts";
 import { TransactionTable } from "./components/TransactionTable";
 import { InsightDetail, InsightsPanel, summarySentence, TransferReviewPanel } from "./components/InsightWidgets";
-import { initialLetter, pageTitles, relativeChange, periodOptions, sortNewestFirst, type Page } from "./app/constants";
+import { initialLetter, pageTitles, relativeChange, periodOptions, sortNewestFirst, type Change, type Page } from "./app/constants";
 import {
   ArrowDownLeft,
   ArrowLeftRight,
@@ -994,12 +994,22 @@ function App() {
     goTo("transactions");
   };
 
-  const activeCategories = categories.filter((item) => item.category !== "Transfers");
-  const topCategory = activeCategories[0];
+  // The money-out chart includes transfers to other people as their own slice, so its
+  // total matches the Money out card. "Spending" still means consumption only.
+  const chartCategories = categories;
+  const spendingCategories = categories.filter((item) => item.category !== "Transfers" && item.amount > 0);
+  const spendingTotal = spendingCategories.reduce((sum, item) => sum + item.amount, 0);
+  const topCategory = spendingCategories[0];
   const biggest = useMemo(() => withinPeriod
     .filter((transaction) => transaction.direction === "expense" && !transaction.internalTransfer && transaction.category !== "Transfers")
     .reduce<Transaction | undefined>((max, transaction) => (!max || transaction.amount > max.amount ? transaction : max), undefined), [withinPeriod]);
   const comparisonsAvailable = previousTotals !== null;
+  const moneyOutChange: Change = comparisonsAvailable
+    ? relativeChange(totals.expenses, previousTotals!.expenses)
+    : { text: totals.refunds ? `After ${formatCurrency(totals.refunds, currency)} in refunds` : "Across the whole period", direction: null };
+  const moneyOutDetail = totals.transfersOut > 0
+    ? { ...moneyOutChange, text: `${moneyOutChange.text} · ${formatCurrency(totals.transfersOut, currency, true)} transfers` }
+    : moneyOutChange;
   const periodHint = loaded && transactions.length > 0 && withinPeriod.length === 0;
 
   const periodControls = (
@@ -1150,7 +1160,7 @@ function App() {
                     <MetricCard
                       label="Money out"
                       amount={formatCurrency(totals.expenses, currency)}
-                      change={comparisonsAvailable ? relativeChange(totals.expenses, previousTotals!.expenses) : { text: totals.refunds ? `After ${formatCurrency(totals.refunds, currency)} in refunds` : "Across the whole period", direction: null }}
+                      change={moneyOutDetail}
                       goodWhenUp={false}
                       icon={<ArrowUpRight size={18} />}
                       tint="peach"
@@ -1203,11 +1213,11 @@ function App() {
                       <div className="panel-heading">
                         <div>
                           <div className="panel-kicker">CASH FLOW</div>
-                          <h2>Income vs. spending by month</h2>
+                          <h2>Income vs. money out by month</h2>
                         </div>
                         <div className="chart-legend">
                           <span><i className="legend-dot income-dot" /> Income</span>
-                          <span><i className="legend-dot spending-dot" /> Spending</span>
+                          <span><i className="legend-dot spending-dot" /> Money out</span>
                         </div>
                       </div>
                       <CashflowChart data={monthly} currency={currency} />
@@ -1217,14 +1227,20 @@ function App() {
                       <div className="panel-heading">
                         <div>
                           <div className="panel-kicker">WHERE IT GOES</div>
-                          <h2>Spending breakdown</h2>
+                          <h2>Money out breakdown</h2>
                         </div>
                         <button className="subtle-link" onClick={() => goTo("insights")}>Details <ArrowUpRight size={14} /></button>
                       </div>
-                      <CategoryChart categories={activeCategories} currency={currency} onSelect={(category) => {
+                      <CategoryChart categories={chartCategories} currency={currency} onSelect={(category) => {
                         searchTransactions("");
                         setCategoryFilter(category);
                       }} />
+                      <p className="breakdown-note">
+                        {totals.transfersOut > 0
+                          ? `${formatCurrency(totals.spending, currency)} spending + ${formatCurrency(totals.transfersOut, currency)} sent to other accounts = ${formatCurrency(totals.expenses, currency)} money out${totals.refunds > 0 ? `, after ${formatCurrency(totals.refunds, currency)} in refunds` : ""}.`
+                          : `${formatCurrency(totals.expenses, currency)} money out${totals.refunds > 0 ? ` after ${formatCurrency(totals.refunds, currency)} in refunds` : ""}.`}
+                        {" "}Moves between your own accounts are excluded.
+                      </p>
                     </section>
                   </div>
 
@@ -1496,18 +1512,24 @@ function App() {
                   </div>
                   <div className="insight-page-grid">
                     <section className="panel insight-category-panel">
-                      <div className="panel-heading"><div><div className="panel-kicker">SPENDING MIX</div><h2>Where your money goes</h2></div></div>
-                      <CategoryChart categories={activeCategories} currency={currency} large onSelect={(category) => {
+                      <div className="panel-heading"><div><div className="panel-kicker">MONEY OUT MIX</div><h2>Where your money goes</h2></div></div>
+                      <CategoryChart categories={chartCategories} currency={currency} large onSelect={(category) => {
                         searchTransactions("");
                         setCategoryFilter(category);
                       }} />
+                      <p className="breakdown-note">
+                        {totals.transfersOut > 0
+                          ? `${formatCurrency(totals.spending, currency)} spending + ${formatCurrency(totals.transfersOut, currency)} sent to other accounts = ${formatCurrency(totals.expenses, currency)} money out${totals.refunds > 0 ? `, after ${formatCurrency(totals.refunds, currency)} in refunds` : ""}.`
+                          : `${formatCurrency(totals.expenses, currency)} money out${totals.refunds > 0 ? ` after ${formatCurrency(totals.refunds, currency)} in refunds` : ""}.`}
+                        {" "}Moves between your own accounts are excluded.
+                      </p>
                     </section>
                     <div className="insight-side">
                       <InsightDetail
                         icon={<TrendingUp size={18} />}
                         title="Biggest spending category"
                         value={topCategory?.category ?? "No spending yet"}
-                        detail={topCategory ? `${formatCurrency(topCategory.amount, currency)} · ${Math.round(topCategory.share)}% of categorised spending (transfers to people shown separately)` : "Import transactions to find a pattern."}
+                        detail={topCategory ? `${formatCurrency(topCategory.amount, currency)} · ${spendingTotal > 0 ? Math.round((topCategory.amount / spendingTotal) * 100) : 0}% of categorised spending (transfers to people shown separately)` : "Import transactions to find a pattern."}
                         tone="mint"
                       />
                       <InsightDetail
@@ -1524,7 +1546,7 @@ function App() {
                         detail={totals.income > 0 ? `${formatCurrency(Math.max(totals.net, 0), currency)} left after recorded spending` : "Add an income transaction to calculate this."}
                         tone="lavender"
                       />
-                      <div className="insight-note"><Lightbulb size={17} /><p>Money moving between your own wallet and savings pots (OWealth, Spend & Save, Targets) is left out of every total, so the numbers show what actually came in and went out.</p></div>
+                      <div className="insight-note"><Lightbulb size={17} /><p>Money moving between your own wallet and savings pots (OWealth, Spend & Save, Targets) is left out of every total, so the numbers show what actually came in and went out. Transfers to other people are included in money out and shown as their own slice, so the breakdown still adds up.</p></div>
                     </div>
                   </div>
                   <FinancialIndicatorsPanel
@@ -1538,7 +1560,7 @@ function App() {
                     onSearch={searchTransactions}
                   />
                   <section className="panel trend-panel">
-                    <div className="panel-heading"><div><div className="panel-kicker">MONTH BY MONTH</div><h2>Cash flow trend</h2></div><div className="chart-legend"><span><i className="legend-dot income-dot" /> Income</span><span><i className="legend-dot spending-dot" /> Spending</span></div></div>
+                    <div className="panel-heading"><div><div className="panel-kicker">MONTH BY MONTH</div><h2>Cash flow trend</h2></div><div className="chart-legend"><span><i className="legend-dot income-dot" /> Income</span><span><i className="legend-dot spending-dot" /> Money out</span></div></div>
                     <CashflowChart data={monthly} currency={currency} />
                   </section>
                   <InsightsExtras transactions={withinPeriod} allTransactions={transactions} range={range} currency={currency} onSearch={searchTransactions} />

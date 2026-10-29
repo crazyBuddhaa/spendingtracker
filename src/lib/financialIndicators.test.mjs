@@ -31,11 +31,28 @@ describe("financial indicators", () => {
     assert.deepEqual(result, {
       income: 1000,
       spending: 600,
+      moneyOut: 600,
+      transfersOut: 0,
       net: 400,
       savingsRate: 40,
       spendingToIncomePercent: 60,
       transactionCount: 2,
     });
+  });
+
+  it("keeps transfers out in money out but out of the spending ratio", () => {
+    const result = getFinancialBehaviorIndicators([
+      tx({ id: "income", direction: "income", category: "Income", amount: 1000 }),
+      tx({ id: "expense", amount: 400, category: "Food & groceries" }),
+      tx({ id: "transfer", amount: 300, category: "Transfers" }),
+      tx({ id: "internal", amount: 900, category: "Transfers", internalTransfer: true }),
+      tx({ id: "refund", direction: "income", category: "Refunds", amount: 50 }),
+    ]);
+    assert.equal(result.spending, 350);
+    assert.equal(result.transfersOut, 300);
+    assert.equal(result.moneyOut, 650);
+    assert.equal(result.net, 350);
+    assert.equal(result.spendingToIncomePercent, 35);
   });
 
   it("classifies income with transparent rules and excludes refunds and own-account candidates", () => {

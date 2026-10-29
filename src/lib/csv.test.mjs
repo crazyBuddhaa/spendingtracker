@@ -140,6 +140,12 @@ describe("insights and export", () => {
       savingsRate: 80,
       transactionCount: 2,
       refunds: 0,
+      spending: 20000,
+      transfersOut: 0,
+      transfersIn: 0,
+      internalTransfersOut: 0,
+      internalTransfersIn: 0,
+      internalTransferCount: 0,
     });
     assert.equal(getCategoryTotals(transactions)[0].category, "Food & groceries");
     assert.equal(getCategoryTotals(transactions)[0].share, 100);
@@ -167,6 +173,12 @@ describe("insights and export", () => {
       savingsRate: 88,
       transactionCount: 2,
       refunds: 0,
+      spending: 0,
+      transfersOut: 12000,
+      transfersIn: 0,
+      internalTransfersOut: 4000,
+      internalTransfersIn: 0,
+      internalTransferCount: 1,
     });
     assert.equal(getCategoryTotals(transactions).find((item) => item.category === "Transfers")?.amount, 12000);
   });
