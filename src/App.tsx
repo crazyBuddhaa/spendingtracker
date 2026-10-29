@@ -4,7 +4,7 @@ import { EmptyState, MetricCard, NavButton, PeriodSelect } from "./components/Ap
 import { CashflowChart, CategoryChart } from "./components/DashboardCharts";
 import { TransactionTable } from "./components/TransactionTable";
 import { InsightDetail, InsightsPanel, summarySentence, TransferReviewPanel } from "./components/InsightWidgets";
-import { initialLetter, pageTitles, relativeChange, periodOptions, sortNewestFirst, type Page } from "./app/constants";
+import { initialLetter, pageTitles, relativeChange, periodOptions, sortNewestFirst, type Change, type Page } from "./app/constants";
 import {
   ArrowDownLeft,
   ArrowLeftRight,
@@ -47,6 +47,15 @@ import { normaliseRecipientProfiles, resolveTransactionParty } from "./lib/recip
 import { buildClassificationHistory, classifyTransaction, classifyTransactions, getSimilarTransactionCounts } from "./lib/transactionIntelligence";
 import { detectRecurringRecipients, getClassificationReviewQueue, reclassifyHistoricalTransactions } from "./lib/transactionReview";
 import { createBackup, normaliseBudgets, normaliseRules, readBackup } from "./lib/backup";
+import {
+  appendMutationEntry,
+  auditLedger,
+  matchTransfers,
+  normaliseMutationLog,
+  normaliseStatementSnapshots,
+  transferMatchWindowDays,
+  type InferredSuggestion,
+} from "./lib/reconciliation";
 import { getFeeSummary } from "./lib/analytics";
 import { normaliseIncomeSourceOverrides, type IncomeSourceOverrides, type IncomeSourceType } from "./lib/financialIndicators";
 import { downloadFile, formatCurrency, formatDate, localIsoDate, newId } from "./lib/format";
@@ -54,6 +63,7 @@ import SavingsPage from "./SavingsPage";
 import BettingPage from "./BettingPage";
 import BudgetsPage from "./BudgetsPage";
 import DataPage from "./DataPage";
+import ReconcilePage from "./components/ReconcilePage";
 import InsightsExtras from "./InsightsExtras";
 import ClassificationReviewPage from "./ClassificationReviewPage";
 import RecipientProfilesPage from "./RecipientProfilesPage";
@@ -87,11 +97,14 @@ import {
   type CategoryRule,
   type Direction,
   type ImportDiagnostics,
+  type MutationEntry,
+  type MutationKind,
   type RecipientProfile,
   type RecurringBill,
   type SavingsCircle,
   type SavingsContribution,
   type SavingsGoal,
+  type StatementSnapshot,
   type Transaction,
 } from "./types";
 
@@ -106,6 +119,8 @@ const BILLS_STORAGE_KEY = "spendwise.recurring-bills.v1";
 const ACCOUNTS_STORAGE_KEY = "spendwise.account-preferences.v1";
 const OPENING_BALANCE_STORAGE_KEY = "spendwise.projection-opening-balance.v1";
 const INCOME_SOURCE_OVERRIDES_STORAGE_KEY = "spendwise.income-source-overrides.v1";
+const SNAPSHOTS_STORAGE_KEY = "spendwise.statement-snapshots.v1";
+const AUDIT_LOG_STORAGE_KEY = "spendwise.mutation-log.v1";
 const currency = "NGN";
 
 const storageLabels: Record<string, string> = {
@@ -121,6 +136,8 @@ const storageLabels: Record<string, string> = {
   [ACCOUNTS_STORAGE_KEY]: "Account preferences",
   [OPENING_BALANCE_STORAGE_KEY]: "Projection opening balance",
   [INCOME_SOURCE_OVERRIDES_STORAGE_KEY]: "Income-source labels",
+  [SNAPSHOTS_STORAGE_KEY]: "Statement comparisons",
+  [AUDIT_LOG_STORAGE_KEY]: "Audit trail",
 };
 
 
@@ -254,6 +271,8 @@ function App() {
     readJson(INCOME_SOURCE_OVERRIDES_STORAGE_KEY, normaliseIncomeSourceOverrides, {}),
   );
   const [recurringBills, setRecurringBills] = useState<RecurringBill[]>(() => readJson(BILLS_STORAGE_KEY, normaliseRecurringBills, []));
+  const [statementSnapshots, setStatementSnapshots] = useState<StatementSnapshot[]>(() => readJson(SNAPSHOTS_STORAGE_KEY, normaliseStatementSnapshots, []));
+  const [auditLog, setAuditLog] = useState<MutationEntry[]>(() => readJson(AUDIT_LOG_STORAGE_KEY, normaliseMutationLog, []));
   const [accountPreferences, setAccountPreferences] = useState<AccountPreferences>(() => readJson(ACCOUNTS_STORAGE_KEY, normaliseAccountPreferences, DEFAULT_ACCOUNT_PREFERENCES));
   const [projectionOpeningBalance, setProjectionOpeningBalance] = useState<number>(() => readJson(OPENING_BALANCE_STORAGE_KEY, (value) => typeof value === "number" && Number.isFinite(value) ? value : 0, 0));
   const [storageReport, setStorageReport] = useState<StorageIssue[]>(() => collectStorageIssues());
@@ -391,6 +410,10 @@ function App() {
     () => new Set(recurringRecipients.flatMap((recipient) => recipient.transactionIds)),
     [recurringRecipients],
   );
+  const ledgerIssues = useMemo(() => auditLedger(transactions), [transactions]);
+  const transferIntel = useMemo(() => matchTransfers(transactions, transferMatchWindowDays), [transactions]);
+  const inferredTransactionCount = useMemo(() => transactions.filter((transaction) => transaction.inferred).length, [transactions]);
+  const reconcileIssueCount = ledgerIssues.length + transferIntel.unmatched.length + inferredTransactionCount;
 
   const visibleTransactions = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase().replace(/\s+/g, " ");
@@ -474,6 +497,29 @@ function App() {
   const updateProjectionOpeningBalance = (value: number) => {
     setProjectionOpeningBalance(value);
     if (!persistJson(OPENING_BALANCE_STORAGE_KEY, value)) notify("Could not save the projection opening balance in this browser.");
+  };
+
+  const updateStatementSnapshots = (next: StatementSnapshot[]) => {
+    setStatementSnapshots(next);
+    if (!writesBlocked.current && !saveJson(SNAPSHOTS_STORAGE_KEY, next)) notify("Could not save statement comparisons in this browser.");
+  };
+
+  /** Appends one audit entry; the log is append-only and local-only. */
+  const recordMutation = (kind: MutationKind, detail: string, options?: { ids?: string[]; evidence?: string }) => {
+    const entry: MutationEntry = {
+      id: newId("trail"),
+      at: new Date().toISOString(),
+      kind,
+      detail,
+      ...(options?.ids ? { transactionIds: options.ids } : {}),
+      ...(options?.evidence ? { evidence: options.evidence } : {}),
+    };
+    setAuditLog((current) => {
+      const next = appendMutationEntry(current, entry);
+      // The audit trail is informational, so a failed save never blocks the app.
+      if (!writesBlocked.current) saveJson(AUDIT_LOG_STORAGE_KEY, next);
+      return next;
+    });
   };
 
   const importFiles = async (files: FileList | File[]) => {
@@ -575,6 +621,10 @@ function App() {
 
     if (newTransactions.length) {
       setTransactions((current) => [...current, ...newTransactions]);
+      recordMutation("import", `${newTransactions.length.toLocaleString("en-NG")} transaction row${newTransactions.length === 1 ? "" : "s"} imported from ${pendingImport.files.map((file) => file.name).join(", ")}.`, {
+        ids: newTransactions.map((transaction) => transaction.id),
+        evidence: "Rows were appended exactly as parsed; the importer does not modify values. Skip count below covers duplicate rows.",
+      });
       if (!newTransactions.some((transaction) => filterByRange([transaction], range).length)) setPeriod("all");
       notify(`${newTransactions.length.toLocaleString("en-NG")} transaction${newTransactions.length === 1 ? "" : "s"} imported${pendingImport.skipped ? ` · ${pendingImport.skipped} skipped` : ""}${messages.length ? " · see the import notes" : ""}.`);
       setActivePage("overview");
@@ -627,6 +677,10 @@ function App() {
     if (!target) return;
     setTransactions((current) => current.map((transaction) =>
       transaction.id === transactionId ? { ...transaction, category, categoryLocked: true, rejectedSuggestion: undefined } : transaction));
+    recordMutation("update", `Category set to “${category}” on “${target.description}” (${formatDate(target.date)}, ${target.source}).`, {
+      ids: [transactionId],
+      evidence: `Previous category: ${target.category}. Category locked so automatic rules skip it.`,
+    });
     const pattern = similarityKey(target.description);
     if (pattern.length < 3) return;
     const probe = { id: "", pattern, category, direction: target.direction, createdAt: "" };
@@ -664,6 +718,10 @@ function App() {
     setTransactions((current) => current.map((transaction) => ids.has(transaction.id)
       ? { ...transaction, category: bulkCategory, categoryLocked: true, rejectedSuggestion: undefined }
       : transaction));
+    recordMutation("update", `Bulk category “${bulkCategory}” applied to ${applied.toLocaleString("en-NG")} transaction${applied === 1 ? "" : "s"}; ${changed.toLocaleString("en-NG")} categor${changed === 1 ? "y" : "ies"} actually changed.`, {
+      ids: [...ids],
+      evidence: "Each affected row is now category-locked.",
+    });
     setSelectedTransactionIds(new Set());
     notify(`${applied.toLocaleString("en-NG")} transaction${applied === 1 ? "" : "s"} set to ${bulkCategory} · ${changed.toLocaleString("en-NG")} categor${changed === 1 ? "y" : "ies"} changed.`);
   };
@@ -683,6 +741,12 @@ function App() {
       }
       return { ...transaction, categoryLocked: true, rejectedSuggestion: undefined };
     }));
+    recordMutation("update", decision === "reject"
+      ? `Suggestion “${suggestion.category}” rejected for “${target.description}” (${formatDate(target.date)}); the payee learns to keep “${target.category}”.`
+      : `Classification confirmed as “${decision === "accept" ? suggestion.category : target.category}” on “${target.description}” (${formatDate(target.date)}).`, {
+      ids: [transactionId],
+      evidence: `Classifier had suggested “${suggestion.category}” at ${Math.round(suggestion.confidence * 100)}% (${suggestion.reason}).`,
+    });
     notify(decision === "reject"
       ? `Suggestion rejected. Future matches for this payee will learn ${target.category}.`
       : `Category confirmed as ${decision === "accept" ? suggestion.category : target.category}.`);
@@ -704,6 +768,9 @@ function App() {
       };
     }));
     notify(`${changed.toLocaleString("en-NG")} review decision${changed === 1 ? "" : "s"} confirmed.`);
+    recordMutation("update", `${changed.toLocaleString("en-NG")} review decision${changed === 1 ? "" : "s"} confirmed (${decision === "accept" ? "suggested categories accepted" : "current categories locked"}).`, {
+      ids: transactionIds,
+    });
   };
 
   const acceptSuggestionAndCreateRule = (transactionId: string, rule: Omit<CategoryRule, "id" | "createdAt">) => {
@@ -717,6 +784,11 @@ function App() {
     const next = applyCategoryRules(transactions, [created]);
     const changed = next.filter((transaction, index) => transaction !== transactions[index]).length;
     setTransactions(next);
+    if (!changed) return;
+    recordMutation("update", `Rule “${rule.pattern}” → “${rule.category}” affected ${changed.toLocaleString("en-NG")} unlocked transaction${changed === 1 ? "" : "s"}.`, {
+      ids: next.filter((transaction, index) => transaction !== transactions[index]).map((transaction) => transaction.id),
+      evidence: "Locked manual categories and manual entries were left untouched.",
+    });
     notify(`Rule saved · ${changed.toLocaleString("en-NG")} transaction${changed === 1 ? "" : "s"} updated.`);
   };
 
@@ -727,6 +799,7 @@ function App() {
   };
 
   const toggleInternal = (transactionId: string) => {
+    const target = transactions.find((transaction) => transaction.id === transactionId);
     setTransactions((current) => current.map((transaction) => {
       if (transaction.id !== transactionId) return transaction;
       if (transaction.internalTransfer) {
@@ -738,6 +811,14 @@ function App() {
       }
       return { ...transaction, internalTransfer: true, ownAccountCandidate: false, category: "Transfers" };
     }));
+    if (target) {
+      recordMutation("update", `“${target.description}” (${formatDate(target.date)}) is ${target.internalTransfer ? "counted in totals again" : "marked as your own money moving between accounts and excluded from totals"}.`, {
+        ids: [transactionId],
+        evidence: target.internalTransfer
+          ? "Internal mark removed; category returned to its rule-based value where allowed."
+          : "Internal transfers never change the underlying amounts, only which totals include them.",
+      });
+    }
   };
 
   const confirmAllOwnTransfers = () => {
@@ -747,17 +828,31 @@ function App() {
       transaction.ownAccountCandidate && !transaction.internalTransfer
         ? { ...transaction, internalTransfer: true, ownAccountCandidate: false, category: "Transfers" }
         : transaction));
+    const confirmedIds = transactions.filter((transaction) => transaction.ownAccountCandidate && !transaction.internalTransfer).map((transaction) => transaction.id);
+    recordMutation("update", `${confirmedIds.length.toLocaleString("en-NG")} own-account transfer candidate${confirmedIds.length === 1 ? "" : "s"} confirmed as internal and excluded from totals.`, {
+      ids: confirmedIds,
+      evidence: "Confirmations rely on the own-name, own-account-number, and own-card checks in the importer; totals no longer include them.",
+    });
     notify(`${allOwnCandidates.toLocaleString("en-NG")} transfers between your own accounts are now excluded from totals.`);
   };
 
   const deleteTransaction = (transactionId: string) => {
     if (!window.confirm("Delete this transaction from your history?")) return;
+    const target = transactions.find((transaction) => transaction.id === transactionId);
     setTransactions((current) => current.filter((transaction) => transaction.id !== transactionId));
+    recordMutation("delete", `Deleted “${target?.description ?? transactionId}” (${target ? `${formatDate(target.date)}, ${formatCurrency(target.amount, currency)}` : "record not found for this report"}).`, {
+      ids: [transactionId],
+      evidence: "Deletion removes it from totals. The statement file itself is never touched; re-importing restores the row.",
+    });
     notify("Transaction deleted.");
   };
 
   const addManualTransaction = (transaction: Omit<Transaction, "id">) => {
-    setTransactions((current) => [...current, { ...transaction, id: newId("manual"), manual: true, categoryLocked: true }]);
+    const created: Transaction = { ...transaction, id: newId("manual"), manual: true, categoryLocked: true };
+    setTransactions((current) => [...current, created]);
+    recordMutation("add", `Manual entry added: “${created.description}” ${created.direction === "income" ? "+" : "−"}${formatCurrency(created.amount, currency)} (${formatDate(created.date)}).`, {
+      ids: [created.id],
+    });
     setShowAddTransaction(false);
     if (!filterByRange([{ ...transaction, id: "" }], range).length) setPeriod("all");
     notify("Transaction added.");
@@ -778,6 +873,10 @@ function App() {
     if (!window.confirm(`Reclassify up to ${eligible.toLocaleString("en-NG")} unlocked transactions in ${rangeText}? Hand-picked categories and manual entries will stay unchanged.`)) return;
     const result = reclassifyHistoricalTransactions(transactions, rules, classificationHistory, { start: startDate, end: endDate }, recipientProfiles);
     setTransactions(result.transactions);
+    recordMutation("update", `History re-classification across ${rangeText}: ${result.changed.toLocaleString("en-NG")} categor${result.changed === 1 ? "y" : "ies"} of ${result.eligible.toLocaleString("en-NG")} eligible transactions.`, {
+      ids: result.transactions.filter((transaction, index) => transaction !== transactions[index]).map((transaction) => transaction.id),
+      evidence: "Hand-picked categories and manual entries were not touched.",
+    });
     notify(`${result.changed.toLocaleString("en-NG")} categor${result.changed === 1 ? "y" : "ies"} changed across ${result.eligible.toLocaleString("en-NG")} eligible transactions.`);
   };
 
@@ -787,6 +886,9 @@ function App() {
     const history = buildClassificationHistory(transactions, nextProfiles);
     const result = reclassifyHistoricalTransactions(transactions, rules, history, {}, nextProfiles);
     setTransactions(result.transactions);
+    recordMutation("update", `Recipient profile “${profile.name}” saved; ${result.changed.toLocaleString("en-NG")} unlocked categor${result.changed === 1 ? "y" : "ies"} refreshed.`, {
+      evidence: "Aliases from the statement variants feed the same identity; locked manual categories were not overwritten.",
+    });
     notify(`Profile saved · ${result.changed.toLocaleString("en-NG")} unlocked categor${result.changed === 1 ? "y" : "ies"} refreshed.`);
   };
 
@@ -799,6 +901,60 @@ function App() {
     const result = reclassifyHistoricalTransactions(transactions, rules, history, {}, nextProfiles);
     setTransactions(result.transactions);
     notify("Profile removed. Unlocked transactions returned to their remaining rules and history.");
+  };
+
+  /* -------------------------------------------- transparency & reconciliation */
+
+  const saveStatementSnapshot = (snapshot: Omit<StatementSnapshot, "id" | "createdAt">) => {
+    const created: StatementSnapshot = { ...snapshot, id: newId("snap"), createdAt: new Date().toISOString() };
+    updateStatementSnapshots([...statementSnapshots, created]);
+    recordMutation("update", `Statement comparison added for ${snapshot.account}, ${formatDate(snapshot.periodStart)} – ${formatDate(snapshot.periodEnd)}.`, {
+      evidence: "Declared balances and totals live only in this browser and are compared against recorded rows.",
+    });
+    notify("Statement period saved for comparison.");
+  };
+
+  const deleteStatementSnapshot = (snapshotId: string) => {
+    const snapshot = statementSnapshots.find((item) => item.id === snapshotId);
+    const confirmed = snapshot && `${snapshot.account} (${formatDate(snapshot.periodStart)} – ${formatDate(snapshot.periodEnd)})`;
+    updateStatementSnapshots(statementSnapshots.filter((item) => item.id !== snapshotId));
+    recordMutation("delete", `Statement comparison removed${confirmed ? ` for ${confirmed}` : ""}.`, {
+      evidence: "Only the declared figures were removed; recorded transactions are untouched.",
+    });
+    notify("Comparison removed. Recorded transactions are unchanged.");
+  };
+
+  const addInferredTransaction = (suggestion: InferredSuggestion) => {
+    const note = `Inferred by reconciliation: ${suggestion.basis}`.slice(0, 280);
+    const created: Transaction = {
+      id: newId("inferred"),
+      date: suggestion.date,
+      description: suggestion.description,
+      amount: suggestion.amount,
+      direction: suggestion.direction,
+      category: suggestion.direction === "income" ? "Income" : "Other",
+      source: suggestion.account,
+      inferred: true,
+      note,
+    };
+    setTransactions((current) => [...current, created]);
+    recordMutation("inferred-add", `Inferred record accepted: “${suggestion.description}” ${suggestion.direction === "income" ? "+" : "−"}${formatCurrency(suggestion.amount, currency)} on ${formatDate(suggestion.date)} in ${suggestion.account}.`, {
+      ids: [created.id],
+      evidence: suggestion.basis,
+    });
+    notify("Added as an inferred record. It stays labelled until you verify it.");
+  };
+
+  const verifyInferredTransaction = (transactionId: string) => {
+    const target = transactions.find((transaction) => transaction.id === transactionId && transaction.inferred);
+    if (!target) return;
+    setTransactions((current) => current.map((transaction) =>
+      transaction.id === transactionId ? { ...transaction, inferred: false } : transaction));
+    recordMutation("verify", `Inferred record “${target.description}” (${formatDate(target.date)}, ${formatCurrency(target.amount, currency)}) verified as an original record by you.`, {
+      ids: [transactionId],
+      evidence: target.note ?? undefined,
+    });
+    notify("Verified. The record now counts like any original row.");
   };
 
   /* ---------------------------------------------- recurring planning */
@@ -887,7 +1043,7 @@ function App() {
 
   const exportBackup = () => {
     downloadFile(
-      createBackup({ transactions, savingsGoals, savingsCircles, bets, rules, budgets, recipientProfiles, recurringBills, accountPreferences, incomeSourceOverrides, projectionOpeningBalance }),
+      createBackup({ transactions, savingsGoals, savingsCircles, bets, rules, budgets, recipientProfiles, recurringBills, accountPreferences, incomeSourceOverrides, projectionOpeningBalance, statementSnapshots, mutationLog: auditLog }),
       `spendwise-backup-${localIsoDate()}.json`,
       "application/json",
     );
@@ -930,6 +1086,8 @@ function App() {
     saveJson(BILLS_STORAGE_KEY, recurringBills);
     saveJson(ACCOUNTS_STORAGE_KEY, accountPreferences);
     saveJson(OPENING_BALANCE_STORAGE_KEY, projectionOpeningBalance);
+    saveJson(SNAPSHOTS_STORAGE_KEY, statementSnapshots);
+    saveJson(AUDIT_LOG_STORAGE_KEY, auditLog);
     saveJson(PERIOD_STORAGE_KEY, { period, custom: customRange });
     void writeValue(TRANSACTIONS_STORAGE_KEY, serializeTransactions(transactions));
     notify("Unreadable data discarded. Saving is on again.");
@@ -960,6 +1118,10 @@ function App() {
     updateRecurringBills(backup.recurringBills ?? []);
     updateAccountPreferences(backup.accountPreferences ?? DEFAULT_ACCOUNT_PREFERENCES);
     updateProjectionOpeningBalance(backup.projectionOpeningBalance ?? 0);
+    updateStatementSnapshots(backup.statementSnapshots ?? []);
+    recordMutation("restore", `Backup restored: ${backup.transactions.length.toLocaleString("en-NG")} transactions replaced the previous ${transactions.length.toLocaleString("en-NG")} in this browser.`, {
+      evidence: "The full backup content replaced local data at your confirmation.",
+    });
     setPeriod("all");
     notify("Backup restored.");
   };
@@ -967,6 +1129,9 @@ function App() {
   const loadDemo = () => {
     if (transactions.length && !window.confirm("Replace your current transactions with fictional demo data?")) return;
     setTransactions(createDemoTransactions());
+    recordMutation("clear", `Transaction history replaced with fictional demo data (${transactions.length.toLocaleString("en-NG")} previous recorded rows).`, {
+      evidence: "Demo rows use ids starting with “demo-” so they are recognisable.",
+    });
     setPeriod("90d");
     notify("Fictional demo data loaded. Import your own statement when ready.");
   };
@@ -974,6 +1139,9 @@ function App() {
   const clearTransactions = () => {
     if (!transactions.length) return;
     if (!window.confirm("Delete all locally saved transactions? This cannot be undone.")) return;
+    recordMutation("clear", `All ${transactions.length.toLocaleString("en-NG")} recorded transactions were cleared from this browser at your request.`, {
+      evidence: "Download a backup first next time; clearing is permanent.",
+    });
     setTransactions([]);
     notify("Transaction history cleared from this browser.");
   };
@@ -994,12 +1162,22 @@ function App() {
     goTo("transactions");
   };
 
-  const activeCategories = categories.filter((item) => item.category !== "Transfers");
-  const topCategory = activeCategories[0];
+  // The money-out chart includes transfers to other people as their own slice, so its
+  // total matches the Money out card. "Spending" still means consumption only.
+  const chartCategories = categories;
+  const spendingCategories = categories.filter((item) => item.category !== "Transfers" && item.amount > 0);
+  const spendingTotal = spendingCategories.reduce((sum, item) => sum + item.amount, 0);
+  const topCategory = spendingCategories[0];
   const biggest = useMemo(() => withinPeriod
     .filter((transaction) => transaction.direction === "expense" && !transaction.internalTransfer && transaction.category !== "Transfers")
     .reduce<Transaction | undefined>((max, transaction) => (!max || transaction.amount > max.amount ? transaction : max), undefined), [withinPeriod]);
   const comparisonsAvailable = previousTotals !== null;
+  const moneyOutChange: Change = comparisonsAvailable
+    ? relativeChange(totals.expenses, previousTotals!.expenses)
+    : { text: totals.refunds ? `After ${formatCurrency(totals.refunds, currency)} in refunds` : "Across the whole period", direction: null };
+  const moneyOutDetail = totals.transfersOut > 0
+    ? { ...moneyOutChange, text: `${moneyOutChange.text} · ${formatCurrency(totals.transfersOut, currency, true)} transfers` }
+    : moneyOutChange;
   const periodHint = loaded && transactions.length > 0 && withinPeriod.length === 0;
 
   const periodControls = (
@@ -1063,6 +1241,7 @@ function App() {
           </div>
           <div className="nav-group" role="group" aria-labelledby="nav-group-tools">
             <div className="nav-group-label" id="nav-group-tools">Tools</div>
+            <NavButton page="reconcile" active={activePage} onClick={goTo} icon={<ShieldCheck size={18} />} count={reconcileIssueCount || undefined} />
             <NavButton page="data" active={activePage} onClick={goTo} icon={<DatabaseBackup size={18} />} count={rules.length || undefined} />
           </div>
         </nav>
@@ -1115,7 +1294,7 @@ function App() {
             </section>
           )}
 
-          {!loaded && (activePage === "overview" || activePage === "accounts" || activePage === "transactions" || activePage === "review" || activePage === "bills" || activePage === "insights" || activePage === "recipients") && (
+          {!loaded && (activePage === "overview" || activePage === "accounts" || activePage === "transactions" || activePage === "review" || activePage === "reconcile" || activePage === "bills" || activePage === "insights" || activePage === "recipients") && (
             <div className="loading-state"><LoaderCircle className="spin" size={20} /> Loading your history…</div>
           )}
 
@@ -1150,7 +1329,7 @@ function App() {
                     <MetricCard
                       label="Money out"
                       amount={formatCurrency(totals.expenses, currency)}
-                      change={comparisonsAvailable ? relativeChange(totals.expenses, previousTotals!.expenses) : { text: totals.refunds ? `After ${formatCurrency(totals.refunds, currency)} in refunds` : "Across the whole period", direction: null }}
+                      change={moneyOutDetail}
                       goodWhenUp={false}
                       icon={<ArrowUpRight size={18} />}
                       tint="peach"
@@ -1203,11 +1382,11 @@ function App() {
                       <div className="panel-heading">
                         <div>
                           <div className="panel-kicker">CASH FLOW</div>
-                          <h2>Income vs. spending by month</h2>
+                          <h2>Income vs. money out by month</h2>
                         </div>
                         <div className="chart-legend">
                           <span><i className="legend-dot income-dot" /> Income</span>
-                          <span><i className="legend-dot spending-dot" /> Spending</span>
+                          <span><i className="legend-dot spending-dot" /> Money out</span>
                         </div>
                       </div>
                       <CashflowChart data={monthly} currency={currency} />
@@ -1217,14 +1396,20 @@ function App() {
                       <div className="panel-heading">
                         <div>
                           <div className="panel-kicker">WHERE IT GOES</div>
-                          <h2>Spending breakdown</h2>
+                          <h2>Money out breakdown</h2>
                         </div>
                         <button className="subtle-link" onClick={() => goTo("insights")}>Details <ArrowUpRight size={14} /></button>
                       </div>
-                      <CategoryChart categories={activeCategories} currency={currency} onSelect={(category) => {
+                      <CategoryChart categories={chartCategories} currency={currency} onSelect={(category) => {
                         searchTransactions("");
                         setCategoryFilter(category);
                       }} />
+                      <p className="breakdown-note">
+                        {totals.transfersOut > 0
+                          ? `${formatCurrency(totals.spending, currency)} spending + ${formatCurrency(totals.transfersOut, currency)} sent to other accounts = ${formatCurrency(totals.expenses, currency)} money out${totals.refunds > 0 ? `, after ${formatCurrency(totals.refunds, currency)} in refunds` : ""}.`
+                          : `${formatCurrency(totals.expenses, currency)} money out${totals.refunds > 0 ? ` after ${formatCurrency(totals.refunds, currency)} in refunds` : ""}.`}
+                        {" "}Moves between your own accounts are excluded.
+                      </p>
                     </section>
                   </div>
 
@@ -1387,6 +1572,33 @@ function App() {
             />
           )}
 
+          {loaded && activePage === "reconcile" && (
+            <ReconcilePage
+              transactions={transactions}
+              snapshots={statementSnapshots}
+              auditLog={auditLog}
+              currency={currency}
+              accounts={sources}
+              issues={ledgerIssues}
+              transferIntel={transferIntel}
+              onOpenTransactions={(ids) => {
+                if (ids.length === 0) {
+                  goTo("data");
+                  return;
+                }
+                searchTransactions("");
+                setPeriod("all");
+                setCategoryFilter("All categories");
+                setSelectedTransactionIds(new Set(ids));
+                goTo("transactions");
+              }}
+              onAddSnapshot={saveStatementSnapshot}
+              onDeleteSnapshot={deleteStatementSnapshot}
+              onAddInferred={addInferredTransaction}
+              onVerifyInferred={verifyInferredTransaction}
+            />
+          )}
+
           {loaded && activePage === "bills" && (
             <BillsPage
               bills={recurringBills}
@@ -1496,18 +1708,24 @@ function App() {
                   </div>
                   <div className="insight-page-grid">
                     <section className="panel insight-category-panel">
-                      <div className="panel-heading"><div><div className="panel-kicker">SPENDING MIX</div><h2>Where your money goes</h2></div></div>
-                      <CategoryChart categories={activeCategories} currency={currency} large onSelect={(category) => {
+                      <div className="panel-heading"><div><div className="panel-kicker">MONEY OUT MIX</div><h2>Where your money goes</h2></div></div>
+                      <CategoryChart categories={chartCategories} currency={currency} large onSelect={(category) => {
                         searchTransactions("");
                         setCategoryFilter(category);
                       }} />
+                      <p className="breakdown-note">
+                        {totals.transfersOut > 0
+                          ? `${formatCurrency(totals.spending, currency)} spending + ${formatCurrency(totals.transfersOut, currency)} sent to other accounts = ${formatCurrency(totals.expenses, currency)} money out${totals.refunds > 0 ? `, after ${formatCurrency(totals.refunds, currency)} in refunds` : ""}.`
+                          : `${formatCurrency(totals.expenses, currency)} money out${totals.refunds > 0 ? ` after ${formatCurrency(totals.refunds, currency)} in refunds` : ""}.`}
+                        {" "}Moves between your own accounts are excluded.
+                      </p>
                     </section>
                     <div className="insight-side">
                       <InsightDetail
                         icon={<TrendingUp size={18} />}
                         title="Biggest spending category"
                         value={topCategory?.category ?? "No spending yet"}
-                        detail={topCategory ? `${formatCurrency(topCategory.amount, currency)} · ${Math.round(topCategory.share)}% of categorised spending (transfers to people shown separately)` : "Import transactions to find a pattern."}
+                        detail={topCategory ? `${formatCurrency(topCategory.amount, currency)} · ${spendingTotal > 0 ? Math.round((topCategory.amount / spendingTotal) * 100) : 0}% of categorised spending (transfers to people shown separately)` : "Import transactions to find a pattern."}
                         tone="mint"
                       />
                       <InsightDetail
@@ -1524,7 +1742,7 @@ function App() {
                         detail={totals.income > 0 ? `${formatCurrency(Math.max(totals.net, 0), currency)} left after recorded spending` : "Add an income transaction to calculate this."}
                         tone="lavender"
                       />
-                      <div className="insight-note"><Lightbulb size={17} /><p>Money moving between your own wallet and savings pots (OWealth, Spend & Save, Targets) is left out of every total, so the numbers show what actually came in and went out.</p></div>
+                      <div className="insight-note"><Lightbulb size={17} /><p>Money moving between your own wallet and savings pots (OWealth, Spend & Save, Targets) is left out of every total, so the numbers show what actually came in and went out. Transfers to other people are included in money out and shown as their own slice, so the breakdown still adds up.</p></div>
                     </div>
                   </div>
                   <FinancialIndicatorsPanel
@@ -1538,7 +1756,7 @@ function App() {
                     onSearch={searchTransactions}
                   />
                   <section className="panel trend-panel">
-                    <div className="panel-heading"><div><div className="panel-kicker">MONTH BY MONTH</div><h2>Cash flow trend</h2></div><div className="chart-legend"><span><i className="legend-dot income-dot" /> Income</span><span><i className="legend-dot spending-dot" /> Spending</span></div></div>
+                    <div className="panel-heading"><div><div className="panel-kicker">MONTH BY MONTH</div><h2>Cash flow trend</h2></div><div className="chart-legend"><span><i className="legend-dot income-dot" /> Income</span><span><i className="legend-dot spending-dot" /> Money out</span></div></div>
                     <CashflowChart data={monthly} currency={currency} />
                   </section>
                   <InsightsExtras transactions={withinPeriod} allTransactions={transactions} range={range} currency={currency} onSearch={searchTransactions} />

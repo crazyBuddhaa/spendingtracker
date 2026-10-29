@@ -75,6 +75,29 @@ describe("Excel statement imports", () => {
     );
   });
 
+  it("finds the account holder in non-OPay header layouts", () => {
+    const workbook = XLSX.utils.book_new();
+    const sheet = XLSX.utils.aoa_to_sheet([
+      ["Kuda Bank statement"],
+      [],
+      [],
+      ["Account Name", "Oluwafemi Adedamola Adekanmi"],
+      ["Account Number", "2030766703"],
+      ["Account Type", "Savings"],
+      [],
+      ["Date", "Description", "Debit", "Credit"],
+      ["2026-10-01", "Transfer to OLUWAFEMI ADEDAMOLA ADEKANMI | Palmpay | 8147119891", 2000, ""],
+      ["2026-10-02", "Transfer to ISAAC ADEKANMI | OPay | 1", 700, ""],
+    ]);
+    XLSX.utils.book_append_sheet(workbook, sheet, "Transactions");
+    const data = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
+    const result = parseExcelStatement(data, "kuda_statement.xlsx");
+
+    assert.equal(result.transactions.length, 2);
+    assert.equal(result.transactions[0].ownAccountCandidate, true);
+    assert.notEqual(result.transactions[1].ownAccountCandidate, true);
+  });
+
   it("expands a worksheet range back to A1 so earlier rows remain readable", () => {
     const sheet = XLSX.utils.aoa_to_sheet([
       ["Statement export"],

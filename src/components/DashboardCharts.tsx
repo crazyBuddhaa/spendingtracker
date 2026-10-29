@@ -22,7 +22,7 @@ export function CashflowChart({ data, currency }: { data: MonthTotal[]; currency
   const showPoints = data.length <= 24;
   return (
     <div className="chart-wrap">
-      <svg className="cashflow-chart" viewBox={`0 0 ${chartWidth} ${chartHeight}`} role="img" aria-label={`Monthly income and spending, ${data[0].label} to ${data[data.length - 1].label}`}>
+      <svg className="cashflow-chart" viewBox={`0 0 ${chartWidth} ${chartHeight}`} role="img" aria-label={`Monthly income and money out, ${data[0].label} to ${data[data.length - 1].label}`}>
         {[0, 0.5, 1].map((fraction) => {
           const y = top + usableHeight * (1 - fraction);
           return <g key={fraction}><line x1={left} x2={chartWidth - right} y1={y} y2={y} className="chart-gridline" /><text x={left - 9} y={y + 4} textAnchor="end" className="chart-axis-label">{formatCurrency(maxValue * fraction, currency, true)}</text></g>;
@@ -33,7 +33,7 @@ export function CashflowChart({ data, currency }: { data: MonthTotal[]; currency
           <g key={item.month}>
             {/* A wide invisible column makes every month hoverable even when points are hidden. */}
             <rect x={xFor(index) - usableWidth / Math.max(data.length, 2) / 2} y={top} width={usableWidth / Math.max(data.length, 2)} height={usableHeight} className="chart-hover-column">
-              <title>{`${item.label}\nIncome: ${formatCurrency(item.income, currency)}\nSpending: ${formatCurrency(item.expenses, currency)}`}</title>
+              <title>{`${item.label}\nIncome: ${formatCurrency(item.income, currency)}\nMoney out: ${formatCurrency(item.expenses, currency)}`}</title>
             </rect>
             {showPoints && <circle cx={xFor(index)} cy={yFor(item.income)} r="3.5" className="chart-point point-income" />}
             {showPoints && <circle cx={xFor(index)} cy={yFor(item.expenses)} r="3.5" className="chart-point point-expense" />}
@@ -59,28 +59,30 @@ export function CategoryChart({
   const radius = 47;
   const circumference = 2 * Math.PI * radius;
   const total = categories.reduce((sum, item) => sum + item.amount, 0);
+  const positiveTotal = categories.reduce((sum, item) => sum + Math.max(item.amount, 0), 0);
+  const categoryLabel = (category: Category) => category === "Transfers" ? "Transfers to others" : category === "Refunds" ? "Refunds (credit)" : category;
   let accumulated = 0;
   return (
     <div className={`category-chart-layout ${large ? "category-chart-layout--large" : ""}`}>
       <div className="donut-wrap">
-        <svg className="donut-chart" viewBox="0 0 120 120" role="img" aria-label="Spending by category">
+        <svg className="donut-chart" viewBox="0 0 120 120" role="img" aria-label="Money out by category">
           <circle cx="60" cy="60" r={radius} className="donut-track" />
-          {categories.map((item) => {
-            const dash = total > 0 ? (item.amount / total) * circumference : 0;
+          {categories.filter((item) => item.amount > 0).map((item) => {
+            const dash = positiveTotal > 0 ? (item.amount / positiveTotal) * circumference : 0;
             const offset = accumulated;
             accumulated += dash;
-            return <circle key={item.category} cx="60" cy="60" r={radius} className="donut-segment" stroke={categoryColors[item.category]} strokeDasharray={`${dash} ${circumference - dash}`} strokeDashoffset={-offset}><title>{item.category}: {formatCurrency(item.amount, currency)}</title></circle>;
+            return <circle key={item.category} cx="60" cy="60" r={radius} className="donut-segment" stroke={categoryColors[item.category]} strokeDasharray={`${dash} ${circumference - dash}`} strokeDashoffset={-offset}><title>{categoryLabel(item.category)}: {formatCurrency(item.amount, currency)}</title></circle>;
           })}
-          <text x="60" y="56" textAnchor="middle" className="donut-center-label">SPENDING</text>
+          <text x="60" y="56" textAnchor="middle" className="donut-center-label">MONEY OUT</text>
           <text x="60" y="73" textAnchor="middle" className="donut-center-value">{formatCurrency(total, currency, true)}</text>
         </svg>
       </div>
       <div className="category-legend">
         {categories.slice(0, large ? 10 : 6).map((item) => (
-          <button className="category-row" key={item.category} onClick={() => onSelect?.(item.category)} disabled={!onSelect} title={onSelect ? `Show ${item.category} transactions` : undefined}>
-            <span className="category-name"><i className="category-swatch" style={{ backgroundColor: categoryColors[item.category] }} />{item.category}</span>
+          <button className="category-row" key={item.category} onClick={() => onSelect?.(item.category)} disabled={!onSelect} title={onSelect ? `Show ${categoryLabel(item.category)} transactions` : undefined}>
+            <span className="category-name"><i className="category-swatch" style={{ backgroundColor: categoryColors[item.category] }} />{categoryLabel(item.category)}</span>
             <span className="category-amount">{formatCurrency(item.amount, currency, true)}</span>
-            <span className="category-share">{total > 0 ? Math.round((item.amount / total) * 100) : 0}%</span>
+            <span className="category-share">{positiveTotal > 0 ? Math.round((item.amount / positiveTotal) * 100) : 0}%</span>
           </button>
         ))}
         {categories.length === 0 && <div className="chart-empty"><BarChart3 size={17} />No spending in this period</div>}

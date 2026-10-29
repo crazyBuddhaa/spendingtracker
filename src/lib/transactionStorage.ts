@@ -13,6 +13,7 @@ const FLAG_INTERNAL = 1;
 const FLAG_OWN_ACCOUNT = 2;
 const FLAG_MANUAL = 4;
 const FLAG_LOCKED = 8;
+const FLAG_INFERRED = 16;
 
 function isTransaction(value: unknown): value is Transaction {
   if (!value || typeof value !== "object") return false;
@@ -37,7 +38,8 @@ export function serializeTransactions(transactions: Transaction[]): string {
     const flags = (transaction.internalTransfer ? FLAG_INTERNAL : 0) |
       (transaction.ownAccountCandidate ? FLAG_OWN_ACCOUNT : 0) |
       (transaction.manual ? FLAG_MANUAL : 0) |
-      (transaction.categoryLocked ? FLAG_LOCKED : 0);
+      (transaction.categoryLocked ? FLAG_LOCKED : 0) |
+      (transaction.inferred ? FLAG_INFERRED : 0);
     const record: CompactRecord = [
       transaction.id,
       transaction.date,
@@ -154,6 +156,7 @@ export function inspectStoredTransactions(serialized: string | null): StoredTran
       if (flags & FLAG_OWN_ACCOUNT) transaction.ownAccountCandidate = true;
       if (flags & FLAG_MANUAL) transaction.manual = true;
       if (flags & FLAG_LOCKED) transaction.categoryLocked = true;
+      if (flags & FLAG_INFERRED) transaction.inferred = true;
     }
     if (typeof time === "string" && /^\d{2}:\d{2}(?::\d{2})?$/.test(time)) transaction.time = time;
     if (typeof note === "string" && note.trim()) transaction.note = note.slice(0, 280);

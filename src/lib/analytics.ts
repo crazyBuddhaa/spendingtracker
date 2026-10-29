@@ -270,8 +270,11 @@ export function findRecurringTransportPayments(
 export interface MonthReportRow {
   month: string;
   income: number;
+  /** Money out: spending plus transfers to other people/accounts, after refunds. */
   spending: number;
   refunds: number;
+  /** Transfers to other people/accounts included in money out. */
+  transfersOut: number;
   net: number;
   fees: number;
   betting: number;
@@ -285,7 +288,7 @@ export function getMonthlyReport(transactions: Transaction[]): MonthReportRow[] 
     if (transaction.internalTransfer) continue;
     const key = transaction.date.slice(0, 7);
     const row = months.get(key) ?? {
-      month: key, income: 0, spending: 0, refunds: 0, net: 0, fees: 0, betting: 0, transactions: 0, topCategory: null, categories: new Map(),
+      month: key, income: 0, spending: 0, refunds: 0, transfersOut: 0, net: 0, fees: 0, betting: 0, transactions: 0, topCategory: null, categories: new Map(),
     };
     row.transactions += 1;
     if (transaction.direction === "income") {
@@ -293,6 +296,7 @@ export function getMonthlyReport(transactions: Transaction[]): MonthReportRow[] 
       else row.income += transaction.amount;
     } else {
       row.spending += transaction.amount;
+      if (transaction.category === "Transfers") row.transfersOut += transaction.amount;
       if (transaction.category === "Bank fees") row.fees += transaction.amount;
       if (transaction.category === "Betting") row.betting += transaction.amount;
       if (transaction.category !== "Transfers") {
@@ -304,12 +308,14 @@ export function getMonthlyReport(transactions: Transaction[]): MonthReportRow[] 
   return [...months.values()]
     .sort((a, b) => b.month.localeCompare(a.month))
     .map(({ categories, ...row }) => {
-      const spending = Math.max(row.spending - row.refunds, 0);
+      const netSpending = Math.max(row.spending - row.transfersOut - row.refunds, 0);
+      const spending = netSpending + row.transfersOut;
       return {
         ...row,
         income: round(row.income),
         spending: round(spending),
         refunds: round(row.refunds),
+        transfersOut: round(row.transfersOut),
         fees: round(row.fees),
         betting: round(row.betting),
         net: round(row.income - spending),
@@ -319,11 +325,11 @@ export function getMonthlyReport(transactions: Transaction[]): MonthReportRow[] 
 }
 
 export function monthlyReportToCsv(rows: MonthReportRow[]): string {
-  const header = ["Month", "Income", "Spending (after refunds)", "Refunds", "Net", "Bank fees", "Betting", "Transactions", "Top category"];
+  const header = ["Month", "Income", "Money out (after refunds)", "Refunds", "Transfers out", "Net", "Bank fees", "Betting", "Transactions", "Top category"];
   return [
     header.join(","),
     ...rows.map((row) => [
-      row.month, row.income.toFixed(2), row.spending.toFixed(2), row.refunds.toFixed(2), row.net.toFixed(2),
+      row.month, row.income.toFixed(2), row.spending.toFixed(2), row.refunds.toFixed(2), row.transfersOut.toFixed(2), row.net.toFixed(2),
       row.fees.toFixed(2), row.betting.toFixed(2), row.transactions, `"${row.topCategory ?? ""}"`,
     ].join(",")),
   ].join("\r\n");

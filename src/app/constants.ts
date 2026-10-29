@@ -1,13 +1,14 @@
 import type { Period } from "../lib/insights";
 import type { Category, Transaction } from "../types";
 
-export type Page = "overview" | "accounts" | "transactions" | "review" | "bills" | "insights" | "recipients" | "budgets" | "savings" | "betting" | "data";
+export type Page = "overview" | "accounts" | "transactions" | "review" | "reconcile" | "bills" | "insights" | "recipients" | "budgets" | "savings" | "betting" | "data";
 
 export const pageTitles: Record<Page, string> = {
   overview: "Overview",
   accounts: "Accounts",
   transactions: "Transactions",
   review: "Classification review",
+  reconcile: "Transparency & reconciliation",
   bills: "Bills & cash flow",
   insights: "Insights",
   recipients: "Recipients",

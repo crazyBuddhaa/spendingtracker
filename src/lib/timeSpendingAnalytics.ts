@@ -475,14 +475,14 @@ export function getDateRangeComparison(
   const firstPurchase = getTimeToFirstDiscretionaryPurchase(selected);
   const calendarDays = Math.floor((end - start) / DAY_MS) + 1;
   const expenseTransactions = selected.filter((transaction) =>
-    isExternalExpense(transaction) && Number.isFinite(transaction.amount) && transaction.amount > 0);
+    isExternalExpense(transaction) && transaction.category !== "Transfers" && Number.isFinite(transaction.amount) && transaction.amount > 0);
 
   return {
     start: range.start,
     end: range.end,
     calendarDays,
     income: totals.income,
-    spending: totals.expenses,
+    spending: totals.spending,
     netCashflow: totals.net,
     expenseTransactions: expenseTransactions.length,
     expensesPerWeek: expenseTransactions.length / calendarDays * 7,

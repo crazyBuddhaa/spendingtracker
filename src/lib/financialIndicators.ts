@@ -78,7 +78,12 @@ export interface IncomeSourceBreakdown {
 
 export interface FinancialBehaviorIndicators {
   income: number;
+  /** Genuine spending: expenses excluding transfers, after refunds. */
   spending: number;
+  /** Money out: spending plus transfers to other people/accounts. */
+  moneyOut: number;
+  /** Transfers to other people/accounts included in money out. */
+  transfersOut: number;
   net: number;
   savingsRate: number | null;
   spendingToIncomePercent: number | null;
@@ -312,6 +317,7 @@ export function getIncomeSourceBreakdown(
 export function getFinancialBehaviorIndicators(transactions: Transaction[]): FinancialBehaviorIndicators {
   let income = 0;
   let grossSpending = 0;
+  let transfersOut = 0;
   let refunds = 0;
   let transactionCount = 0;
 
@@ -319,7 +325,8 @@ export function getFinancialBehaviorIndicators(transactions: Transaction[]): Fin
     if (transaction.internalTransfer || !Number.isFinite(transaction.amount) || transaction.amount <= 0
       || !isValidIsoDate(transaction.date)) continue;
     if (transaction.direction === "expense") {
-      grossSpending += transaction.amount;
+      if (transaction.category === "Transfers") transfersOut += transaction.amount;
+      else grossSpending += transaction.amount;
       transactionCount += 1;
     } else if (transaction.category === "Refunds") {
       refunds += transaction.amount;
@@ -330,11 +337,14 @@ export function getFinancialBehaviorIndicators(transactions: Transaction[]): Fin
   }
 
   const spending = round(Math.max(0, grossSpending - refunds));
+  const moneyOut = round(spending + transfersOut);
   const roundedIncome = round(income);
-  const net = round(roundedIncome - spending);
+  const net = round(roundedIncome - moneyOut);
   return {
     income: roundedIncome,
     spending,
+    moneyOut,
+    transfersOut: round(transfersOut),
     net,
     savingsRate: roundedIncome > 0 ? round((net / roundedIncome) * 100) : null,
     spendingToIncomePercent: roundedIncome > 0 ? round((spending / roundedIncome) * 100) : null,
@@ -451,7 +461,21 @@ function buildExplainableInsights(
       evidence: [
         `Income recorded: ${behavior.income}.`,
         `Spending after refunds: ${behavior.spending}.`,
-        `Difference: ${Math.abs(behavior.net)} more spent than recorded as income.`,
+        `Difference: ${behavior.spending - behavior.income} more spent than recorded as income.`,
+        ...(behavior.transfersOut > 0 ? [`Transfers to other accounts: ${behavior.transfersOut}; money out: ${behavior.moneyOut}.`] : []),
+      ],
+    });
+  } else if (behavior.income > 0 && behavior.moneyOut > behavior.income && behavior.transfersOut > 0) {
+    insights.push({
+      id: "money-out-above-income",
+      severity: "watch",
+      title: "Recorded money out exceeded recorded income",
+      summary: "Transfers to other people or accounts account for the difference; genuine spending stayed within income.",
+      evidence: [
+        `Income recorded: ${behavior.income}.`,
+        `Spending after refunds: ${behavior.spending}.`,
+        `Transfers to other accounts: ${behavior.transfersOut}.`,
+        `Money out: ${behavior.moneyOut}.`,
       ],
     });
   } else if (behavior.spendingToIncomePercent !== null && behavior.spendingToIncomePercent >= 80) {

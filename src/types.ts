@@ -45,6 +45,53 @@ export interface Transaction {
   categoryLocked?: boolean;
   /** The category suggestion explicitly rejected by the user, retained for local learning. */
   rejectedSuggestion?: Category;
+  /**
+   * True for records reconstructed by reconciliation. Inferred rows are never
+   * presented as original imported data and stay flagged until the user verifies them.
+   */
+  inferred?: boolean;
+}
+
+/** A declared statement period entered or captured for one account, used to detect missing or unexplained money movements. */
+export interface StatementSnapshot {
+  id: string;
+  /** Account label matching transaction.source. */
+  account: string;
+  periodStart: string;
+  periodEnd: string;
+  openingBalance?: number;
+  closingBalance?: number;
+  /** Money in as printed by the statement itself, when known. */
+  declaredTotalIn?: number;
+  /** Money out as printed by the statement itself, when known. */
+  declaredTotalOut?: number;
+  /** How this snapshot entered the browser. */
+  recordedBy: "manual" | "import";
+  createdAt: string;
+  note?: string;
+}
+
+/** Where each local change came from, so corrections and matching decisions can be traced later. */
+export type MutationKind =
+  | "import"
+  | "add"
+  | "inferred-add"
+  | "verify"
+  | "update"
+  | "delete"
+  | "clear"
+  | "restore";
+
+export interface MutationEntry {
+  id: string;
+  /** ISO timestamp of when the change happened. */
+  at: string;
+  kind: MutationKind;
+  /** Human-readable explanation of what changed and why. */
+  detail: string;
+  transactionIds?: string[];
+  /** Optional supporting evidence, such as the affected file names or reclassification range. */
+  evidence?: string;
 }
 
 /** A user-managed identity that joins statement-name variants for one payee or payer. */

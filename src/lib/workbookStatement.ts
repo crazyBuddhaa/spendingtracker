@@ -98,8 +98,36 @@ function opaySummaryWarnings(sheet: StatementSheet, source: string, transactions
   return warnings;
 }
 
-function labelled(sheet: StatementSheet, labelAddress: string, valueAddress: string, label: RegExp): string | undefined {
-  return label.test(sheet.cell(labelAddress)) ? sheet.cell(valueAddress) || undefined : undefined;
+function columnName(index: number): string {
+  let name = "";
+  let value = index;
+  while (value > 0) {
+    const remainder = (value - 1) % 26;
+    name = String.fromCharCode(65 + remainder) + name;
+    value = Math.floor((value - 1) / 26);
+  }
+  return name;
+}
+
+const headerLabels = /^(?:account\s*(?:name|number|no\.?|type)|period|statement\s*period|opening balance|closing balance|total debit|total credit|debit count|credit count)\b/i;
+
+/**
+ * Finds an "Account Name" / "Account Number" pair anywhere above the table.
+ * OPay exports place them in row 2, while other banks use slightly different
+ * layouts; scanning avoids silently losing the holder identity that powers
+ * own-account transfer detection.
+ */
+function findHeaderValue(sheet: StatementSheet, label: RegExp, maxRows = 12, maxColumns = 12): string | undefined {
+  for (let row = 1; row <= maxRows; row += 1) {
+    for (let column = 1; column <= maxColumns; column += 1) {
+      if (!label.test(sheet.cell(`${columnName(column)}${row}`).trim())) continue;
+      const right = sheet.cell(`${columnName(column + 1)}${row}`).trim();
+      if (right && !headerLabels.test(right)) return right;
+      const below = sheet.cell(`${columnName(column)}${row + 1}`).trim();
+      if (below && !headerLabels.test(below)) return below;
+    }
+  }
+  return undefined;
 }
 
 export function parseStatementSheets(sheets: StatementSheet[], fileName: string): ImportResult {
@@ -112,8 +140,8 @@ export function parseStatementSheets(sheets: StatementSheet[], fileName: string)
         ? "OPay Savings"
         : undefined;
     // Statement headers commonly carry "Account Name" / "Account Number" pairs above the table.
-    const accountHolderName = labelled(sheet, "A2", "B2", /^account name$/i);
-    const accountNumber = labelled(sheet, "C2", "D2", /^account (?:number|no\.?)$/i);
+    const accountHolderName = findHeaderValue(sheet, /^account\s*name\b/i);
+    const accountNumber = findHeaderValue(sheet, /^account\s*(?:number|no\.?)\b/i);
     return {
       sheet,
       source,
