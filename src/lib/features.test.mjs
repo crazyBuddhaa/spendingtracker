@@ -187,6 +187,15 @@ describe("transaction intelligence", () => {
     assert.equal(similarityKey("Transfer to  ISAAC  ADEKANMI | United Bank For Africa | 1024085079"), "transfer to isaac adekanmi");
   });
 
+  it("normalises merchant names across payment rails and compact reference formats", () => {
+    const merchant = recogniseTransactionParty("Card payment at ACME MARKET LLC [NIBSS POS] REF123456789 | account 12345");
+    assert.equal(merchant?.key, "acme market");
+    assert.equal(
+      recogniseTransactionParty("POS purchase at ACME MARKET LTD - Paystack MFB | RRN: 88776655")?.key,
+      "acme market",
+    );
+  });
+
   it("uses accepted personal rules for classification and groups similar transactions", () => {
     const rules = [{ id: "r1", pattern: "merchant shoprite", category: "Food & groceries", direction: "expense", createdAt: "2026-10-23" }];
     const first = tx({ id: "one", description: "POS purchase at Shoprite | REF 12345678901" });
@@ -198,6 +207,54 @@ describe("transaction intelligence", () => {
     const counts = getSimilarTransactionCounts([first, second]);
     assert.equal(counts.get("one"), 2);
     assert.equal(counts.get("two"), 2);
+  });
+
+  it("matches typo-level merchant variants but avoids merging similar personal names", () => {
+    const transactions = [
+      tx({ id: "shoprite", description: "Card payment at Shoprite" }),
+      tx({ id: "shoprite-typo", description: "Card payment at Shopritee" }),
+      tx({ id: "chowdeck", description: "POS purchase at Chowdeck" }),
+    ];
+    const counts = getSimilarTransactionCounts(transactions);
+    assert.equal(counts.get("shoprite"), 2);
+    assert.equal(counts.get("shoprite-typo"), 2);
+    assert.equal(counts.get("chowdeck"), 1);
+
+    const history = buildClassificationHistory([
+      tx({ id: "jane-doe", description: "Transfer to Jane Doe | UBA | 123456789", category: "Rent & housing", categoryLocked: true }),
+    ]);
+    const unrelated = classifyTransaction(tx({
+      id: "jane-dee",
+      description: "Transfer to Jane Dee | UBA | 987654321",
+    }), [], history);
+    assert.notEqual(unrelated.source, "merchant-history");
+    const differentPerson = classifyTransaction(tx({
+      id: "jane-doe-jr",
+      description: "Transfer to Jane Doe Jr | UBA | 555555555",
+    }), [], history);
+    assert.notEqual(differentPerson.source, "merchant-history");
+  });
+
+  it("learns a correction from a close merchant spelling and lowers fuzzy confidence", () => {
+    const history = buildClassificationHistory([
+      tx({
+        id: "corrected-netflix",
+        description: "Card payment at Netflix",
+        category: "Entertainment",
+        categoryLocked: true,
+        rejectedSuggestion: "Shopping",
+      }),
+    ]);
+    const learned = classifyTransaction(tx({
+      id: "netflix-variant",
+      description: "Card payment at Netfliix",
+      category: "Shopping",
+    }), [], history);
+    assert.equal(learned.category, "Entertainment");
+    assert.equal(learned.source, "merchant-history");
+    assert.ok(learned.confidence >= 0.6 && learned.confidence < 0.96);
+    assert.match(learned.reason, /similarity/);
+    assert.match(learned.reason, /rejected Shopping/);
   });
 
   it("flags weak fallback categories for review", () => {
