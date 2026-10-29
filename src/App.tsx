@@ -1102,17 +1102,32 @@ function App() {
         </div>
         <div className="nav-label">MENU</div>
         <nav className="primary-nav" aria-label="Main navigation">
-          <NavButton page="overview" active={activePage} onClick={goTo} icon={<LayoutDashboard size={18} />} />
-          <NavButton page="accounts" active={activePage} onClick={goTo} icon={<Landmark size={18} />} count={sources.length || undefined} />
-          <NavButton page="transactions" active={activePage} onClick={goTo} icon={<ArrowLeftRight size={18} />} count={transactions.length} />
-          <NavButton page="review" active={activePage} onClick={goTo} icon={<ClipboardCheck size={18} />} count={classificationReviewQueue.length} />
-          <NavButton page="bills" active={activePage} onClick={goTo} icon={<CalendarDays size={18} />} count={recurringBills.length || undefined} />
-          <NavButton page="insights" active={activePage} onClick={goTo} icon={<BarChart3 size={18} />} />
-          <NavButton page="recipients" active={activePage} onClick={goTo} icon={<Users size={18} />} count={recipientProfiles.length || undefined} />
-          <NavButton page="budgets" active={activePage} onClick={goTo} icon={<Target size={18} />} count={budgets.length || undefined} />
-          <NavButton page="savings" active={activePage} onClick={goTo} icon={<PiggyBank size={18} />} count={savingsGoals.length + savingsCircles.length || undefined} />
-          <NavButton page="betting" active={activePage} onClick={goTo} icon={<Ticket size={18} />} count={bets.length || undefined} />
-          <NavButton page="data" active={activePage} onClick={goTo} icon={<DatabaseBackup size={18} />} count={rules.length || undefined} />
+          <div className="nav-group" role="group" aria-labelledby="nav-group-overview">
+            <div className="nav-group-label" id="nav-group-overview">Overview</div>
+            <NavButton page="overview" active={activePage} onClick={goTo} icon={<LayoutDashboard size={18} />} />
+          </div>
+          <div className="nav-group" role="group" aria-labelledby="nav-group-activity">
+            <div className="nav-group-label" id="nav-group-activity">Activity</div>
+            <NavButton page="accounts" active={activePage} onClick={goTo} icon={<Landmark size={18} />} count={sources.length || undefined} />
+            <NavButton page="transactions" active={activePage} onClick={goTo} icon={<ArrowLeftRight size={18} />} count={transactions.length} />
+            <NavButton page="review" active={activePage} onClick={goTo} icon={<ClipboardCheck size={18} />} count={classificationReviewQueue.length} />
+          </div>
+          <div className="nav-group" role="group" aria-labelledby="nav-group-planning">
+            <div className="nav-group-label" id="nav-group-planning">Planning</div>
+            <NavButton page="bills" active={activePage} onClick={goTo} icon={<CalendarDays size={18} />} count={recurringBills.length || undefined} />
+            <NavButton page="budgets" active={activePage} onClick={goTo} icon={<Target size={18} />} count={budgets.length || undefined} />
+            <NavButton page="savings" active={activePage} onClick={goTo} icon={<PiggyBank size={18} />} count={savingsGoals.length + savingsCircles.length || undefined} />
+          </div>
+          <div className="nav-group" role="group" aria-labelledby="nav-group-analysis">
+            <div className="nav-group-label" id="nav-group-analysis">Analysis</div>
+            <NavButton page="insights" active={activePage} onClick={goTo} icon={<BarChart3 size={18} />} />
+            <NavButton page="recipients" active={activePage} onClick={goTo} icon={<Users size={18} />} count={recipientProfiles.length || undefined} />
+            <NavButton page="betting" active={activePage} onClick={goTo} icon={<Ticket size={18} />} count={bets.length || undefined} />
+          </div>
+          <div className="nav-group" role="group" aria-labelledby="nav-group-tools">
+            <div className="nav-group-label" id="nav-group-tools">Tools</div>
+            <NavButton page="data" active={activePage} onClick={goTo} icon={<DatabaseBackup size={18} />} count={rules.length || undefined} />
+          </div>
         </nav>
         <div className="sidebar-bottom">
           <AccessCard status={access.status} onSignIn={access.signIn} onDetails={() => setShowPrivacy(true)} />
