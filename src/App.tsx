@@ -1,4 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AccessCard, AddTransactionModal, ImportPreviewModal, PrivacyModal } from "./components/AppOverlays";
+import { EmptyState, MetricCard, NavButton, PeriodSelect } from "./components/AppControls";
+import { CashflowChart, CategoryChart } from "./components/DashboardCharts";
+import { TransactionTable } from "./components/TransactionTable";
+import { InsightDetail, InsightsPanel, summarySentence, TransferReviewPanel } from "./components/InsightWidgets";
+import { initialLetter, pageTitles, relativeChange, periodOptions, sortNewestFirst, type Page } from "./app/constants";
 import {
   ArrowDownLeft,
   ArrowLeftRight,
@@ -10,23 +16,19 @@ import {
   ClipboardCheck,
   DatabaseBackup,
   Download,
-  FileText,
   Filter,
   Landmark,
   LayoutDashboard,
   Lightbulb,
   LoaderCircle,
-  LockKeyhole,
   Menu,
   PiggyBank,
   Plus,
-  Receipt,
   Search,
   ShieldCheck,
   Sparkles,
   Target,
   Ticket,
-  Trash2,
   TrendingDown,
   TrendingUp,
   Wallet,
@@ -42,7 +44,7 @@ import { getTransferInsights } from "./lib/transactionPatterns";
 import { readValue, requestPersistentStorage, writeValue } from "./lib/persistentStore";
 import { applyCategoryRules, categorise, ruleMatches, similarityKey } from "./lib/categorise";
 import { normaliseRecipientProfiles, resolveTransactionParty } from "./lib/recipientProfiles";
-import { buildClassificationHistory, classifyTransaction, classifyTransactions, getSimilarTransactionCounts, type ClassificationHistory } from "./lib/transactionIntelligence";
+import { buildClassificationHistory, classifyTransaction, classifyTransactions, getSimilarTransactionCounts } from "./lib/transactionIntelligence";
 import { detectRecurringRecipients, getClassificationReviewQueue, reclassifyHistoricalTransactions } from "./lib/transactionReview";
 import { createBackup, normaliseBudgets, normaliseRules, readBackup } from "./lib/backup";
 import { getFeeSummary } from "./lib/analytics";
@@ -60,7 +62,7 @@ import AccountsPage from "./AccountsPage";
 import FinancialIndicatorsPanel from "./FinancialIndicatorsPanel";
 import { DEFAULT_ACCOUNT_PREFERENCES, normaliseAccountPreferences, summariseAccounts } from "./lib/accounts";
 import { normaliseRecurringBills } from "./lib/recurringBills";
-import { useAccessAuth, type AccessStatus } from "./useAccessAuth";
+import { useAccessAuth } from "./useAccessAuth";
 import { normaliseSavingsGoals } from "./lib/savings";
 import { normaliseSavingsCircles } from "./lib/savingsCircles";
 import { normaliseBets } from "./lib/sportyBetImport";
@@ -73,7 +75,6 @@ import {
   previousRange,
   resolvePeriod,
   type DateRange,
-  type MonthTotal,
   type Period,
 } from "./lib/insights";
 import {
@@ -122,7 +123,8 @@ const storageLabels: Record<string, string> = {
   [INCOME_SOURCE_OVERRIDES_STORAGE_KEY]: "Income-source labels",
 };
 
-type Page = "overview" | "accounts" | "transactions" | "review" | "bills" | "insights" | "recipients" | "budgets" | "savings" | "betting" | "data";
+
+
 
 interface PendingStatementImport {
   transactions: Transaction[];
@@ -132,51 +134,6 @@ interface PendingStatementImport {
   warnings: string[];
   files: File[];
 }
-
-const pageTitles: Record<Page, string> = {
-  overview: "Overview",
-  accounts: "Accounts",
-  transactions: "Transactions",
-  review: "Classification review",
-  bills: "Bills & cash flow",
-  insights: "Insights",
-  recipients: "Recipients",
-  budgets: "Budgets",
-  savings: "Savings",
-  betting: "Betting",
-  data: "Data & rules",
-};
-
-const periodOptions: { value: Period; label: string }[] = [
-  { value: "30d", label: "Last 30 days" },
-  { value: "90d", label: "Last 90 days" },
-  { value: "this-month", label: "This month" },
-  { value: "last-month", label: "Last month" },
-  { value: "12m", label: "Last 12 months" },
-  { value: "this-year", label: "This year" },
-  { value: "all", label: "All time" },
-  { value: "custom", label: "Custom dates…" },
-];
-
-const categoryColors: Record<Category, string> = {
-  Income: "#317a60",
-  Refunds: "#58a37f",
-  "Food & groceries": "#e5aa51",
-  Transport: "#8d7bd1",
-  "Bills & utilities": "#5da1a0",
-  "Airtime & data": "#4f9bd0",
-  Shopping: "#e17e73",
-  "Rent & housing": "#a7745a",
-  Business: "#3f6f8f",
-  "Cash withdrawal": "#c9a227",
-  Transfers: "#7b8c93",
-  Betting: "#d47f57",
-  "Bank fees": "#9a8b7a",
-  Health: "#c56f91",
-  Entertainment: "#5286b6",
-  Education: "#b99557",
-  Other: "#a6aaa4",
-};
 
 function readJson<T>(key: string, normalise: (value: unknown) => T, fallback: T): T {
   let raw: string | null = null;
@@ -238,26 +195,6 @@ function readStoredPeriod(): { period: Period; custom: DateRange } {
     const end = typeof stored?.custom?.end === "string" ? stored.custom.end : null;
     return { period, custom: { start, end } };
   }, { period: "30d" as Period, custom: { start: null, end: null } });
-}
-
-function initialLetter(value: string): string {
-  return value.trim().slice(0, 1).toUpperCase() || "B";
-}
-
-interface Change {
-  text: string;
-  direction: "up" | "down" | null;
-}
-
-function relativeChange(current: number, previous: number): Change {
-  if (previous === 0) return { text: current === 0 ? "No change" : "Nothing in the previous period", direction: null };
-  const change = ((current - previous) / previous) * 100;
-  if (Math.abs(change) < 0.5) return { text: "About the same as previous", direction: null };
-  return { text: `${change > 0 ? "+" : ""}${Math.round(change)}% vs previous period`, direction: change > 0 ? "up" : "down" };
-}
-
-function sortNewestFirst(a: Transaction, b: Transaction): number {
-  return b.date.localeCompare(a.date) || (b.time ?? "").localeCompare(a.time ?? "");
 }
 
 function createDemoTransactions(): Transaction[] {
@@ -1647,653 +1584,6 @@ function App() {
       {toast && <div className="toast" role="status"><Check size={16} />{toast}</div>}
       {showPrivacy && <PrivacyModal email={access.status.state === "signed-in" ? access.status.email : null} onClose={() => setShowPrivacy(false)} />}
       {showAddTransaction && <AddTransactionModal currency={currency} sources={sources} onClose={() => setShowAddTransaction(false)} onSave={addManualTransaction} />}
-    </div>
-  );
-}
-
-function ImportPreviewModal({
-  preview,
-  mode,
-  month,
-  customRange,
-  files,
-  warnings,
-  diagnosticsAvailable,
-  comparisonNote,
-  pdfExtraction,
-  onModeChange,
-  onMonthChange,
-  onCustomRangeChange,
-  onCancel,
-  onConfirm,
-  canConfirm,
-}: {
-  preview: ImportPreview;
-  mode: ImportMode;
-  month: string;
-  customRange: ImportDateRange;
-  files: File[];
-  warnings: string[];
-  diagnosticsAvailable: boolean;
-  comparisonNote: string;
-  pdfExtraction: boolean;
-  onModeChange: (mode: ImportMode) => void;
-  onMonthChange: (month: string) => void;
-  onCustomRangeChange: (range: ImportDateRange) => void;
-  onCancel: () => void;
-  onConfirm: () => void;
-  canConfirm: boolean;
-}) {
-  const dateLabel = (date: string | null) => date ? formatDate(date) : "Not detected";
-  const rangeLabel = preview.range
-    ? `${preview.range.start ? dateLabel(preview.range.start) : "No start boundary"} – ${preview.range.end ? dateLabel(preview.range.end) : "No end boundary"}`
-    : "Choose a valid period";
-  const modeDescriptions: Record<ImportMode, string> = {
-    "full-history": "Review all valid transactions in these files. The existing exact duplicate check will still skip rows already in your history.",
-    "specific-month": "Include only transactions in one calendar month. Valid rows outside that month stay out of the import and are counted below.",
-    "custom-range": "Include only transactions between the selected dates, inclusive. Valid rows outside that range stay out and are counted below.",
-    "new-transactions-only": "Filter confirmed exact duplicates out of the batch before confirmation. Similar-looking rows are only flagged; the other modes still skip exact duplicates through the existing importer.",
-  };
-  const totalRowsLabel = diagnosticsAvailable ? preview.scannedRows.toLocaleString("en-NG") : `${preview.scannedRows.toLocaleString("en-NG")} known`;
-
-  return (
-    <div className="modal-backdrop import-preview-backdrop">
-      <section className="privacy-modal import-preview-modal" role="dialog" aria-modal="true" aria-labelledby="import-preview-title">
-        <button className="icon-button modal-close" onClick={onCancel} aria-label="Cancel import preview"><X size={17} /></button>
-        <div className="privacy-modal-icon"><FileText size={19} /></div>
-        <h2 id="import-preview-title">Review statement import</h2>
-        <p className="import-preview-files">{files.map((file) => file.name).join(" · ")}</p>
-
-        <label className="import-mode-label">
-          Import mode
-          <select value={mode} onChange={(event) => onModeChange(event.target.value as ImportMode)}>
-            <option value="full-history">Full history</option>
-            <option value="specific-month">Specific month</option>
-            <option value="custom-range">Custom date range</option>
-            <option value="new-transactions-only">New transactions only</option>
-          </select>
-        </label>
-        <p className="import-mode-description">{modeDescriptions[mode]}</p>
-
-        {mode === "specific-month" && (
-          <label className="import-range-control">
-            Month
-            <input type="month" value={month} onChange={(event) => onMonthChange(event.target.value)} />
-          </label>
-        )}
-        {mode === "custom-range" && (
-          <div className="import-range-fields">
-            <label>From<input type="date" value={customRange.start ?? ""} max={customRange.end ?? undefined} onChange={(event) => onCustomRangeChange({ ...customRange, start: event.target.value || null })} /></label>
-            <label>To<input type="date" value={customRange.end ?? ""} min={customRange.start ?? undefined} onChange={(event) => onCustomRangeChange({ ...customRange, end: event.target.value || null })} /></label>
-          </div>
-        )}
-
-        <div className="import-preview-range">
-          <strong>Selected date boundaries</strong>
-          <span>{rangeLabel}</span>
-          {!preview.rangeValid && <span className="import-preview-error">Choose a valid month or both custom dates with the start on or before the end.</span>}
-        </div>
-
-        <div className="import-preview-grid">
-          <div><span>Detected earliest date</span><strong>{dateLabel(preview.timeline.earliest)}</strong></div>
-          <div><span>Detected latest date</span><strong>{dateLabel(preview.timeline.latest)}</strong></div>
-          <div><span>Rows scanned</span><strong>{totalRowsLabel}</strong></div>
-          <div><span>Valid transaction rows</span><strong>{preview.validRows.toLocaleString("en-NG")}</strong></div>
-          <div><span>Invalid or incomplete rows</span><strong>{preview.invalidRows.toLocaleString("en-NG")}</strong></div>
-          <div><span>Valid rows in selected period</span><strong>{preview.transactionsInRange.length.toLocaleString("en-NG")}</strong></div>
-          <div><span>Rows sent to the confirmation path</span><strong>{preview.transactionsForConfirmation.length.toLocaleString("en-NG")}</strong></div>
-          <div><span>Valid rows outside selected period</span><strong>{preview.transactionsOutsideRange.toLocaleString("en-NG")}</strong></div>
-          <div><span>Confirmed exact duplicates</span><strong>{preview.confirmedDuplicates === null ? "Unavailable" : preview.confirmedDuplicates.toLocaleString("en-NG")}</strong></div>
-          <div><span>Potential duplicates</span><strong>{preview.potentialDuplicates === null ? "Unavailable" : preview.potentialDuplicates.toLocaleString("en-NG")}</strong></div>
-          <div><span>Potential changes to existing rows</span><strong>{preview.potentialChanges === null ? "Unavailable" : preview.potentialChanges.toLocaleString("en-NG")}</strong></div>
-          <div><span>Expected additions</span><strong>{preview.expectedAdds === null ? "Unavailable" : preview.expectedAdds.toLocaleString("en-NG")}</strong></div>
-          <div><span>Known existing imported rows within detected dates</span><strong>{preview.existingRowsInDetectedPeriod === null ? "Unavailable" : preview.existingRowsInDetectedPeriod.toLocaleString("en-NG")}</strong></div>
-        </div>
-
-        <div className="import-preview-samples">
-          <strong>Timeline sampling</strong>
-          <span>First {preview.timeline.firstSample.count} valid rows: {dateLabel(preview.timeline.firstSample.earliest)} – {dateLabel(preview.timeline.firstSample.latest)}</span>
-          <span>Last {preview.timeline.lastSample.count} valid rows: {dateLabel(preview.timeline.lastSample.earliest)} – {dateLabel(preview.timeline.lastSample.latest)}</span>
-          <span>The actual detected bounds scan all {preview.timeline.validRows.toLocaleString("en-NG")} valid rows, regardless of file order.</span>
-        </div>
-
-        <div className="import-preview-notes">
-          <strong>Comparison limits</strong>
-          <p>{comparisonNote}</p>
-          <p>Statement-period metadata is not stored. The overlap check uses existing imported transaction dates within the detected range; it cannot confirm which original statement files covered those dates.</p>
-          <p>Potential duplicates share a date and amount plus a normalized merchant or narration match; they are not skipped. Existing import logic does not update existing transaction records.</p>
-          <p>Nothing is saved during preview. Confirm adds the selected transactions to this browser’s saved history. Original statement files are not uploaded.</p>
-          {preview.missingDateRows > 0 && <p>{preview.missingDateRows.toLocaleString("en-NG")} row(s) had no date; {preview.invalidDateRows.toLocaleString("en-NG")} row(s) had an invalid date.</p>}
-          {preview.ambiguousDateRows > 0 && <p>{preview.ambiguousDateRows.toLocaleString("en-NG")} ambiguous numeric date(s) use the existing day-first interpretation. Check these against the statement if it uses month-first dates.</p>}
-          {preview.timeline.invalidTransactionDates > 0 && <p>{preview.timeline.invalidTransactionDates} parsed transaction(s) had an invalid normalized date and were excluded from timeline bounds.</p>}
-          {!diagnosticsAvailable && <p>Some selected files did not provide row diagnostics; scanned and invalid-row totals may be incomplete.</p>}
-          {pdfExtraction && <p>PDF counts reflect the existing selectable-text table parser; wrapped or missing-date PDF lines can be merged into neighboring descriptions.</p>}
-          {preview.overlapSources.length > 0 && (
-            <p>Existing dates in the detected range: {preview.overlapSources.map((item) => `${item.source} (${item.count}, ${dateLabel(item.earliest)}–${dateLabel(item.latest)})`).join("; ")}.</p>
-          )}
-        </div>
-
-        {warnings.length > 0 && (
-          <div className="import-preview-warnings">
-            <strong>Parser notes</strong>
-            {warnings.map((warning, index) => <p key={`${index}-${warning}`}>{warning}</p>)}
-          </div>
-        )}
-        <div className="import-preview-actions">
-          <button className="button button-secondary" onClick={onCancel}>Cancel</button>
-          <button className="button button-primary" onClick={onConfirm} disabled={!canConfirm}>Confirm import</button>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function NavButton({ page, active, onClick, icon, count }: { page: Page; active: Page; onClick: (page: Page) => void; icon: React.ReactNode; count?: number }) {
-  return (
-    <button className={active === page ? "nav-item active" : "nav-item"} onClick={() => onClick(page)} aria-current={active === page ? "page" : undefined}>
-      {icon}<span>{pageTitles[page]}</span>
-      {count !== undefined && count > 0 && <span className="nav-count">{count.toLocaleString("en-NG")}</span>}
-    </button>
-  );
-}
-
-function PeriodSelect({
-  value,
-  custom,
-  bounds,
-  onChange,
-  onCustomChange,
-}: {
-  value: Period;
-  custom: DateRange;
-  bounds: { first: string; last: string };
-  onChange: (value: Period) => void;
-  onCustomChange: (range: DateRange) => void;
-}) {
-  return (
-    <div className="period-controls">
-      <label className="period-select">
-        <select value={value} aria-label="Period" onChange={(event) => {
-          const next = event.target.value as Period;
-          if (next === "custom" && !custom.start && !custom.end && bounds.last) {
-            onCustomChange({ start: `${bounds.last.slice(0, 7)}-01`, end: bounds.last });
-          }
-          onChange(next);
-        }}>
-          {periodOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
-        </select>
-        <ChevronDown size={15} />
-      </label>
-      {value === "custom" && (
-        <span className="custom-range">
-          <input type="date" aria-label="From" value={custom.start ?? ""} max={custom.end ?? undefined} onChange={(event) => onCustomChange({ ...custom, start: event.target.value || null })} />
-          <span>to</span>
-          <input type="date" aria-label="To" value={custom.end ?? ""} min={custom.start ?? undefined} onChange={(event) => onCustomChange({ ...custom, end: event.target.value || null })} />
-        </span>
-      )}
-    </div>
-  );
-}
-
-function MetricCard({
-  label,
-  amount,
-  change,
-  goodWhenUp,
-  icon,
-  tint,
-}: {
-  label: string;
-  amount: string;
-  change: Change;
-  goodWhenUp: boolean;
-  icon: React.ReactNode;
-  tint: string;
-}) {
-  const bad = change.direction !== null && (change.direction === "up") !== goodWhenUp;
-  return (
-    <section className="metric-card">
-      <div className="metric-top"><span>{label}</span><span className={`metric-icon ${tint}`}>{icon}</span></div>
-      <strong className="metric-value">{amount}</strong>
-      <div className={`metric-comparison ${bad ? "comparison-warn" : ""}`}>
-        {change.direction === "up" && <TrendingUp size={13} />}
-        {change.direction === "down" && <TrendingDown size={13} />}
-        <span>{change.text}</span>
-      </div>
-    </section>
-  );
-}
-
-function EmptyState({ onImport, onDemo }: { onImport: () => void; onDemo: () => void }) {
-  return (
-    <section className="empty-state">
-      <div className="empty-art">
-        <div className="empty-orbit orbit-one" /><div className="empty-orbit orbit-two" />
-        <div className="empty-wallet"><Wallet size={29} /></div>
-        <span className="float-chip chip-one"><ArrowDownLeft size={15} /></span>
-        <span className="float-chip chip-two"><ArrowUpRight size={15} /></span>
-      </div>
-      <div className="eyebrow"><span className="eyebrow-dot" /> YOUR PRIVATE MONEY DASHBOARD</div>
-      <h2>Start with your transaction history.</h2>
-      <p>Import CSV, Excel, or text-based PDF statements (OPay, Access Bank, Moniepoint and similar). Spendwise brings them together and shows your income, spending, and patterns in one place.</p>
-      <div className="empty-actions"><button className="button button-primary" onClick={onImport}><FileText size={17} /> Import a bank statement</button><button className="button button-text" onClick={onDemo}>Explore with sample data</button></div>
-      <div className="empty-foot"><LockKeyhole size={13} /> Statements are read locally and never uploaded.</div>
-    </section>
-  );
-}
-
-function CashflowChart({ data, currency }: { data: MonthTotal[]; currency: string }) {
-  if (!data.length) return <div className="chart-empty"><BarChart3 size={17} />No months to chart yet</div>;
-  const maxValue = Math.max(...data.flatMap((item) => [item.income, item.expenses]), 1);
-  const chartHeight = 190;
-  const chartWidth = 600;
-  const left = 54;
-  const right = 10;
-  const top = 8;
-  const bottom = 30;
-  const usableHeight = chartHeight - top - bottom;
-  const usableWidth = chartWidth - left - right;
-  const xFor = (index: number) => left + (data.length === 1 ? usableWidth / 2 : (index / (data.length - 1)) * usableWidth);
-  const yFor = (value: number) => chartHeight - bottom - (value / maxValue) * usableHeight;
-  const polyline = (key: "income" | "expenses") => data.map((item, index) => `${xFor(index)},${yFor(item[key])}`).join(" ");
-  const labelEvery = Math.max(1, Math.ceil(data.length / 8));
-  const showPoints = data.length <= 24;
-  return (
-    <div className="chart-wrap">
-      <svg className="cashflow-chart" viewBox={`0 0 ${chartWidth} ${chartHeight}`} role="img" aria-label={`Monthly income and spending, ${data[0].label} to ${data[data.length - 1].label}`}>
-        {[0, 0.5, 1].map((fraction) => {
-          const y = top + usableHeight * (1 - fraction);
-          return <g key={fraction}><line x1={left} x2={chartWidth - right} y1={y} y2={y} className="chart-gridline" /><text x={left - 9} y={y + 4} textAnchor="end" className="chart-axis-label">{formatCurrency(maxValue * fraction, currency, true)}</text></g>;
-        })}
-        <polyline points={polyline("income")} className="chart-line chart-line-income" />
-        <polyline points={polyline("expenses")} className="chart-line chart-line-expense" />
-        {data.map((item, index) => (
-          <g key={item.month}>
-            {/* A wide invisible column makes every month hoverable even when points are hidden. */}
-            <rect x={xFor(index) - usableWidth / Math.max(data.length, 2) / 2} y={top} width={usableWidth / Math.max(data.length, 2)} height={usableHeight} className="chart-hover-column">
-              <title>{`${item.label}\nIncome: ${formatCurrency(item.income, currency)}\nSpending: ${formatCurrency(item.expenses, currency)}`}</title>
-            </rect>
-            {showPoints && <circle cx={xFor(index)} cy={yFor(item.income)} r="3.5" className="chart-point point-income" />}
-            {showPoints && <circle cx={xFor(index)} cy={yFor(item.expenses)} r="3.5" className="chart-point point-expense" />}
-            {index % labelEvery === 0 && <text x={xFor(index)} y={chartHeight - 7} textAnchor="middle" className="chart-axis-label">{item.label}</text>}
-          </g>
-        ))}
-      </svg>
-    </div>
-  );
-}
-
-function CategoryChart({
-  categories,
-  currency,
-  large = false,
-  onSelect,
-}: {
-  categories: ReturnType<typeof getCategoryTotals>;
-  currency: string;
-  large?: boolean;
-  onSelect?: (category: Category) => void;
-}) {
-  const radius = 47;
-  const circumference = 2 * Math.PI * radius;
-  const total = categories.reduce((sum, item) => sum + item.amount, 0);
-  let accumulated = 0;
-  return (
-    <div className={`category-chart-layout ${large ? "category-chart-layout--large" : ""}`}>
-      <div className="donut-wrap">
-        <svg className="donut-chart" viewBox="0 0 120 120" role="img" aria-label="Spending by category">
-          <circle cx="60" cy="60" r={radius} className="donut-track" />
-          {categories.map((item) => {
-            const dash = total > 0 ? (item.amount / total) * circumference : 0;
-            const offset = accumulated;
-            accumulated += dash;
-            return <circle key={item.category} cx="60" cy="60" r={radius} className="donut-segment" stroke={categoryColors[item.category]} strokeDasharray={`${dash} ${circumference - dash}`} strokeDashoffset={-offset}><title>{item.category}: {formatCurrency(item.amount, currency)}</title></circle>;
-          })}
-          <text x="60" y="56" textAnchor="middle" className="donut-center-label">SPENDING</text>
-          <text x="60" y="73" textAnchor="middle" className="donut-center-value">{formatCurrency(total, currency, true)}</text>
-        </svg>
-      </div>
-      <div className="category-legend">
-        {categories.slice(0, large ? 10 : 6).map((item) => (
-          <button className="category-row" key={item.category} onClick={() => onSelect?.(item.category)} disabled={!onSelect} title={onSelect ? `Show ${item.category} transactions` : undefined}>
-            <span className="category-name"><i className="category-swatch" style={{ backgroundColor: categoryColors[item.category] }} />{item.category}</span>
-            <span className="category-amount">{formatCurrency(item.amount, currency, true)}</span>
-            <span className="category-share">{total > 0 ? Math.round((item.amount / total) * 100) : 0}%</span>
-          </button>
-        ))}
-        {categories.length === 0 && <div className="chart-empty"><BarChart3 size={17} />No spending in this period</div>}
-      </div>
-    </div>
-  );
-}
-
-function TransactionTable({
-  transactions,
-  currency,
-  showSource = false,
-  onChangeCategory,
-  onToggleInternal,
-  onDelete,
-  similarCounts,
-  rules = [],
-  classificationHistory,
-  recipientProfiles = [],
-  recurringTransactionIds,
-  selectedTransactionIds,
-  onToggleSelection,
-  onSelectDisplayed,
-}: {
-  transactions: Transaction[];
-  currency: string;
-  showSource?: boolean;
-  onChangeCategory?: (transactionId: string, category: Category) => void;
-  onToggleInternal?: (transactionId: string) => void;
-  onDelete?: (transactionId: string) => void;
-  similarCounts?: ReadonlyMap<string, number>;
-  rules?: CategoryRule[];
-  classificationHistory?: ClassificationHistory;
-  recipientProfiles?: RecipientProfile[];
-  recurringTransactionIds?: ReadonlySet<string>;
-  selectedTransactionIds?: ReadonlySet<string>;
-  onToggleSelection?: (transactionId: string) => void;
-  onSelectDisplayed?: (transactions: Transaction[], selected: boolean) => void;
-}) {
-  const editable = Boolean(onChangeCategory || onToggleInternal || onDelete);
-  const selectable = Boolean(onToggleSelection && selectedTransactionIds && onSelectDisplayed);
-  const selectedCount = selectable ? transactions.filter((transaction) => selectedTransactionIds!.has(transaction.id)).length : 0;
-  const allSelected = transactions.length > 0 && selectedCount === transactions.length;
-  const partiallySelected = selectedCount > 0 && !allSelected;
-  return (
-    <div className="transaction-table-wrap">
-      <table className="transaction-table">
-        <thead><tr>
-          {selectable && <th className="transaction-select-heading"><input type="checkbox" checked={allSelected} ref={(element) => { if (element) element.indeterminate = partiallySelected; }} onChange={(event) => onSelectDisplayed?.(transactions, event.target.checked)} aria-label="Select all displayed transactions" /></th>}
-          <th>TRANSACTION</th><th>DATE</th>{showSource && <th>ACCOUNT</th>}<th>CATEGORY</th><th className="amount-heading">AMOUNT</th>{editable && <th aria-label="Actions" />}
-        </tr></thead>
-        <tbody>
-          {transactions.map((transaction) => {
-            const isIncome = transaction.direction === "income";
-            const party = resolveTransactionParty(transaction.description, recipientProfiles);
-            const classification = classifyTransaction(transaction, rules, classificationHistory, recipientProfiles);
-            const confidenceTone = classification.confidence >= 0.85 ? "high" : classification.confidence >= 0.6 ? "medium" : "low";
-            const suggestsDifferentCategory = classification.category !== transaction.category && !transaction.categoryLocked && !transaction.manual;
-            const similarCount = Math.max(0, (similarCounts?.get(transaction.id) ?? 0) - 1);
-            return (
-              <tr key={transaction.id} className={transaction.internalTransfer ? "row-internal" : undefined}>
-                {selectable && <td className="transaction-select-cell"><input type="checkbox" checked={selectedTransactionIds!.has(transaction.id)} onChange={() => onToggleSelection?.(transaction.id)} aria-label={`Select ${transaction.description}`} /></td>}
-                <td>
-                  <div className="transaction-name-cell">
-                    <div className={`transaction-icon ${isIncome ? "transaction-icon-income" : ""}`}>
-                      {isIncome ? <ArrowDownLeft size={16} /> : transaction.category === "Transfers" ? <ArrowLeftRight size={15} /> : transaction.category === "Bank fees" ? <Receipt size={15} /> : <FileText size={15} />}
-                    </div>
-                    <div className="transaction-name-copy">
-                      <strong title={transaction.description}>{transaction.description}</strong>
-                      <span>{transaction.source}{transaction.manual ? " · added by you" : ""}{transaction.note ? ` · ${transaction.note}` : ""}</span>
-                      {party && <span className="transaction-intelligence-label">{party.kind === "merchant" ? "Merchant" : party.kind === "recipient" ? "Recipient" : "Sender"} · {party.name}</span>}
-                      {similarCount > 0 && <span className="transaction-intelligence-label">{similarCount} similar transaction{similarCount === 1 ? "" : "s"}</span>}
-                      {suggestsDifferentCategory ? <span className={`classification-confidence classification-confidence--${confidenceTone}`} title={classification.reason} aria-label={"Suggested category " + classification.category + ", confidence " + Math.round(classification.confidence * 100) + " percent. " + classification.reason}>Suggest {classification.category} · {Math.round(classification.confidence * 100)}%</span> : <span className={`classification-confidence classification-confidence--${confidenceTone}`} title={classification.reason} aria-label={"Classification confidence " + Math.round(classification.confidence * 100) + " percent. " + classification.reason}>Confidence {Math.round(classification.confidence * 100)}%</span>}
-                      {classification.confidence < 0.5 && <span className="transaction-review-label">Review category</span>}
-                      {recurringTransactionIds?.has(transaction.id) && <span className="transaction-intelligence-label">Recurring recipient pattern</span>}
-                      {transaction.internalTransfer && <span className="transaction-review-label">Own money moving · excluded from totals</span>}
-                      {transaction.ownAccountCandidate && !transaction.internalTransfer && (
-                        <span className="transaction-review-row">
-                          <span className="transaction-review-label">Possible own-account transfer</span>
-                          {onToggleInternal && <button className="transaction-confirm-button" onClick={() => onToggleInternal(transaction.id)}>Mark internal</button>}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </td>
-                <td className="transaction-date">{formatDate(transaction.date)}{transaction.time && <small>{transaction.time.slice(0, 5)}</small>}</td>
-                {showSource && <td><span className="account-pill"><span className="account-mini">{initialLetter(transaction.source)}</span>{transaction.source}</span></td>}
-                <td>
-                  {onChangeCategory ? (
-                    <select
-                      className={`category-select category-${transaction.category.toLowerCase().replace(/[^a-z]+/g, "-")}`}
-                      value={transaction.category}
-                      onChange={(event) => onChangeCategory(transaction.id, event.target.value as Category)}
-                      aria-label={`Category for ${transaction.description}`}
-                    >
-                      {categoryList.map((category) => <option key={category}>{category}</option>)}
-                    </select>
-                  ) : (
-                    <span className={`category-pill category-${transaction.category.toLowerCase().replace(/[^a-z]+/g, "-")}`}>{transaction.category}</span>
-                  )}
-                </td>
-                <td className={`transaction-amount ${isIncome ? "amount-income" : ""}`}>{isIncome ? "+" : "−"}{new Intl.NumberFormat("en-NG", { style: "currency", currency, maximumFractionDigits: 2, minimumFractionDigits: transaction.amount % 1 ? 2 : 0 }).format(transaction.amount)}</td>
-                {editable && (
-                  <td className="row-actions">
-                    {onToggleInternal && (
-                      <button className="icon-button" onClick={() => onToggleInternal(transaction.id)} title={transaction.internalTransfer ? "Count in totals again" : "Mark as my own money moving (exclude from totals)"} aria-label={transaction.internalTransfer ? "Include in totals" : "Exclude from totals"}>
-                        <ArrowLeftRight size={14} />
-                      </button>
-                    )}
-                    {onDelete && <button className="icon-button" onClick={() => onDelete(transaction.id)} title="Delete transaction" aria-label="Delete transaction"><Trash2 size={14} /></button>}
-                  </td>
-                )}
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function AddTransactionModal({
-  currency,
-  sources,
-  onClose,
-  onSave,
-}: {
-  currency: string;
-  sources: string[];
-  onClose: () => void;
-  onSave: (transaction: Omit<Transaction, "id">) => void;
-}) {
-  const [date, setDate] = useState(localIsoDate());
-  const [description, setDescription] = useState("");
-  const [amount, setAmount] = useState("");
-  const [direction, setDirection] = useState<Direction>("expense");
-  const [category, setCategory] = useState<Category>("Other");
-  const [categoryTouched, setCategoryTouched] = useState(false);
-  const [source, setSource] = useState("Cash");
-  const [note, setNote] = useState("");
-
-  const guessed = description.trim() ? categorise(description, direction) : direction === "income" ? "Income" : "Other";
-  const effectiveCategory = categoryTouched ? category : guessed;
-
-  const submit = (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const value = Number(amount);
-    if (!date || !description.trim() || !Number.isFinite(value) || value <= 0) return;
-    onSave({
-      date,
-      description: description.trim(),
-      amount: Math.round(value * 100) / 100,
-      direction,
-      category: effectiveCategory,
-      source: source.trim() || "Cash",
-      ...(note.trim() ? { note: note.trim().slice(0, 280) } : {}),
-    });
-  };
-
-  return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="privacy-modal savings-modal" role="dialog" aria-modal="true" aria-labelledby="add-transaction-heading">
-        <button className="icon-button modal-close" onClick={onClose} aria-label="Close"><X size={18} /></button>
-        <div className="privacy-modal-icon"><Plus size={20} /></div>
-        <div className="panel-kicker">MANUAL ENTRY</div>
-        <h2 id="add-transaction-heading">Add a transaction</h2>
-        <p className="savings-form-help">For cash spending, sales paid in cash, or anything not on a statement.</p>
-        <form className="savings-form form-two-col" onSubmit={submit}>
-          <div className="segmented form-full" role="group" aria-label="Money in or out">
-            <button type="button" className={direction === "expense" ? "active" : ""} onClick={() => setDirection("expense")}>Money out</button>
-            <button type="button" className={direction === "income" ? "active" : ""} onClick={() => setDirection("income")}>Money in</button>
-          </div>
-          <label className="form-full">Description<input autoFocus required maxLength={140} value={description} onChange={(event) => setDescription(event.target.value)} placeholder={direction === "expense" ? "e.g. Fuel for generator" : "e.g. Cash sale"} /></label>
-          <label>Amount ({currency})<input required type="number" min="0.01" step="any" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="5000" /></label>
-          <label>Date<input required type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label>
-          <label>Category
-            <select value={effectiveCategory} onChange={(event) => { setCategory(event.target.value as Category); setCategoryTouched(true); }}>
-              {categoryList.map((item) => <option key={item}>{item}</option>)}
-            </select>
-          </label>
-          <label>Account<input list="known-accounts" value={source} onChange={(event) => setSource(event.target.value)} maxLength={40} /></label>
-          <datalist id="known-accounts">{["Cash", ...sources].map((item) => <option key={item} value={item} />)}</datalist>
-          <label className="form-full">Note (optional)<input value={note} onChange={(event) => setNote(event.target.value)} maxLength={280} placeholder="Anything you want to remember" /></label>
-          <button className="button button-primary modal-done form-full" type="submit"><Check size={15} /> Save transaction</button>
-        </form>
-      </section>
-    </div>
-  );
-}
-
-function TransferReviewPanel({
-  insights,
-  currency,
-  pendingCount,
-  onReview,
-  onConfirmAll,
-}: {
-  insights: ReturnType<typeof getTransferInsights>;
-  currency: string;
-  pendingCount: number;
-  onReview: () => void;
-  onConfirmAll: () => void;
-}) {
-  return (
-    <section className="panel transfer-review-panel">
-      <div className="panel-heading">
-        <div><div className="panel-kicker">TRANSFER REVIEW</div><h2>Own-account and repeat transfers</h2></div>
-        <span className="review-banner-actions">
-          <button className="button button-secondary" onClick={onReview} disabled={pendingCount === 0}>Review one by one</button>
-          <button className="button button-primary" onClick={onConfirmAll} disabled={pendingCount === 0}>Exclude all {pendingCount ? pendingCount.toLocaleString("en-NG") : ""}</button>
-        </span>
-      </div>
-      <div className="transfer-review-summary">
-        <div>
-          <strong>{insights.ownAccountCandidateCount.toLocaleString("en-NG")}</strong>
-          <span>unconfirmed own-account candidates in this period · {formatCurrency(insights.ownAccountSent, currency)} sent · {formatCurrency(insights.ownAccountReceived, currency)} received</span>
-        </div>
-        <div>
-          <strong>{insights.confirmedInternalCount.toLocaleString("en-NG")}</strong>
-          <span>entries excluded from totals (wallet ↔ savings pots and confirmed own transfers)</span>
-        </div>
-      </div>
-      <p className="transfer-review-note">Candidates are transfers to or from your own name, your own account number, or your own bank card. They stay in your totals until you confirm them. Repeated counterparties below are grouped by name only.</p>
-      {insights.repeatedCounterparties.length > 0 ? (
-        <div className="counterparty-list">
-          <div className="counterparty-list-heading"><span>REPEATED COUNTERPARTY</span><span>COUNT</span><span>SENT</span><span>RECEIVED</span></div>
-          {insights.repeatedCounterparties.map((counterparty) => (
-            <div className="counterparty-list-row" key={counterparty.name}>
-              <strong title={counterparty.name}>{counterparty.name}</strong>
-              <span>{counterparty.count}</span>
-              <span>{formatCurrency(counterparty.sent, currency, true)}</span>
-              <span>{formatCurrency(counterparty.received, currency, true)}</span>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="counterparty-empty">No transfer counterparty appears three or more times in this period.</div>
-      )}
-    </section>
-  );
-}
-
-function InsightsPanel({
-  count,
-  topCategory,
-  biggest,
-  fees,
-  totals,
-  currency,
-  onOpen,
-}: {
-  count: number;
-  topCategory: ReturnType<typeof getCategoryTotals>[number] | undefined;
-  biggest: Transaction | undefined;
-  fees: number;
-  totals: ReturnType<typeof calculateTotals>;
-  currency: string;
-  onOpen: () => void;
-}) {
-  return (
-    <section className="insights-panel">
-      <div className="insight-title"><span className="insight-sparkle"><Sparkles size={16} /></span><div><div className="panel-kicker">A CLOSER LOOK</div><h2>Your key takeaways</h2></div></div>
-      <div className="insight-highlight">
-        <span className="insight-number">01</span><div><span className="takeaway-label">TOP SPENDING AREA</span><strong>{topCategory?.category ?? "Not enough data yet"}</strong><p>{topCategory ? `${formatCurrency(topCategory.amount, currency)} across ${topCategory.count.toLocaleString("en-NG")} transactions` : "Import transactions to see what stands out."}</p></div>
-      </div>
-      <div className="insight-highlight">
-        <span className="insight-number">02</span><div><span className="takeaway-label">LARGEST SINGLE PAYMENT</span><strong>{biggest ? formatCurrency(biggest.amount, currency) : "No outgoing yet"}</strong><p>{biggest ? biggest.description : "Your largest payment will appear here."}</p></div>
-      </div>
-      <div className="insight-highlight">
-        <span className="insight-number">03</span><div><span className="takeaway-label">FEES & CHARGES</span><strong>{formatCurrency(fees, currency)}</strong><p>{totals.income > 0 ? `Savings rate this period: ${Math.round(totals.savingsRate)}%` : "Bank charges, levies, and stamp duty paid"}</p></div>
-      </div>
-      <div className="insight-foot"><span>{count.toLocaleString("en-NG")} transaction{count === 1 ? "" : "s"} analysed</span><button className="subtle-link" onClick={onOpen}>Explore insights <ArrowUpRight size={14} /></button></div>
-    </section>
-  );
-}
-
-function InsightDetail({ icon, title, value, detail, tone }: { icon: React.ReactNode; title: string; value: string; detail: string; tone: string }) {
-  return <div className="insight-detail-card"><span className={`insight-detail-icon ${tone}`}>{icon}</span><div className="insight-detail-copy"><span>{title}</span><strong>{value}</strong><p>{detail}</p></div></div>;
-}
-
-function summarySentence(
-  totals: ReturnType<typeof calculateTotals>,
-  topCategory: ReturnType<typeof getCategoryTotals>[number] | undefined,
-  currency: string,
-): string {
-  if (totals.transactionCount === 0) return "No transactions in this period yet. Pick another period or import a statement.";
-  if (totals.income === 0) return `You’ve recorded ${formatCurrency(totals.expenses, currency)} in outgoing payments. Add income transactions for a complete cash-flow picture.`;
-  const rate = Math.round(totals.savingsRate);
-  const start = rate >= 0
-    ? `You kept ${rate}% of the ${formatCurrency(totals.income, currency)} that came in`
-    : `You spent ${formatCurrency(totals.expenses - totals.income, currency)} more than came in`;
-  return `${start}${topCategory ? `, and ${topCategory.category.toLowerCase()} was your largest spending area at ${formatCurrency(topCategory.amount, currency)}.` : "."}`;
-}
-
-function PrivacyModal({ email, onClose }: { email: string | null; onClose: () => void }) {
-  return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="privacy-modal" role="dialog" aria-modal="true" aria-labelledby="privacy-heading">
-        <button className="icon-button modal-close" onClick={onClose} aria-label="Close"><X size={18} /></button>
-        <div className="privacy-modal-icon"><LockKeyhole size={21} /></div>
-        <div className="panel-kicker">PRIVATE BY DESIGN</div>
-        <h2 id="privacy-heading">Your records stay in this browser.</h2>
-        <p>Statements and saved SportyBet pages are read on your device. Transactions are kept in this browser’s IndexedDB storage; goals, bets, rules, and budgets in its local storage.</p>
-        {email && <p>Cloudflare Access verified your identity as <strong>{email}</strong>. Sign-in is only for access control; it does not upload or sync financial records.</p>}
-        <ul><li><Check size={15} /> No bank login or credentials are collected</li><li><Check size={15} /> No financial records are sent to a server</li><li><Check size={15} /> Download a full backup file any time from Data & rules</li></ul>
-        <p className="privacy-modal-note">Cloudflare Access sign-in verifies identity only. Your financial data remains on this device.</p>
-        <button className="button button-primary modal-done" onClick={onClose}>Got it</button>
-      </section>
-    </div>
-  );
-}
-
-function AccessCard({ status, onSignIn, onDetails }: { status: AccessStatus; onSignIn: () => void; onDetails: () => void }) {
-  const checking = status.state === "checking";
-  const title = checking
-    ? "Checking sign-in"
-    : status.state === "signed-in"
-      ? "Cloudflare Access verified"
-      : "Records stay on this device";
-  const detail = status.state === "signed-in"
-    ? `Signed in as ${status.email}. Financial records stay in this browser.`
-    : status.state === "signed-out"
-      ? "Your records stay in this browser. Sign in with Cloudflare Access if required."
-      : status.state === "unavailable"
-        ? status.message ?? "Access sign-in is not configured on this site."
-        : "Financial records are stored locally in this browser.";
-  return (
-    <div className="privacy-card access-card" role="status" aria-live="polite">
-      <div className="privacy-icon">{checking ? <LoaderCircle className="spin" size={16} /> : <LockKeyhole size={16} />}</div>
-      <strong>{title}</strong>
-      <p title={detail}>{detail}</p>
-      <div className="access-card-actions">
-        {status.state === "signed-out" && <button onClick={onSignIn}><LockKeyhole size={12} /> Sign in</button>}
-        <button onClick={onDetails}>How it works <ArrowUpRight size={13} /></button>
-      </div>
     </div>
   );
 }
