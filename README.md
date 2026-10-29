@@ -42,6 +42,7 @@ Transfers to or from your own name (in any order, at least two name parts, inclu
 - **Exclude/include** any transaction from totals, **delete** it, or **add** a manual entry (cash spending or cash sales).
 - **Periods**: last 30/90 days, this month, last month, last 12 months, this year, all time, or custom dates. When a period has no data the app shows where your history starts and ends.
 - **Re-categorise history** (Data & rules) re-runs the latest categorisation over transactions imported with an older version, without touching categories you picked by hand.
+- **Evaluate classification models** (Data & rules) compares the current classifier with logistic regression and a decision tree using a chronological holdout of manually selected or accepted categories. It reports accuracy and macro-F1 without changing transactions or saving a model. Linear SVM is tested only when a simpler model improves both metrics by at least 3 percentage points on 30 or more holdout rows. Evaluation runs locally in the browser.
 - **Classification review** focuses on low-confidence and conflicting suggestions. Search and filter the queue, select a batch to confirm or accept, or adjust a category inline. **Accept & create rule** opens an editable match composer with a live preview of matching history and the number of unlocked categories that will change. Manual entries and hand-picked categories stay protected.
 
 ## Accounts, recurring bills and cash flow

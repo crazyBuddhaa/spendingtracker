@@ -1458,6 +1458,7 @@ function App() {
             <DataPage
               rules={rules}
               transactions={transactions}
+              recipientProfiles={recipientProfiles}
               counts={{ transactions: transactions.length, goals: savingsGoals.length, circles: savingsCircles.length, bets: bets.length, budgets: budgets.length, profiles: recipientProfiles.length, bills: recurringBills.length }}
               matchCount={(rule) => transactions.filter((transaction) => ruleMatches(rule, transaction)).length}
               onAddRule={addRule}

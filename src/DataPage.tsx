@@ -1,7 +1,8 @@
-import { useRef, useState } from "react";
-import { DatabaseBackup, Download, ListChecks, LockKeyhole, Plus, ShieldCheck, Trash2, Upload, Wand2 } from "lucide-react";
-import { categoryList, type Category, type CategoryRule, type CategoryRuleMatchType, type Direction, type Transaction } from "./types";
+import { useEffect, useRef, useState } from "react";
+import { BarChart3, DatabaseBackup, Download, ListChecks, LockKeyhole, Plus, ShieldCheck, Trash2, Upload, Wand2 } from "lucide-react";
+import { categoryList, type Category, type CategoryRule, type CategoryRuleMatchType, type Direction, type RecipientProfile, type Transaction } from "./types";
 import { formatDate } from "./lib/format";
+import { evaluateClassificationModels, type ClassificationModelEvaluation, type ClassificationModelName, type ClassificationModelScore } from "./lib/classificationModels";
 import type { AccessStatus } from "./useAccessAuth";
 
 const ruleMatchTypeLabels: Record<CategoryRuleMatchType, string> = {
@@ -15,6 +16,7 @@ const ruleMatchTypeLabels: Record<CategoryRuleMatchType, string> = {
 interface DataPageProps {
   rules: CategoryRule[];
   transactions: Transaction[];
+  recipientProfiles: RecipientProfile[];
   counts: { transactions: number; goals: number; circles: number; bets: number; budgets: number; profiles: number; bills: number };
   matchCount: (rule: Pick<CategoryRule, "pattern" | "direction" | "matchType">) => number;
   onAddRule: (rule: Omit<CategoryRule, "id" | "createdAt">) => void;
@@ -30,6 +32,7 @@ interface DataPageProps {
 export default function DataPage({
   rules,
   transactions,
+  recipientProfiles,
   counts,
   matchCount,
   onAddRule,
@@ -49,12 +52,18 @@ export default function DataPage({
   const [markInternal, setMarkInternal] = useState(false);
   const [historyStart, setHistoryStart] = useState("");
   const [historyEnd, setHistoryEnd] = useState("");
+  const [modelEvaluation, setModelEvaluation] = useState<ClassificationModelEvaluation | null>(null);
   const preview = pattern.trim().length >= 2 ? matchCount({ pattern: pattern.trim().toLowerCase(), direction: direction || undefined, matchType }) : null;
   const historyRangeValid = !historyStart || !historyEnd || historyStart <= historyEnd;
+  const verifiedLabelCount = transactions.filter((transaction) => transaction.categoryLocked || transaction.manual).length;
   const historyEligibleCount = historyRangeValid ? transactions.filter((transaction) =>
     !transaction.manual && !transaction.categoryLocked &&
     (!historyStart || transaction.date >= historyStart) &&
     (!historyEnd || transaction.date <= historyEnd)).length : 0;
+
+  useEffect(() => {
+    setModelEvaluation(null);
+  }, [transactions, rules, recipientProfiles]);
 
   const submitRule = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -63,6 +72,29 @@ export default function DataPage({
     setPattern("");
     setMarkInternal(false);
   };
+
+  const runModelEvaluation = () => {
+    setModelEvaluation(evaluateClassificationModels(transactions, rules, recipientProfiles));
+  };
+
+  const modelName: Record<ClassificationModelName, string> = {
+    rules: "Existing rules",
+    "logistic-regression": "Logistic regression",
+    "decision-tree": "Decision tree",
+    "linear-svm": "Linear SVM",
+  };
+
+  const formatScore = (value: number) => `${(value * 100).toFixed(1)}%`;
+  const formatDelta = (value: number) => `${value > 0 ? "+" : value < 0 ? "−" : ""}${Math.abs(value * 100).toFixed(1)} pp`;
+  const scoreRow = (name: string, score: ClassificationModelScore, baseline = false) => (
+    <tr key={name}>
+      <th scope="row">{name}{score.meaningfulImprovement && <small>Meaningful holdout improvement</small>}</th>
+      <td>{formatScore(score.accuracy)}</td>
+      <td>{formatScore(score.macroF1)}</td>
+      <td>{baseline ? "—" : formatDelta(score.accuracyDelta)}</td>
+      <td>{baseline ? "—" : formatDelta(score.macroF1Delta)}</td>
+    </tr>
+  );
 
   return (
     <section className="data-page">
@@ -116,6 +148,59 @@ export default function DataPage({
           </div>
         </section>
       </div>
+
+      <section className="panel model-evaluation-panel">
+        <div className="panel-heading">
+          <div><div className="panel-kicker">LOCAL MODEL EVALUATION</div><h2>Compare classification models</h2></div>
+          <BarChart3 size={16} className="muted-icon" />
+        </div>
+        <p className="panel-note">
+          Compare the current classifier—including custom rules, recipient profiles, and payee history—with logistic regression and a decision tree. Only categories you accepted or selected by hand are labels, and payee history is built from training dates only. Everything runs in this browser; no model is saved or used to change categories.
+        </p>
+        <div className="history-reclassification-count">
+          {verifiedLabelCount.toLocaleString("en-NG")} user-verified transaction labels available · up to 2,000 recent labels are evaluated
+        </div>
+        <div className="data-actions">
+          <button className="button button-secondary" onClick={runModelEvaluation} disabled={verifiedLabelCount < 13}>
+            <BarChart3 size={14} /> Evaluate models
+          </button>
+        </div>
+        {verifiedLabelCount < 13 && <p className="panel-note">Add or confirm more transaction categories first; evaluation needs at least 13 verified transactions across multiple dates.</p>}
+        {modelEvaluation && (
+          modelEvaluation.status === "insufficient-data" ? (
+            <div className="counterparty-empty" role="status">{modelEvaluation.reason}</div>
+          ) : (
+            <div className="model-evaluation-results" aria-live="polite">
+              <div className="history-reclassification-count">
+                Chronological holdout · {modelEvaluation.trainingCount.toLocaleString("en-NG")} training rows through {formatDate(modelEvaluation.trainEndDate ?? "")}
+                {" · "}{modelEvaluation.testCount.toLocaleString("en-NG")} test rows from {formatDate(modelEvaluation.testStartDate ?? "")}
+              </div>
+              <div className="simple-table-wrap">
+                <table className="simple-table">
+                  <thead><tr><th>METHOD</th><th>ACCURACY</th><th>MACRO-F1</th><th>ACCURACY VS RULES</th><th>MACRO-F1 VS RULES</th></tr></thead>
+                  <tbody>
+                    {modelEvaluation.ruleBaseline && scoreRow("Current rule baseline", modelEvaluation.ruleBaseline, true)}
+                    {modelEvaluation.logisticRegression && scoreRow("Logistic regression", modelEvaluation.logisticRegression)}
+                    {modelEvaluation.decisionTree && scoreRow("Decision tree", modelEvaluation.decisionTree)}
+                    {modelEvaluation.svm.score && scoreRow("Linear SVM", modelEvaluation.svm.score)}
+                  </tbody>
+                </table>
+              </div>
+              <div className="model-evaluation-recommendation" role="status">
+                <strong>{modelEvaluation.recommendedModel === "rules" ? "Keep the current rules as the benchmark" : `Best candidate: ${modelName[modelEvaluation.recommendedModel!]}`}</strong>
+                <span>
+                  {modelEvaluation.recommendedModel === "rules"
+                    ? "No model met the pre-set improvement bar on held-out transactions. Nothing was deployed."
+                    : "This is an evaluation result only; the model has not been deployed and categories were not changed."}
+                </span>
+              </div>
+              <p className="panel-note">
+                {modelEvaluation.svm.reason} Meaningful improvement requires at least 30 test rows and gains of 3 percentage points in both accuracy and macro-F1.
+              </p>
+            </div>
+          )
+        )}
+      </section>
 
       <section className="panel rules-panel">
         <div className="panel-heading">
