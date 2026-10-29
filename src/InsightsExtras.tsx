@@ -700,22 +700,38 @@ export default function InsightsExtras({ transactions, allTransactions, range, c
 
       <section className="panel extras-panel spending-forecast-panel">
         <div className="panel-heading">
-          <div><div className="panel-kicker">SPENDING FORECASTS · RUN RATE</div><h2>Projected spending</h2></div>
+          <div>
+            <div className="panel-kicker">
+              {forecasts.method === "linear-regression"
+                ? "PREDICTIVE ANALYSIS · LINEAR REGRESSION"
+                : forecasts.method === "run-rate"
+                  ? "SPENDING FORECASTS · RUN RATE"
+                  : "SPENDING FORECASTS · BUILDING BASELINE"}
+            </div>
+            <h2>Projected spending</h2>
+          </div>
           <Activity size={16} className="muted-icon" />
         </div>
         <div className="forecast-metrics">
           <div className="forecast-metric">
-            <span>MONTH-END AT CURRENT PACE</span>
+            <span>MONTH-END PROJECTION</span>
             <strong>{forecasts.monthEndProjection === null ? "Building baseline" : formatCurrency(forecasts.monthEndProjection, currency, true)}</strong>
             <small>{formatMonth(forecasts.asOfDate.slice(0, 7))} · {formatCurrency(forecasts.monthToDateSpending, currency, true)} across {forecasts.monthHistoryDays} days of history</small>
           </div>
           <div className="forecast-metric">
-            <span>NEXT 30 DAYS AT RECENT PACE</span>
+            <span>NEXT 30 DAYS</span>
             <strong>{forecasts.next30DayProjection === null ? "Building baseline" : formatCurrency(forecasts.next30DayProjection, currency, true)}</strong>
             <small>{formatCurrency(forecasts.recentWindowSpending, currency, true)} over {forecasts.recentWindowDays} recorded-history days since {formatDate(forecasts.recentWindowStart)}</small>
           </div>
         </div>
-        <p className="panel-note">Simple extrapolations from recorded expenses after refunds; internal transfers are excluded. They assume imported history is up to date and do not model future bills or seasonal changes. Month-end needs seven elapsed days; the 30-day estimate needs 14 days of history.</p>
+        <p className="panel-note">
+          {forecasts.method === "linear-regression"
+            ? `A daily linear regression uses ${forecasts.trainingDays} recent calendar days (${forecasts.activeExpenseDays} with spending), combining a time trend with weekday patterns.`
+            : forecasts.method === "run-rate"
+              ? `Using a simple run rate until the model has at least 28 calendar days and 10 active expense days.`
+              : "A forecast appears after at least seven days of month history or 14 days of recent history; regression additionally needs 28 calendar days and 10 active expense days."}
+          {" "}Calculations include refunds and exclude internal transfers; estimates assume your history is current and do not include future bills.
+        </p>
       </section>
 
       <section className="panel extras-panel spending-timeline-panel">
