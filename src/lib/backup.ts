@@ -1,4 +1,4 @@
-import { categoryList, type AccountPreferences, type BetRecord, type Budget, type Category, type CategoryRule, type RecipientProfile, type RecurringBill, type SavingsCircle, type SavingsGoal, type Transaction } from "../types.ts";
+import { categoryList, type AccountPreferences, type BetRecord, type Budget, type Category, type CategoryRule, type MutationEntry, type RecipientProfile, type RecurringBill, type SavingsCircle, type SavingsGoal, type StatementSnapshot, type Transaction } from "../types.ts";
 import { normaliseAccountPreferences } from "./accounts.ts";
 import { normaliseRecurringBills } from "./recurringBills.ts";
 import { normaliseBets } from "./sportyBetImport.ts";
@@ -7,6 +7,7 @@ import { normaliseSavingsGoals } from "./savings.ts";
 import { parseStoredTransactions, serializeTransactions } from "./transactionStorage.ts";
 import { normaliseRecipientProfiles } from "./recipientProfiles.ts";
 import { normaliseIncomeSourceOverrides, type IncomeSourceOverrides } from "./financialIndicators.ts";
+import { MUTATION_LOG_LIMIT, normaliseMutationLog, normaliseStatementSnapshots } from "./reconciliation.ts";
 
 export const BACKUP_FORMAT = "spendwise.backup.v1";
 
@@ -23,6 +24,10 @@ export interface BackupData {
   incomeSourceOverrides?: IncomeSourceOverrides;
   /** Starting balance used by the cash-flow projection on the Bills page. */
   projectionOpeningBalance?: number;
+  /** Declared statement periods used by the reconciliation engine. */
+  statementSnapshots?: StatementSnapshot[];
+  /** Append-only local audit trail. */
+  mutationLog?: MutationEntry[];
 }
 
 const validCategories = new Set<string>(categoryList);
@@ -76,6 +81,8 @@ export function createBackup(data: BackupData, now = new Date()): string {
     accountPreferences: normaliseAccountPreferences(data.accountPreferences),
     incomeSourceOverrides: normaliseIncomeSourceOverrides(data.incomeSourceOverrides),
     projectionOpeningBalance: finiteOrZero(data.projectionOpeningBalance),
+    statementSnapshots: normaliseStatementSnapshots(data.statementSnapshots),
+    mutationLog: normaliseMutationLog(data.mutationLog).slice(-MUTATION_LOG_LIMIT),
   });
 }
 
@@ -105,5 +112,7 @@ export function readBackup(text: string): BackupData | null {
     accountPreferences: normaliseAccountPreferences(backup.accountPreferences),
     incomeSourceOverrides: normaliseIncomeSourceOverrides(backup.incomeSourceOverrides),
     projectionOpeningBalance: finiteOrZero(backup.projectionOpeningBalance),
+    statementSnapshots: normaliseStatementSnapshots(backup.statementSnapshots),
+    mutationLog: normaliseMutationLog(backup.mutationLog),
   };
 }
