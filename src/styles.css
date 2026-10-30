@@ -565,6 +565,21 @@ h1 { margin: 9px 0 5px; color: #25352c; font: 700 24px "Manrope", sans-serif; le
 .bet-match-row strong { color: #45554a; }
 .bet-match-row span:last-child { text-align: right; }
 .bet-match-more { padding: 9px 4px 2px; color: #89948d; font-size: 9px; }
+/* -------- betting bank correlation -------- */
+.bet-correlation-panel { margin-bottom: 14px; }
+.bet-match-suggestion { grid-template-columns: minmax(85px,.7fr) auto minmax(110px,1fr) minmax(150px,1.3fr) minmax(170px,1.4fr) auto; align-items: center; gap: 10px; }
+.bet-match-side { justify-self: start; padding: 2px 8px; border-radius: 999px; font-size: 8.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.bet-match-side-stake { background: #fdeae6; color: #8f3d2c; }
+.bet-match-side-return { background: #e7f2ee; color: #2d5a45; }
+.bet-match-why { font-size: 9px; color: #89948d; }
+.bet-match-confirm { height: 26px; padding: 0 10px; font-size: 10px; gap: 5px; }
+.bet-confirmed-links { margin-top: 12px; }
+.bet-confirmed-links .bet-confirmed-heading { display: flex; align-items: center; gap: 7px; font-size: 9px; font-weight: 800; letter-spacing: .08em; color: #7c8a80; text-transform: uppercase; padding-bottom: 7px; }
+.bet-link-dangling { opacity: .55; }
+@media (max-width: 900px) {
+  .bet-match-suggestion { grid-template-columns: minmax(0,1fr) auto; }
+  .bet-match-suggestion > * { min-width: 0; }
+}
 .bet-analytics-grid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 15px; }
 .bet-analysis-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .bet-analysis-heading select { max-width: 125px; height: 30px; padding: 0 8px; border: 1px solid #e4e8e3; border-radius: 6px; color: #69756d; background: #fff; font-size: 9px; }
@@ -1461,6 +1476,40 @@ button.financial-list-row:hover { background: #f7faf7; }
 .reconcile-report-label small { grid-column: 2; color: #8a948d; font-size: 11.5px; }
 .reconcile-report-value { font-size: 14.5px; font-variant-numeric: tabular-nums; }
 .transfer-link-list { margin-top: 6px; }
+/* -------- investments (own model) -------- */
+.inv-asset-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.inv-asset { border: 1px solid #e4ebe6; border-radius: 14px; background: #fbfdfc; padding: 13px 15px; display: grid; gap: 10px; }
+.inv-asset-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.inv-asset-head > strong { font-size: 15px; color: #23322a; }
+.inv-asset-head-meta { display: inline-flex; align-items: center; gap: 8px; color: #72806f; font-size: 12px; }
+.inv-type-tag { font-style: normal; padding: 2px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 700; letter-spacing: .03em; background: #e8f0fb; color: #33548a; }
+.inv-type-crypto { background: #fdf3e0; color: #86622a; }
+.inv-type-bonds--treasury-bills { background: #eef4e9; color: #4c713a; }
+.inv-type-fixed-savings { background: #e7f2ee; color: #2d5a45; }
+.inv-type-real-estate { background: #fdeae6; color: #8f3d2c; }
+.inv-type-etfs--mutual-funds { background: #eeeafb; color: #5a4899; }
+.inv-action { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; }
+.inv-action-buy { background: #fdeae6; color: #8f3d2c; }
+.inv-action-sell, .inv-action-income { background: #e7f2ee; color: #2d5a45; }
+.inv-action-fee { background: #f0eee7; color: #6f6752; }
+.inv-asset-facts { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.inv-asset-facts > div { border: 1px solid #e9efe9; border-radius: 10px; padding: 8px 10px; background: #fff; }
+.inv-asset-facts dt { font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase; color: #8a948d; margin-bottom: 3px; }
+.inv-asset-facts dd { margin: 0; font-size: 13.5px; color: #23322a; }
+.inv-value-block { display: grid; gap: 6px; }
+.inv-value-current { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin: 0; color: #47534a; font-size: 12.5px; }
+.inv-value-current strong { font-size: 13.5px; }
+.inv-value-current em { font-style: normal; color: #8a948d; }
+.inv-value-current--unset { color: #8a948d; }
+.inv-value-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.inv-value-form input { width: 190px; }
+@media (max-width: 900px) {
+  .inv-asset-grid { grid-template-columns: minmax(0, 1fr); }
+  .inv-asset-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 520px) {
+  .inv-asset-facts { grid-template-columns: minmax(0, 1fr); }
+}
 @media (max-width: 900px) {
   .form-grid { grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
   .reconcile-snapshot-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }

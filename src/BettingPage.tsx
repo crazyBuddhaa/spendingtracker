@@ -1,18 +1,28 @@
 import { useMemo, useState } from "react";
-import { Check, CircleHelp, Plus, Search, Ticket, Trash2, Upload, X } from "lucide-react";
+import { Check, CircleHelp, Plus, Search, Ticket, Trash2, Unlink, Upload, X } from "lucide-react";
 import type { BetCategory, BetRecord, BetStatus, Transaction } from "./types";
 import { betCategories } from "./types";
 import { getBettingInsights, type BetAggregate } from "./lib/bettingInsights";
-import { findBetMatchCandidates } from "./lib/bettingReconciliation";
+import {
+  findBetPaymentMatches,
+  summariseBettingCorrelation,
+  type BetMatchMethod,
+  type BetMatchSide,
+  type BetPaymentMatch,
+} from "./lib/bettingCorrelation";
+import { linkKey, type BettingLink } from "./lib/bettingLinks";
 
 interface BettingPageProps {
   bets: BetRecord[];
   transactions: Transaction[];
   currency: string;
+  bankLinks: BettingLink[];
   onImport: () => void;
   onAddBet: (bet: Omit<BetRecord, "id">) => void;
   onChangeCategory: (betId: string, category: BetCategory) => void;
   onDeleteBet: (betId: string) => void;
+  onConfirmLink: (match: BetPaymentMatch) => void;
+  onRemoveLink: (linkId: string) => void;
 }
 
 const statusLabels: Record<BetStatus, string> = {
@@ -22,6 +32,17 @@ const statusLabels: Record<BetStatus, string> = {
   void: "Void",
   "cashed-out": "Cashed out",
   other: "Other",
+};
+
+const sideLabels: Record<BetMatchSide, string> = {
+  stake: "Stake",
+  return: "Winnings",
+};
+
+const methodLabels: Record<BetMatchMethod, string> = {
+  exact: "Same date, operator, and amount",
+  "operator-window": "Operator and amount match; date inside the posting window",
+  "date-amount": "Amount matches; operator not named on the bank row",
 };
 
 function formatCurrency(amount: number, currency: string): string {
@@ -51,10 +72,13 @@ export default function BettingPage({
   bets,
   transactions,
   currency,
+  bankLinks,
   onImport,
   onAddBet,
   onChangeCategory,
   onDeleteBet,
+  onConfirmLink,
+  onRemoveLink,
 }: BettingPageProps) {
   const [categoryFilter, setCategoryFilter] = useState("All categories");
   const [statusFilter, setStatusFilter] = useState("All outcomes");
@@ -76,9 +100,26 @@ export default function BettingPage({
     .filter((bet) => !normalizedQuery || `${bet.events.join(" ")} ${bet.source} ${bet.betType}`.toLowerCase().includes(normalizedQuery))
     .sort((a, b) => b.date.localeCompare(a.date)), [bets, categoryFilter, statusFilter, normalizedQuery]);
   const insights = useMemo(() => getBettingInsights(bets), [bets]);
-  const betMatchCandidates = useMemo(
-    () => findBetMatchCandidates(transactions, bets),
+  const betById = useMemo(() => new Map(bets.map((bet) => [bet.id, bet])), [bets]);
+  const transactionById = useMemo(() => new Map(transactions.map((transaction) => [transaction.id, transaction])), [transactions]);
+  const betPaymentMatches = useMemo(
+    () => findBetPaymentMatches(transactions, bets),
     [transactions, bets],
+  );
+  const confirmedPairs = useMemo(() => new Set(bankLinks.map((link) => linkKey(link.betId, link.transactionId))), [bankLinks]);
+  const suggestedMatches = useMemo(
+    () => betPaymentMatches.filter((match) => !confirmedPairs.has(linkKey(match.betId, match.transactionId))),
+    [betPaymentMatches, confirmedPairs],
+  );
+  // Confirmed links whose row or bet is gone no longer describe real money, so
+  // they are excluded from the figures but stay visible until unlinked.
+  const validLinks = useMemo(
+    () => bankLinks.filter((link) => betById.has(link.betId) && transactionById.has(link.transactionId)),
+    [bankLinks, betById, transactionById],
+  );
+  const correlation = useMemo(
+    () => summariseBettingCorrelation(transactions, bets, validLinks),
+    [transactions, bets, validLinks],
   );
   const bettingBankDebits = useMemo(
     () => transactions.filter((transaction) => transaction.direction === "expense" && transaction.category === "Betting"),
@@ -161,29 +202,83 @@ export default function BettingPage({
         <p className="bet-analysis-note">ROI is settled net divided by settled stake. Return rate is gross settled return divided by settled stake, including returned stake. Win rate counts only won and lost bets. Void and cashed-out returns are included in settled net; open and “other” records are excluded.</p>
       </section>
 
+      <section className="panel bet-detail-panel bet-correlation-panel">
+        <div className="panel-heading">
+          <div><div className="panel-kicker">BANK CORRELATION</div><h2>Betting money against the bank statement</h2></div>
+          <span className="bet-outcome-total">{correlation.linkedStakes.count + correlation.linkedReturns.count} confirmed link{correlation.linkedStakes.count + correlation.linkedReturns.count === 1 ? "" : "s"}</span>
+        </div>
+        <div className="bet-quick-stats">
+          <QuickStat label="BETTING DEBITS ON BANK" value={formatCurrency(correlation.bankStakes.total, currency)} detail={`${correlation.bankStakes.count} betting-style row${correlation.bankStakes.count === 1 ? "" : "s"}`} />
+          <QuickStat label="STAKES LINKED TO BETS" value={`${formatCurrency(correlation.linkedStakes.total, currency)}${correlation.bankStakeCoverage === null ? "" : ` (${correlation.bankStakeCoverage}% of bank)`}`} detail={`Ledger coverage ${correlation.ledgerStakeCoverage === null ? "—" : `${correlation.ledgerStakeCoverage}%`}`} />
+          <QuickStat label="UNLINKED STAKE ON BANK" value={formatCurrency(correlation.unmatchedBankStakeTotal, currency)} detail="Bank debits not yet tied to a bet" tone={correlation.unmatchedBankStakeTotal > 0 ? "negative" : ""} />
+          <QuickStat label="WINNINGS CREDITED ON BANK" value={formatCurrency(correlation.bankReturns.total, currency)} detail={`${correlation.bankReturns.count} betting-style credit${correlation.bankReturns.count === 1 ? "" : "s"}`} />
+          <QuickStat label="WINNINGS LINKED" value={`${formatCurrency(correlation.linkedReturns.total, currency)}${correlation.bankReturnCoverage === null ? "" : ` (${correlation.bankReturnCoverage}% of bank)`}`} detail={`Ledger coverage ${correlation.ledgerReturnCoverage === null ? "—" : `${correlation.ledgerReturnCoverage}%`}`} />
+          <QuickStat label="LEDGER MONEY UNCONFIRMED" value={`${formatCurrency(correlation.unmatchedLedgerStakeTotal, currency)}`} detail="Stakes and returns with no confirmed bank row" tone={correlation.unmatchedLedgerStakeTotal + correlation.unmatchedLedgerReturnTotal > 0 ? "negative" : ""} />
+        </div>
+        <p className="bet-analysis-note">Coverage counts only links you confirmed from the review below. A wallet top-up split into several bets, or a statement row covering multiple bets of the same stake, shows up as unmatched on both sides — that is expected until you link those pairs deliberately.</p>
+      </section>
+
       <section className="panel bet-detail-panel bet-reconciliation-panel">
         <div className="panel-heading">
-          <div><div className="panel-kicker">BANK-LEDGER REVIEW</div><h2>Possible statement-to-bet matches</h2></div>
-          <span className="bet-outcome-total">{betMatchCandidates.length} exact candidate{betMatchCandidates.length === 1 ? "" : "s"}</span>
+          <div><div className="panel-kicker">BANK-LEDGER REVIEW</div><h2>Suggested and confirmed payment matches</h2></div>
+          <span className="bet-outcome-total">{suggestedMatches.length} suggestion{suggestedMatches.length === 1 ? "" : "s"}</span>
         </div>
-        <p className="bet-analysis-note">Suggestions require one bank debit and one bet with the same date, bookmaker, and stake. A statement debit may be a wallet top-up rather than a bet, so these are not linked automatically or included in betting profit.</p>
-        {betMatchCandidates.length > 0 ? (
+        <p className="bet-analysis-note">Each suggestion pairs one bank row with one bet by amount, operator, and date (a few days of posting slack is allowed). Nothing is linked automatically; confirming a match stores it locally as a link for the figures above, and it never changes any bet or transaction.</p>
+        {suggestedMatches.length > 0 ? (
           <div className="bet-match-list">
-            {betMatchCandidates.slice(0, 10).map((candidate) => (
-              <div className="bet-match-row" key={candidate.transactionId}>
-                <span>{formatBetDate(candidate.date)}</span>
-                <strong>{candidate.operator}</strong>
-                <span>{formatCurrency(candidate.amount, currency)}</span>
+            {suggestedMatches.slice(0, 12).map((match) => (
+              <div className="bet-match-row bet-match-suggestion" key={match.id}>
+                <span className="bet-match-date">{formatBetDate(match.bankDate)}</span>
+                <span className={`bet-match-side bet-match-side-${match.side}`}>{sideLabels[match.side]}</span>
+                <strong className="bet-match-operator" title={match.operator ?? undefined}>{match.operator ?? "Operator not named"}</strong>
+                <span className="bet-match-amounts">{formatCurrency(match.betAmount, currency)} ledger ↔ {formatCurrency(match.bankAmount, currency)} bank</span>
+                <small className="bet-match-why">
+                  {methodLabels[match.method]}
+                  {match.dateDeltaDays !== 0 && ` · bank ${match.dateDeltaDays > 0 ? "posted" : "recorded"} ${Math.abs(match.dateDeltaDays)} day${Math.abs(match.dateDeltaDays) === 1 ? "" : "s"} ${match.dateDeltaDays > 0 ? "after the bet" : "before the bet"}`}
+                </small>
+                <button className="button button-secondary bet-match-confirm" onClick={() => onConfirmLink(match)}>
+                  <Check size={13} /> Confirm link
+                </button>
               </div>
             ))}
-            {betMatchCandidates.length > 10 && <div className="bet-match-more">And {betMatchCandidates.length - 10} more exact candidates.</div>}
+            {suggestedMatches.length > 12 && <div className="bet-match-more">And {suggestedMatches.length - 12} more suggestions.</div>}
           </div>
         ) : (
           <div className="bet-empty-chart">
             <CircleHelp size={18} />
             {bettingBankDebits.length
-              ? `${bettingBankDebits.length} betting-related debit${bettingBankDebits.length === 1 ? "" : "s"} found, but none has a unique date, bookmaker, and stake match.`
-              : "Import an OPay statement and a bookmaker bet history to check for possible matches."}
+              ? `${bettingBankDebits.length} betting-related debit${bettingBankDebits.length === 1 ? "" : "s"} found, but no suggestion pairs one clearly with a single bet.`
+              : "Import an OPay statement (or any statement with betting rows) and a bet history to check for matches."}
+          </div>
+        )}
+
+        {bankLinks.length > 0 && (
+          <div className="bet-confirmed-links">
+            <div className="bet-confirmed-heading">CONFIRMED LINKS <span className="heading-count">{bankLinks.length}</span></div>
+            <div className="bet-table-wrap">
+              <table className="bet-table bet-link-table">
+                <thead><tr><th>DATE</th><th>SIDE</th><th>OPERATOR</th><th className="bet-amount-cell">LEDGER AMOUNT</th><th>FOUND BY</th><th></th></tr></thead>
+                <tbody>
+                  {bankLinks.map((link) => {
+                    const bet = betById.get(link.betId);
+                    const transaction = transactionById.get(link.transactionId);
+                    return (
+                      <tr key={link.id} className={!bet || !transaction ? "bet-link-dangling" : undefined}>
+                        <td className="bet-date">{formatBetDate(link.date)}</td>
+                        <td><span className={`bet-match-side bet-match-side-${link.side}`}>{sideLabels[link.side]}</span></td>
+                        <td className="bet-description" title={transaction?.description}>{link.operator ?? transaction?.description ?? "Record removed from this browser"}</td>
+                        <td className="bet-amount-cell">{formatCurrency(link.amount, currency)}</td>
+                        <td className="bet-description"><small>{methodLabels[link.method]}{bet ? ` · ${bet.source}` : " · bet removed"}</small></td>
+                        <td><button className="icon-button bet-delete" onClick={() => onRemoveLink(link.id)} aria-label="Unlink"><Unlink size={14} /></button></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {bankLinks.some((link) => !betById.has(link.betId) || !transactionById.has(link.transactionId)) && (
+              <p className="bet-analysis-note">Some links reference records that are no longer in this browser; unlink them to tidy the review.</p>
+            )}
           </div>
         )}
       </section>
@@ -347,8 +442,8 @@ function BetMetric({ label, value, detail, tone = "" }: { label: string; value: 
   return <section className={`panel bet-metric ${tone}`}><span>{label}</span><strong>{value}</strong><small>{detail}</small></section>;
 }
 
-function QuickStat({ label, value, detail }: { label: string; value: string; detail?: string }) {
-  return <div className="bet-quick-stat"><span>{label}</span><strong>{value}</strong>{detail && <small>{detail}</small>}</div>;
+function QuickStat({ label, value, detail, tone = "" }: { label: string; value: string; detail?: string; tone?: string }) {
+  return <div className={`bet-quick-stat ${tone}`}><span>{label}</span><strong>{value}</strong>{detail && <small>{detail}</small>}</div>;
 }
 
 function BreakdownRow({ row, currency }: { row: BetAggregate; currency: string }) {

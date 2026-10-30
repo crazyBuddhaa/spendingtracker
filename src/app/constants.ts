@@ -1,7 +1,7 @@
 import type { Period } from "../lib/insights";
 import type { Category, Transaction } from "../types";
 
-export type Page = "overview" | "accounts" | "transactions" | "review" | "reconcile" | "bills" | "insights" | "recipients" | "budgets" | "savings" | "betting" | "data";
+export type Page = "overview" | "accounts" | "transactions" | "review" | "reconcile" | "bills" | "insights" | "recipients" | "budgets" | "savings" | "betting" | "investments" | "data";
 
 export const pageTitles: Record<Page, string> = {
   overview: "Overview",
@@ -15,6 +15,7 @@ export const pageTitles: Record<Page, string> = {
   budgets: "Budgets",
   savings: "Savings",
   betting: "Betting",
+  investments: "Investments",
   data: "Data & rules",
 };
 

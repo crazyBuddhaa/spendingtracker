@@ -1,4 +1,5 @@
 import type { BetRecord, Transaction } from "../types.ts";
+import { operatorFromText } from "./bettingOperators.ts";
 
 export interface BetMatchCandidate {
   transactionId: string;
@@ -6,27 +7,6 @@ export interface BetMatchCandidate {
   date: string;
   operator: string;
   amount: number;
-}
-
-function operatorFromText(value: string): string | null {
-  const text = value.toLowerCase().replace(/[^a-z0-9]+/g, "");
-  const operators: Array<[string, string[]]> = [
-    ["SportyBet", ["sportybet", "sporty"]],
-    ["Footballing", ["footballing", "footballinternet", "football.com"]],
-    ["MSport", ["msport"]],
-    ["1XBET", ["1xbet", "onexbet"]],
-    ["Betano", ["betano"]],
-    ["Bet9ja", ["bet9ja"]],
-    ["BetKing", ["betking"]],
-    ["BetLion", ["betlion"]],
-    ["Betway", ["betway"]],
-    ["Paripesa", ["paripesa"]],
-    ["BangBet", ["bangbet"]],
-    ["SureBet", ["surebet"]],
-    ["Betwinner", ["betwinner"]],
-    ["iLot", ["ilot"]],
-  ];
-  return operators.find(([, aliases]) => aliases.some((alias) => text.includes(alias)))?.[0] ?? null;
 }
 
 function matchKey(date: string, amount: number, operator: string): string {

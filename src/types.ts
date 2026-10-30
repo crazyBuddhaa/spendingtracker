@@ -236,3 +236,60 @@ export interface BetImportResult {
   bets: BetRecord[];
   warnings: string[];
 }
+
+/* ------------------------------------------------ investments (own model) */
+
+export const investmentAssetTypes = [
+  "Stocks",
+  "ETFs & mutual funds",
+  "Crypto",
+  "Bonds & treasury bills",
+  "Fixed savings",
+  "Real estate",
+  "Commodities",
+  "Other",
+] as const;
+
+export type InvestmentAssetType = typeof investmentAssetTypes[number];
+
+export const investmentActions = ["buy", "sell", "income", "fee"] as const;
+
+export type InvestmentAction = typeof investmentActions[number];
+
+export const investmentActionLabels: Record<InvestmentAction, string> = {
+  buy: "Bought",
+  sell: "Sold",
+  income: "Interest / dividend",
+  fee: "Fee",
+};
+
+/** One local ledger event for one holding. Amounts are magnitudes; the action says which way the cash moved. */
+export interface InvestmentRecord {
+  id: string;
+  date: string;
+  assetType: InvestmentAssetType;
+  /** The holding itself, e.g. “GTB shares” or “NGN 91-day treasury bill”. */
+  asset: string;
+  action: InvestmentAction;
+  /** Positive cash magnitude for the event. */
+  amount: number;
+  units?: number;
+  pricePerUnit?: number;
+  /** Platform or broker label. */
+  broker: string;
+  note?: string;
+}
+
+/** A manual mark of what a holding is worth today; the app never fetches live prices. */
+export interface InvestmentValuation {
+  id: string;
+  asset: string;
+  marketValue: number;
+  asOf: string;
+  note?: string;
+}
+
+export interface InvestmentStore {
+  records: InvestmentRecord[];
+  valuations: InvestmentValuation[];
+}

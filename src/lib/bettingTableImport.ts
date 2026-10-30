@@ -15,16 +15,16 @@ type BetColumns = {
 };
 
 const headerAliases = {
-  date: ["date", "bet date", "placed date", "placed at", "placed on", "created at", "created on", "timestamp", "date time"],
-  stake: ["total stake", "stake amount", "amount staked", "bet amount", "wager amount", "wager", "stake"],
-  amount: ["amount"],
-  returnAmount: ["total return", "return amount", "total payout", "payout", "potential return", "potential payout", "total winnings", "winnings", "win amount", "amount won", "return"],
+  date: ["date", "bet date", "placed date", "placed at", "placed on", "created at", "created on", "timestamp", "date time", "event date", "match date"],
+  stake: ["total stake", "stake amount", "amount staked", "bet amount", "wager amount", "total bet", "wager", "stake"],
+  amount: ["amount", "total amount"],
+  returnAmount: ["total return", "return amount", "total payout", "payout", "potential return", "potential payout", "total winnings", "winnings", "win amount", "amount won", "returns", "total returns", "payout amount", "winning amount", "return"],
   profit: ["net profit", "net winnings", "profit loss", "profit"],
   status: ["bet status", "settlement status", "result", "outcome", "settlement", "status"],
-  event: ["event name", "match name", "bet details", "description", "fixture", "selection", "selections", "match", "event", "game"],
+  event: ["event name", "match name", "bet details", "selection details", "match details", "description", "fixture", "selection", "selections", "match", "event", "game"],
   betType: ["bet type", "wager type", "type"],
-  category: ["sport category", "sport", "sports", "category"],
-  id: ["bet reference", "ticket number", "ticket id", "bet number", "reference", "bet id", "id"],
+  category: ["sport category", "sport type", "sport", "sports", "category"],
+  id: ["bet reference", "ticket number", "ticket id", "ticket reference", "bet number", "reference", "bet id", "id"],
 } as const;
 
 function text(value: unknown): string {
@@ -184,6 +184,21 @@ export function parseBettingTableRows(rows: unknown[][], source = "Imported file
     }
   }
 
+  // Some exports have no Stake column but carry Return and P/L; then the stake
+  // is reconstructed per row as return − profit, and flagged as derived.
+  let derivedStake = false;
+  if (headerIndex < 0 && columns === null) {
+    for (let index = 0; index < Math.min(normalisedRows.length, 50); index += 1) {
+      const candidate = mapColumns(normalisedRows[index]);
+      if (candidate.date >= 0 && candidate.returnAmount >= 0 && candidate.profit >= 0) {
+        headerIndex = index;
+        columns = candidate;
+        derivedStake = true;
+        break;
+      }
+    }
+  }
+
   if (headerIndex < 0 || !columns) {
     return {
       bets: [],
@@ -197,8 +212,7 @@ export function parseBettingTableRows(rows: unknown[][], source = "Imported file
   for (const row of normalisedRows.slice(headerIndex + 1)) {
     if (!row.some(Boolean)) continue;
     const date = parseDate(row[columns.date]);
-    const stake = parseAmount(row[columns.stake]);
-    if (!date || stake === null) {
+    if (!date) {
       skipped += 1;
       continue;
     }
@@ -206,6 +220,13 @@ export function parseBettingTableRows(rows: unknown[][], source = "Imported file
     const status = parseStatus(columns.status >= 0 ? row[columns.status] : "");
     const explicitReturn = columns.returnAmount >= 0 ? parseAmount(row[columns.returnAmount]) : null;
     const profit = columns.profit >= 0 ? parseAmount(row[columns.profit], true) : null;
+    const stake = derivedStake && explicitReturn !== null && profit !== null
+      ? Math.round((explicitReturn - profit) * 100) / 100
+      : parseAmount(columns.stake >= 0 ? row[columns.stake] : "");
+    if (stake === null || stake <= 0) {
+      skipped += 1;
+      continue;
+    }
     const returnAmount = explicitReturn
       ?? (profit !== null ? Math.max(0, stake + profit) : status === "void" ? stake : 0);
     const event = columns.event >= 0 ? row[columns.event].trim() : "";
@@ -227,6 +248,7 @@ export function parseBettingTableRows(rows: unknown[][], source = "Imported file
   }
 
   const warnings: string[] = [];
+  if (derivedStake) warnings.push("No Stake column was found; each stake was derived from Return − Profit in the file.");
   if (skipped) warnings.push(`${skipped} row${skipped === 1 ? "" : "s"} without a readable date and stake ${skipped === 1 ? "was" : "were"} skipped.`);
   if (!bets.length && !warnings.length) warnings.push("No betting rows were found below the table headers.");
   return { bets, warnings };

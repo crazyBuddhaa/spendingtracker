@@ -8,6 +8,8 @@ import { parseStoredTransactions, serializeTransactions } from "./transactionSto
 import { normaliseRecipientProfiles } from "./recipientProfiles.ts";
 import { normaliseIncomeSourceOverrides, type IncomeSourceOverrides } from "./financialIndicators.ts";
 import { MUTATION_LOG_LIMIT, normaliseMutationLog, normaliseStatementSnapshots } from "./reconciliation.ts";
+import { normaliseInvestments, type InvestmentStore } from "./investments.ts";
+import { normaliseBettingLinks, type BettingLink } from "./bettingLinks.ts";
 
 export const BACKUP_FORMAT = "spendwise.backup.v1";
 
@@ -28,6 +30,10 @@ export interface BackupData {
   statementSnapshots?: StatementSnapshot[];
   /** Append-only local audit trail. */
   mutationLog?: MutationEntry[];
+  /** Manual investment ledger and the value marks that go with it. */
+  investments?: InvestmentStore;
+  /** Confirmed bet-ledger ↔ bank-row links for the betting correlation panel. */
+  bettingLinks?: BettingLink[];
 }
 
 const validCategories = new Set<string>(categoryList);
@@ -83,6 +89,8 @@ export function createBackup(data: BackupData, now = new Date()): string {
     projectionOpeningBalance: finiteOrZero(data.projectionOpeningBalance),
     statementSnapshots: normaliseStatementSnapshots(data.statementSnapshots),
     mutationLog: normaliseMutationLog(data.mutationLog).slice(-MUTATION_LOG_LIMIT),
+    investments: normaliseInvestments(data.investments),
+    bettingLinks: normaliseBettingLinks(data.bettingLinks),
   });
 }
 
@@ -114,5 +122,7 @@ export function readBackup(text: string): BackupData | null {
     projectionOpeningBalance: finiteOrZero(backup.projectionOpeningBalance),
     statementSnapshots: normaliseStatementSnapshots(backup.statementSnapshots),
     mutationLog: normaliseMutationLog(backup.mutationLog),
+    investments: normaliseInvestments(backup.investments),
+    bettingLinks: normaliseBettingLinks(backup.bettingLinks),
   };
 }
