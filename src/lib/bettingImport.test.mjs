@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import * as XLSX from "xlsx";
 import { parseBettingCsv, parseBettingWorkbook } from "./bettingFileImport.ts";
 import { parseBettingPdfPages, parseBettingTableRows } from "./bettingTableImport.ts";
+import { normaliseBets, parseSportyBetPage } from "./sportyBetImport.ts";
 
 describe("betting history imports", () => {
   it("maps CSV betting records with common headers and day-first dates", async () => {
@@ -86,5 +87,46 @@ describe("betting history imports", () => {
 
     assert.equal(result.bets.length, 0);
     assert.match(result.warnings[0], /couldn't find betting columns/i);
+  });
+
+  it("derives stakes from Return and P/L when the file has no stake column", () => {
+    const result = parseBettingTableRows([
+      ["Date", "Selections", "Total Return", "Profit", "Status"],
+      ["2026-10-21", "Team I v Team J", "800", "300", "Won"],
+      ["2026-10-22", "Team K v Team L", "0", "-1200", "Lost"],
+    ], "betting.csv");
+
+    assert.equal(result.bets.length, 2);
+    assert.equal(result.bets[0].stake, 500);
+    assert.equal(result.bets[0].returnAmount, 800);
+    assert.equal(result.bets[1].stake, 1200);
+    assert.equal(result.bets[1].status, "lost");
+    assert.match(result.warnings.join(" "), /derived from return − profit/i);
+  });
+
+  it("accepts Total Bet and Returns as stake and payout headers", () => {
+    const result = parseBettingTableRows([
+      ["Date", "Event", "Total Bet", "Returns", "Outcome"],
+      ["2026-10-23", "Team M v Team N", "2,000", "3,600", "Won"],
+    ], "history.csv");
+
+    assert.equal(result.bets.length, 1);
+    assert.equal(result.bets[0].stake, 2000);
+    assert.equal(result.bets[0].returnAmount, 3600);
+  });
+
+  it("imports SportyBet cards that lack a return label, and reads dd/mm/yyyy card dates", () => {
+    const html = [
+      '<div data-op="bet-history-card-261301"><div>Single</div><div>Total stake</div><div>₦1,500</div><div>05/02/2026</div><div>Enyimba v Kano Pillars</div><div>Lost</div></div>',
+    ].join("");
+    const result = parseSportyBetPage(`<html><body>${html}</body></html>`);
+    const bets = normaliseBets(result.bets);
+
+    assert.equal(bets.length, 1);
+    assert.equal(bets[0].date, "2026-02-05");
+    assert.equal(bets[0].stake, 1500);
+    assert.equal(bets[0].returnAmount, 0);
+    assert.equal(bets[0].status, "lost");
+    assert.deepEqual(bets[0].events, ["Enyimba v Kano Pillars"]);
   });
 });

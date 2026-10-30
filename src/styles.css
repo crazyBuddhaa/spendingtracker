@@ -565,6 +565,21 @@ h1 { margin: 9px 0 5px; color: #25352c; font: 700 24px "Manrope", sans-serif; le
 .bet-match-row strong { color: #45554a; }
 .bet-match-row span:last-child { text-align: right; }
 .bet-match-more { padding: 9px 4px 2px; color: #89948d; font-size: 9px; }
+/* -------- betting bank correlation -------- */
+.bet-correlation-panel { margin-bottom: 14px; }
+.bet-match-suggestion { grid-template-columns: minmax(85px,.7fr) auto minmax(110px,1fr) minmax(150px,1.3fr) minmax(170px,1.4fr) auto; align-items: center; gap: 10px; }
+.bet-match-side { justify-self: start; padding: 2px 8px; border-radius: 999px; font-size: 8.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.bet-match-side-stake { background: #fdeae6; color: #8f3d2c; }
+.bet-match-side-return { background: #e7f2ee; color: #2d5a45; }
+.bet-match-why { font-size: 9px; color: #89948d; }
+.bet-match-confirm { height: 26px; padding: 0 10px; font-size: 10px; gap: 5px; }
+.bet-confirmed-links { margin-top: 12px; }
+.bet-confirmed-links .bet-confirmed-heading { display: flex; align-items: center; gap: 7px; font-size: 9px; font-weight: 800; letter-spacing: .08em; color: #7c8a80; text-transform: uppercase; padding-bottom: 7px; }
+.bet-link-dangling { opacity: .55; }
+@media (max-width: 900px) {
+  .bet-match-suggestion { grid-template-columns: minmax(0,1fr) auto; }
+  .bet-match-suggestion > * { min-width: 0; }
+}
 .bet-analytics-grid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 15px; }
 .bet-analysis-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .bet-analysis-heading select { max-width: 125px; height: 30px; padding: 0 8px; border: 1px solid #e4e8e3; border-radius: 6px; color: #69756d; background: #fff; font-size: 9px; }

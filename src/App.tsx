@@ -80,6 +80,8 @@ import { normaliseBets } from "./lib/sportyBetImport";
 import { normaliseInvestments, type InvestmentStore } from "./lib/investments";
 import { investmentActionLabels } from "./types";
 import { parseBettingFile } from "./lib/bettingFileImport";
+import { type BetPaymentMatch } from "./lib/bettingCorrelation";
+import { linkKey, normaliseBettingLinks, type BettingLink } from "./lib/bettingLinks";
 import {
   calculateTotals,
   filterByRange,
@@ -126,6 +128,7 @@ const INCOME_SOURCE_OVERRIDES_STORAGE_KEY = "spendwise.income-source-overrides.v
 const SNAPSHOTS_STORAGE_KEY = "spendwise.statement-snapshots.v1";
 const AUDIT_LOG_STORAGE_KEY = "spendwise.mutation-log.v1";
 const INVESTMENTS_STORAGE_KEY = "spendwise.investments.v1";
+const BETTING_LINKS_STORAGE_KEY = "spendwise.betting-links.v1";
 const currency = "NGN";
 
 const storageLabels: Record<string, string> = {
@@ -144,6 +147,7 @@ const storageLabels: Record<string, string> = {
   [SNAPSHOTS_STORAGE_KEY]: "Statement comparisons",
   [AUDIT_LOG_STORAGE_KEY]: "Audit trail",
   [INVESTMENTS_STORAGE_KEY]: "Investment ledger",
+  [BETTING_LINKS_STORAGE_KEY]: "Betting links",
 };
 
 
@@ -270,6 +274,7 @@ function App() {
   const [savingsGoals, setSavingsGoals] = useState<SavingsGoal[]>(() => readJson(SAVINGS_STORAGE_KEY, normaliseSavingsGoals, []));
   const [savingsCircles, setSavingsCircles] = useState<SavingsCircle[]>(() => readJson(CIRCLES_STORAGE_KEY, normaliseSavingsCircles, []));
   const [bets, setBets] = useState<BetRecord[]>(() => readJson(BETS_STORAGE_KEY, normaliseBets, []));
+  const [bankLinks, setBankLinks] = useState<BettingLink[]>(() => readJson(BETTING_LINKS_STORAGE_KEY, normaliseBettingLinks, []));
   const [investmentStore, setInvestmentStore] = useState<InvestmentStore>(() =>
     readJson(INVESTMENTS_STORAGE_KEY, normaliseInvestments, { records: [], valuations: [] }));
   const [rules, setRules] = useState<CategoryRule[]>(() => readJson(RULES_STORAGE_KEY, normaliseRules, []));
@@ -1001,6 +1006,49 @@ function App() {
     notify("Bet record deleted.");
   };
 
+  const confirmBetLink = (match: BetPaymentMatch) => {
+    if (bankLinks.some((link) => linkKey(link.betId, link.transactionId) === linkKey(match.betId, match.transactionId))) {
+      notify("That pair is already linked.");
+      return;
+    }
+    const bet = bets.find((row) => row.id === match.betId);
+    const transaction = transactions.find((row) => row.id === match.transactionId);
+    if (!bet || !transaction) {
+      notify("That record is no longer available; the suggestion will clear on its own.");
+      return;
+    }
+    const link: BettingLink = {
+      id: newId("blink"),
+      betId: match.betId,
+      transactionId: match.transactionId,
+      side: match.side,
+      method: match.method,
+      amount: match.betAmount,
+      date: match.bankDate,
+      linkedOn: localIsoDate(),
+      ...(match.operator ? { operator: match.operator } : {}),
+    };
+    const next = [...bankLinks, link];
+    setBankLinks(next);
+    if (!persistJson(BETTING_LINKS_STORAGE_KEY, next)) notify("Could not save the link in this browser. Download a backup before closing this tab.");
+    recordMutation("add", `Bank row linked: “${transaction.description}” (${formatDate(transaction.date)}, ${formatCurrency(transaction.amount, currency)}) ↔ ${match.side === "stake" ? "stake" : "return"} on bet ${bet.source} (${formatDate(bet.date)}), found by ${match.method}.`, {
+      evidence: "Links are bookkeeping only; no transaction, bet, or category was changed.",
+    });
+    notify("Link confirmed. Correlation figures now count it.");
+  };
+
+  const removeBetLink = (linkId: string) => {
+    const link = bankLinks.find((row) => row.id === linkId);
+    if (!link) return;
+    const bet = bets.find((row) => row.id === link.betId);
+    const transaction = transactions.find((row) => row.id === link.transactionId);
+    setBankLinks(bankLinks.filter((row) => row.id !== linkId));
+    recordMutation("delete", `Bank link removed: “${transaction?.description ?? link.transactionId}” ↔ ${link.side === "stake" ? "stake" : "return"} on ${bet?.source ?? link.betId} (${formatDate(link.date)}).`, {
+      evidence: "Only the link was removed; the bet, the transaction, and all other links were untouched.",
+    });
+    notify("Link removed.");
+  };
+
   /* ------------------------------------------ investments (own model) */
 
   const updateInvestments = (next: InvestmentStore) => {
@@ -1104,7 +1152,7 @@ function App() {
 
   const exportBackup = () => {
     downloadFile(
-      createBackup({ transactions, savingsGoals, savingsCircles, bets, rules, budgets, recipientProfiles, recurringBills, accountPreferences, incomeSourceOverrides, projectionOpeningBalance, statementSnapshots, mutationLog: auditLog, investments: investmentStore }),
+      createBackup({ transactions, savingsGoals, savingsCircles, bets, rules, budgets, recipientProfiles, recurringBills, accountPreferences, incomeSourceOverrides, projectionOpeningBalance, statementSnapshots, mutationLog: auditLog, investments: investmentStore, bettingLinks: bankLinks }),
       `spendwise-backup-${localIsoDate()}.json`,
       "application/json",
     );
@@ -1150,6 +1198,7 @@ function App() {
     saveJson(SNAPSHOTS_STORAGE_KEY, statementSnapshots);
     saveJson(AUDIT_LOG_STORAGE_KEY, auditLog);
     saveJson(INVESTMENTS_STORAGE_KEY, investmentStore);
+    saveJson(BETTING_LINKS_STORAGE_KEY, bankLinks);
     saveJson(PERIOD_STORAGE_KEY, { period, custom: customRange });
     void writeValue(TRANSACTIONS_STORAGE_KEY, serializeTransactions(transactions));
     notify("Unreadable data discarded. Saving is on again.");
@@ -1182,6 +1231,10 @@ function App() {
     updateProjectionOpeningBalance(backup.projectionOpeningBalance ?? 0);
     updateStatementSnapshots(backup.statementSnapshots ?? []);
     updateInvestments(backup.investments ?? { records: [], valuations: [] });
+    setBankLinks(backup.bettingLinks ?? []);
+    if (!persistJson(BETTING_LINKS_STORAGE_KEY, backup.bettingLinks ?? [])) {
+      notify("The backup was restored, but betting links could not be saved in this browser.");
+    }
     recordMutation("restore", `Backup restored: ${backup.transactions.length.toLocaleString("en-NG")} transactions replaced the previous ${transactions.length.toLocaleString("en-NG")} in this browser.`, {
       evidence: "The full backup content replaced local data at your confirmation.",
     });
@@ -1741,10 +1794,13 @@ function App() {
               bets={bets}
               transactions={transactions}
               currency={currency}
+              bankLinks={bankLinks}
               onImport={() => betFileInput.current?.click()}
               onAddBet={createBetRecord}
               onChangeCategory={updateBetCategory}
               onDeleteBet={deleteBetRecord}
+              onConfirmLink={confirmBetLink}
+              onRemoveLink={removeBetLink}
             />
           )}
 

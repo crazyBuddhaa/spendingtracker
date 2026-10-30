@@ -115,17 +115,40 @@ function parseDate(dataOp: string, parts: string[]): string | null {
     }
   }
 
-  const day = Number(parts[0]);
   const months: Record<string, number> = {
     jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3,
     apr: 4, april: 4, may: 5, jun: 6, june: 6, jul: 7, july: 7,
     aug: 8, august: 8, sep: 9, sept: 9, september: 9, oct: 10,
     october: 10, nov: 11, november: 11, dec: 12, december: 12,
   };
+
+  // Some saved pages open cards with a full "dd/mm/yyyy" date instead of
+  // "12 Oct" + header rows; read it directly when present.
+  const fullDate = parts.find((part) => /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(part));
+  const isoDate = parts.find((part) => /^\d{4}-\d{2}-\d{2}/.test(part));
+  if (fullDate && !months[(parts[1] ?? "").toLowerCase()]) {
+    const [day, month, year] = fullDate.split("/").map(Number);
+    const check = new Date(Date.UTC(year, month - 1, day));
+    if (check.getUTCFullYear() === year && check.getUTCMonth() === month - 1 && check.getUTCDate() === day) {
+      return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    }
+  } else if (isoDate) {
+    const [, month, day] = isoDate.split("-").map(Number);
+    if (Number.isInteger(month) && Number.isInteger(day)) {
+      return `${isoDate.slice(0, 4)}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    }
+  }
+
+  const day = Number(parts[0]);
   const month = months[(parts[1] ?? "").toLowerCase()];
   if (!Number.isInteger(day) || !month) return null;
   const pageDate = parts.find((part) => /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(part));
-  const year = pageDate ? Number(pageDate.split("/")[2]) : new Date().getFullYear();
+  const fromIso = parts.find((part) => /^\d{4}-\d{2}-\d{2}/.test(part));
+  const year = pageDate
+    ? Number(pageDate.split("/")[2])
+    : fromIso
+      ? Number(fromIso.slice(0, 4))
+      : new Date().getFullYear();
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
@@ -159,16 +182,19 @@ function stableHash(value: string): string {
 
 function betFromCard(card: BetCard): BetRecord | null {
   const date = parseDate(card.dataOp, card.textParts);
-  const stakeIndex = card.textParts.findIndex((part) => /^total stake\b/i.test(part));
-  const returnIndex = card.textParts.findIndex((part) => /^total return\b/i.test(part));
+  // Label words differ between saved pages ("Total stake" most commonly, plain
+  // "Stake" on compact layouts); match either so single-stake cards survive.
+  const stakeIndex = card.textParts.findIndex((part) => /^(total stake|stake)\b/i.test(part));
+  const returnIndex = card.textParts.findIndex((part) => /^(total return|potential return|payout|total payout|winnings)\b/i.test(part));
   const stake = parseAmount(card.textParts[stakeIndex + 1]);
-  const returnAmount = parseAmount(card.textParts[returnIndex + 1]);
-  if (!date || stakeIndex < 0 || returnIndex < 0 || stake === null || returnAmount === null) return null;
+  const returnAmount = returnIndex >= 0 ? parseAmount(card.textParts[returnIndex + 1]) : 0;
+  if (!date || stakeIndex < 0 || stake === null || returnAmount === null) return null;
 
   const betType = card.textParts.slice(2, stakeIndex).find((part) =>
     /^(single|multiple|system|combo|accumulator|bet builder)$/i.test(part),
   ) ?? "Other";
-  const events = card.textParts.slice(returnIndex + 2).filter((part) => /\s(?:v|vs\.?)\s/i.test(part));
+  const eventsSource = returnIndex >= 0 ? card.textParts.slice(returnIndex + 2) : card.textParts.slice(stakeIndex + 2);
+  const events = eventsSource.filter((part) => /\s(?:v|vs\.?)\s/i.test(part));
   const hiddenEvents = Number(card.textParts.join(" ").match(/\band\s+(\d+)\s+other matches?\b/i)?.[1] ?? 0);
   const status = parseStatus(card.textParts);
 
